@@ -57,6 +57,8 @@ stock_analyzer/
 
 ## Web公開版(Streamlit Community Cloud)
 
+**公開URL: https://founder-us.streamlit.app** (ログイン不要・無料枠。しばらく誰も使わないとスリープし、次に開く人は起動に1分ほど待つ)
+
 このリポジトリをそのまま Streamlit Community Cloud にデプロイすると、URLを共有するだけで誰でも使える。
 オーナー環境以外では自動的に「共有モード」になる:
 
