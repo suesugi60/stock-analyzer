@@ -153,6 +153,25 @@ def get_fund_row(isin: str) -> dict[str, Any] | None:
     return normalize_row(rows[0]) if rows else None
 
 
+@cached_with_retry(cache_key="rakuten_fund_{0}", ttl_seconds=7 * 24 * 3600, retries=2)
+def get_rakuten_availability(isin: str) -> dict[str, Any] | None:
+    """楽天証券のファンドページから取扱区分を判定する(7日キャッシュ)。
+
+    - 取扱なし: noReport.html にリダイレクトされる
+    - IFA専用: ページに「IFA(金融仲介業者)コースのみの取扱となります」の文言がある
+      (通常のインターネットコースでは買えず、IFAとの契約が必要)
+    - それ以外: 一般(インターネットコース)で購入可能
+    取得できない時は None(呼び出し側で投信協会の販売会社一覧にフォールバック)。
+    """
+    resp = requests.get(RAKUTEN_URL.format(isin=isin), headers={"User-Agent": HEADERS["User-Agent"]}, timeout=30, allow_redirects=True)
+    resp.raise_for_status()
+    if "noReport" in resp.url:
+        return {"handled": False, "ifa_only": False, "general": False}
+    text = unicodedata.normalize("NFKC", resp.text)
+    ifa_only = bool(re.search(r"IFA\s*\(?金融仲介業者\)?\s*コースのみの取扱", text))
+    return {"handled": True, "ifa_only": ifa_only, "general": not ifa_only}
+
+
 @cached_with_retry(cache_key="fund_history_{0}", ttl_seconds=12 * 3600, retries=2)
 def get_fund_history(isin: str, assoc: str) -> dict[str, Any] | None:
     """設定来の基準価額・純資産総額(百万円)・分配金をCSVから取る。"""

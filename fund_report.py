@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from stock_analyzer.config import REPORT_DIR
-from stock_analyzer.fund_analysis import fmt_oku, fmt_pct
+from stock_analyzer.fund_analysis import fmt_oku, fmt_pct, rakuten_yesno
 
 
 def _rank_text(rank: tuple[int, int] | None) -> str:
@@ -22,8 +22,9 @@ def build_fund_report_markdown(a: dict[str, Any]) -> str:
         f"{r.get('company') or '-'} / {r.get('category') or '-'}"
     )
     lines.append(f"- 信託報酬: {fmt_pct(r.get('trust_reward_pct'), 3)}(年率・税抜) / 設定日 {r.get('established') or '-'} / 決算 年{r.get('settle_per_year') or '?'}回 / 償還 {r.get('redemption') or '-'}")
+    general, ifa = rakuten_yesno(r)
     lines.append(
-        f"- 楽天証券の取扱: {'あり' if r.get('rakuten_available') else 'なし'}(販売会社{r.get('sellers_count') or 0}社) / "
+        f"- 楽天証券の取扱: 一般コース **{general}** ／ IFA専用 **{ifa}**(販売会社{r.get('sellers_count') or 0}社) / "
         f"NISA: {'つみたて投資枠○' if r.get('nisa_tsumitate') else 'つみたて投資枠×'}・{'成長投資枠○' if r.get('nisa_growth') else '成長投資枠×'}"
     )
     lines.append(f"- 総合スコア: **{s['total']}/100** / 総合所見: **{v['label']}**")

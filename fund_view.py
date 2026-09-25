@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from stock_analyzer.config import SHARED_MODE
-from stock_analyzer.fund_analysis import fmt_oku, fmt_pct
+from stock_analyzer.fund_analysis import fmt_oku, fmt_pct, rakuten_yesno
 from stock_analyzer.fund_report import build_fund_report_markdown, write_fund_report
 from stock_analyzer.view import MUTED, _hover_layer, _items_table, _legend_top, _score_bars, _series_colors, badge, zebra_style
 
@@ -55,10 +55,12 @@ def render_fund_analysis(a: dict[str, Any], theme_type: str | None) -> None:
     c3.metric("信託報酬(年率)", fmt_pct(r.get("trust_reward_pct"), 3))
     c4.metric("純資産", fmt_oku(r.get("net_assets_million")))
     c5.markdown("**楽天証券**")
-    c5.markdown(
-        badge("取扱あり", "good") if r.get("rakuten_available") else badge("取扱なし", "critical"),
-        unsafe_allow_html=True,
-    )
+    general, ifa = rakuten_yesno(r)
+
+    def _yn(text: str) -> str:
+        return badge(text, "good" if text == "あり" else ("neutral" if text == "不明" else "critical"))
+
+    c5.markdown(f"一般コース {_yn(general)}<br>IFA専用 {_yn(ifa)}", unsafe_allow_html=True)
     c5.markdown(f"[楽天証券で見る]({r.get('rakuten_url')})")
     c6.markdown("**NISA**")
     nisa = []

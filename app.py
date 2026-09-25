@@ -41,7 +41,7 @@ except Exception:  # noqa: BLE001 - secrets.toml が無いローカル環境で�
 
 from stock_analyzer.analysis import analyze_stock, fmt_money, fmt_pct, fmt_x
 from stock_analyzer.config import REPORT_DIR, SHARED_MODE, WATCHLIST_PATH, add_recent as _add_recent_file, load_recent as _load_recent_file, load_watchlist as _load_watchlist_file, save_watchlist as _save_watchlist_file
-from stock_analyzer.fund_analysis import analyze_fund, fmt_oku
+from stock_analyzer.fund_analysis import analyze_fund, fmt_oku, rakuten_yesno
 from stock_analyzer.fund_report import build_fund_report_markdown
 from stock_analyzer.fund_view import render_fund_analysis
 from stock_analyzer.funds import ISIN_RE, search_funds
@@ -332,7 +332,7 @@ with tab_scan:
                             "コスト/PER": fmt_pct(r.get("trust_reward_pct"), 3),
                             "純資産/PBR": fmt_oku(r.get("net_assets_million")),
                             "1年リターン": fmt_pct((r.get("returns_pct") or {}).get("1y"), signed=True),
-                            "楽天証券": "○" if r.get("rakuten_available") else "×",
+                            "楽天証券": "一般○" if r.get("rakuten_general") else ("IFA専用" if r.get("rakuten_ifa_only") else ("○(IFA不明)" if r.get("rakuten_available") else "×")),
                         }
                     )
                 else:

@@ -11,7 +11,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from stock_analyzer.funds import get_fund_history, get_fund_row
+from concurrent.futures import ThreadPoolExecutor
+
+from stock_analyzer.funds import get_fund_history, get_fund_row, get_rakuten_availability
 
 TRADING_DAYS = 245
 
@@ -37,6 +39,24 @@ def fmt_oku(million: float | None) -> str:
     if abs(million) >= 1_000_000:
         return f"{million / 1_000_000:,.2f}兆円"
     return f"{million / 100:,.0f}億円"
+
+
+def rakuten_label(attrs: dict[str, Any]) -> str:
+    """楽天証券の取扱区分の表示文字列。"""
+    if attrs.get("rakuten_available") is False:
+        return "取扱なし"
+    if attrs.get("rakuten_ifa_only"):
+        return "IFA専用(一般コース不可)"
+    if attrs.get("rakuten_ifa_only") is None:
+        return "取扱あり(IFA専用かは未確認)"
+    return "取扱あり(一般コース)"
+
+
+def rakuten_yesno(attrs: dict[str, Any]) -> tuple[str, str]:
+    """(一般コース あり/なし, IFA専用 あり/なし)。判定不能は「不明」。"""
+    def yn(v: Any) -> str:
+        return "不明" if v is None else ("あり" if v else "なし")
+    return yn(attrs.get("rakuten_general")), yn(attrs.get("rakuten_ifa_only"))
 
 
 def _item(name: str, value: str, points: int, max_points: int, comment: str = "") -> dict[str, Any]:
@@ -297,6 +317,8 @@ def fund_verdict(row: dict[str, Any], m: dict[str, Any], score: dict[str, Any]) 
         actions += ["高コスト・資金流出・小規模のいずれに該当するかリスク欄で確認", "同じ投資対象のインデックスファンドで代替できないか検討"]
     if row.get("rakuten_available") is False:
         actions.append("楽天証券では取扱いがないため、購入するなら他社口座が必要")
+    elif row.get("rakuten_ifa_only"):
+        actions.append("楽天証券ではIFA専用(IFAコースのみ)。通常のインターネットコースでは買えず、IFAとの契約・コース変更が必要")
     if row.get("nisa_tsumitate"):
         actions.append("つみたて投資枠の対象。非課税で積み立てられる")
     elif row.get("nisa_growth"):
@@ -340,7 +362,9 @@ def fund_risk_flags(row: dict[str, Any], m: dict[str, Any]) -> list[str]:
     if row.get("eval_discrepancy"):
         flags.append("投信協会が「基準価額と時価の評価乖離」を注意喚起中")
     if row.get("rakuten_available") is False:
-        flags.append("楽天証券では取扱いなし(販売会社一覧に楽天証券が無い)")
+        flags.append("楽天証券では取扱いなし")
+    elif row.get("rakuten_ifa_only"):
+        flags.append("楽天証券ではIFA(金融商品仲介業者)コース専用ファンド。一般のインターネットコースでは購入できない")
     return flags
 
 
@@ -349,7 +373,22 @@ def analyze_fund(isin: str, assoc: str | None = None, display_name: str | None =
     if not row:
         return None
     assoc = assoc or row.get("assoc")
-    hist = get_fund_history(row["isin"], assoc) if assoc else None
+    # 基準価額履歴(投信協会)と楽天証券の取扱区分は独立なので並列に取る
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_hist = pool.submit(get_fund_history, row["isin"], assoc) if assoc else None
+        f_rakuten = pool.submit(get_rakuten_availability, row["isin"])
+        hist = f_hist.result() if f_hist else None
+        rakuten = f_rakuten.result()
+    if rakuten is None:
+        # 楽天のページが取れない時は投信協会の販売会社一覧で代用(IFA専用かどうかは判定できない)
+        handled = bool(row.get("rakuten_available"))
+        rakuten = {"handled": handled, "ifa_only": None if handled else False, "general": None if handled else False, "source": "library"}
+    else:
+        rakuten["source"] = "rakuten"
+    row["rakuten_available"] = bool(rakuten["handled"])
+    row["rakuten_ifa_only"] = rakuten["ifa_only"]
+    row["rakuten_general"] = rakuten["general"]
+    row["rakuten_source"] = rakuten["source"]
     m = compute_fund_metrics(hist)
     score = score_fund(row, m)
     verdict = fund_verdict(row, m, score)
@@ -357,6 +396,8 @@ def analyze_fund(isin: str, assoc: str | None = None, display_name: str | None =
     notes = [
         "データ: 投信総合検索ライブラリー(資産運用業協会)。属性・期間リターン・順位は同ライブラリー、"
         "計算値(トータルリターン・変動率・最大下落率)は設定来の基準価額と分配金から算出",
+        "楽天証券の取扱区分(一般コース/IFA専用/取扱なし)は楽天証券のファンドページから判定(7日キャッシュ)。"
+        "ページが取れない時は投信協会の販売会社一覧で代用し、IFA専用かは「不明」と表示",
         "スコアは投資対象を問わず同じ物差しで採点した機械的な参考値。売買の推奨ではない",
         f"基準日: {row.get('as_of') or m.get('as_of')}",
     ]
@@ -384,8 +425,7 @@ def analyze_fund(isin: str, assoc: str | None = None, display_name: str | None =
 
 
 def fund_one_line(a: dict[str, Any]) -> str:
-    r = a["attrs"].get("rakuten_available")
     return (
         f"{a['name']}({a['isin']}) 基準価額{a['nav']:,.0f}円 | 総合{a['score']['total']}点 "
-        f"| 信託報酬{fmt_pct(a['attrs'].get('trust_reward_pct'), 3)} | 楽天証券{'○' if r else '×'} | {a['verdict']['label']}"
+        f"| 信託報酬{fmt_pct(a['attrs'].get('trust_reward_pct'), 3)} | 楽天証券: {rakuten_label(a['attrs'])} | {a['verdict']['label']}"
     )
