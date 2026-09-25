@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.dashboard.out.log
+.dashboard.err.log
+data/
+.streamlit/secrets.toml
+.DS_Store
