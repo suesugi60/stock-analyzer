@@ -1,7 +1,7 @@
 // node --test reserve/lib.test.js
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseDate, parseTime, chooseSeatOnlyPlan, resolveProfile, parseArgs } = require('./lib');
+const { parseDate, parseTime, chooseSeatOnlyPlan, resolveProfile, parseArgs, DEFAULT_SHOP } = require('./lib');
 
 const TODAY = '2026-11-03';
 
@@ -81,4 +81,8 @@ test('parseArgs: flags, booleans and numbers', () => {
   assert.equal(a.adults, '2');
   assert.equal(a['dry-run'], true);
   assert.equal(a.shop, 'terrace');
+});
+
+test('DEFAULT_SHOP is KANADE TERRACE', () => {
+  assert.equal(DEFAULT_SHOP, 'terrace');
 });

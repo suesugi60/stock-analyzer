@@ -3,8 +3,8 @@
 TableCheck の予約ページを Playwright で操作し、KANADE LOUNGE / KANADE TERRACE の
 「お席のみのご予約」プランを自動入力して送信する。
 
-- KANADE LOUNGE: https://www.tablecheck.com/ja/shops/gajoentokyo-kanadelounge/reserve (既定)
-- KANADE TERRACE: https://www.tablecheck.com/ja/shops/gajoentokyo-kanadeterrace/reserve (`--shop terrace`)
+- KANADE TERRACE: https://www.tablecheck.com/ja/shops/gajoentokyo-kanadeterrace/reserve (既定)
+- KANADE LOUNGE: https://www.tablecheck.com/ja/shops/gajoentokyo-kanadelounge/reserve (`--shop lounge`)
 
 ## 使い方
 
@@ -17,7 +17,7 @@ node reserve/tablecheck_reserve.js --date 11/20 --time 19:00 --adults 2
 | `--date` | 日付。`11/20` `11月20日` `2026-11-20` など。年を省略すると今日以降で最初のその月日 |
 | `--time` | 時刻。`19:00` `19時` `19時半`。15分刻みの枠に一致する必要がある |
 | `--adults` / `--children` / `--babies` | 大人(必須) / 子供12歳以下 / 幼児5歳以下 |
-| `--shop lounge\|terrace` | 店。既定は lounge |
+| `--shop terrace\|lounge` | 店。既定は terrace(KANADE TERRACE) |
 | `--dry-run` | フォームを埋めるだけで送信しない。`01_form_filled.png` で確認できる |
 | `--stop-at-confirm` | 確定画面まで進んで止まる(最終ボタンは押さない) |
 | `--request "…"` | ご要望欄 |

@@ -4,7 +4,7 @@
 
  使い方:
    node reserve/tablecheck_reserve.js --date 11/20 --time 19:00 --adults 2
-       [--children 0] [--babies 0] [--shop lounge|terrace]
+       [--children 0] [--babies 0] [--shop terrace|lounge]   既定は terrace
        [--dry-run]            フォームを埋めるだけで送信しない(初回確認用)
        [--stop-at-confirm]    確定画面まで進んで止まる(最終ボタンは押さない)
        [--request "ご要望"] [--purpose デート] [--visits 初来店] [--marketing]
@@ -23,7 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
-const { parseDate, parseTime, chooseSeatOnlyPlan, resolveProfile, parseArgs } = require('./lib');
+const { parseDate, parseTime, chooseSeatOnlyPlan, resolveProfile, parseArgs, DEFAULT_SHOP } = require('./lib');
 
 const SHOPS = {
   lounge: { slug: 'gajoentokyo-kanadelounge', label: 'KANADE LOUNGE / 雅叙園東京' },
@@ -43,9 +43,9 @@ class Fail extends Error { constructor(code, msg, extra) { super(msg); this.code
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const shopKey = (args.shop || 'lounge').toString();
+  const shopKey = (args.shop || DEFAULT_SHOP).toString();
   const shop = SHOPS[shopKey];
-  if (!shop) throw new Fail(1, `--shop は lounge か terrace: ${shopKey}`);
+  if (!shop) throw new Fail(1, `--shop は terrace か lounge: ${shopKey}`);
   if (!args.date || !args.time || !args.adults) throw new Fail(1, '--date --time --adults は必須です');
   const today = jstToday();
   const date = parseDate(args.date, today);

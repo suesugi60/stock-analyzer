@@ -4,11 +4,11 @@
 
 ## カナデ(雅叙園東京)の席のみ予約 — reserve/
 
-ユーザーが「11/20 19:00 2名」「カナデ 12/5 12時 3人 テラス」のように予約を頼んだら、
+ユーザーが「11/20 19:00 2名」「カナデ 12/5 12時 3人 ラウンジ」のように予約を頼んだら、
 `reserve/tablecheck_reserve.js` を実行して TableCheck で予約する。詳細は `reserve/README.md`。
 
 1. メッセージから日付・時刻・大人人数(・子供・幼児・店・ご要望)を読み取る。
-   店の指定が無ければ `lounge`(KANADE LOUNGE)。「テラス」とあれば `--shop terrace`。
+   店の指定が無ければ `terrace`(KANADE TERRACE)。「ラウンジ」とあれば `--shop lounge`。
    読み取れない項目があれば実行前に聞く。
 2. 予約者情報は環境変数 `TC_SEI TC_MEI TC_SEI_KANA TC_MEI_KANA TC_PHONE TC_EMAIL` から読まれる。
    設定が無いとスクリプトがエラーになるので、その場合はユーザーに聞いて `--sei` などで渡す。
