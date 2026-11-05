@@ -17,33 +17,43 @@ html, body { margin: 0; color: var(--ink); background: var(--sky);
   font-family: "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic", "Meiryo", "Noto Sans JP", system-ui, sans-serif;
   font-weight: 700; -webkit-text-size-adjust: 100%; }
 body { min-height: 100dvh; }
-body::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(circle at 18% 16%, #fff 0 26px, transparent 27px),
-    radial-gradient(circle at 25% 12%, #fff 0 36px, transparent 37px),
-    radial-gradient(circle at 33% 17%, #fff 0 24px, transparent 25px),
-    radial-gradient(circle at 72% 9%, #fff 0 20px, transparent 21px),
-    radial-gradient(circle at 79% 6%, #fff 0 30px, transparent 31px),
-    radial-gradient(circle at 87% 10%, #fff 0 18px, transparent 19px),
-    linear-gradient(180deg, #4fb8ff 0%, #9ddcff 60%, #d9f3ff 100%); }
+body::before { content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background: linear-gradient(180deg, #4fb8ff 0%, #9ddcff 60%, #d9f3ff 100%); }
+.clouds { position: fixed; left: 0; top: 0; width: 100%; height: 260px; z-index: -1; pointer-events: none; opacity: .95;
+  background-image:
+    radial-gradient(circle at 70px 70px, #fff 0 26px, transparent 27px),
+    radial-gradient(circle at 110px 56px, #fff 0 36px, transparent 37px),
+    radial-gradient(circle at 156px 74px, #fff 0 24px, transparent 25px),
+    radial-gradient(circle at 420px 40px, #fff 0 20px, transparent 21px),
+    radial-gradient(circle at 452px 28px, #fff 0 30px, transparent 31px),
+    radial-gradient(circle at 492px 44px, #fff 0 18px, transparent 19px);
+  background-size: 640px 260px; background-repeat: repeat-x; animation: drift 80s linear infinite; }
+@keyframes drift { to { background-position-x: -640px; } }
 .screen { max-width: 960px; margin: 0 auto; padding: 16px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 [hidden] { display: none !important; }
 .cat-start { --cat: var(--c-start); } .cat-goal { --cat: var(--c-goal); } .cat-rest { --cat: var(--c-rest); }
 .cat-self { --cat: var(--c-self); } .cat-pick { --cat: var(--c-pick); } .cat-all { --cat: var(--c-all); } .cat-chug { --cat: var(--c-chug); }
+svg { display: block; }
 
 /* ---- 共通パーツ(太い縁取り + ずらし影) ---- */
 .outline { color: #fff; -webkit-text-stroke: 4px var(--navy); paint-order: stroke fill; text-shadow: 0 3px 0 var(--navy); }
-.title { font-size: 2.1rem; font-weight: 900; margin: 10px 0 18px; text-align: center; line-height: 1.3; }
+.title { font-size: 2.2rem; font-weight: 900; margin: 10px 0 18px; text-align: center; line-height: 1.3; }
 .title .stroke { color: var(--yellow); -webkit-text-stroke: 7px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy); }
 h2 { font-size: .95rem; margin: 22px 0 8px; font-weight: 900; }
 h2::before { content: '▶ '; color: var(--red); }
 .panel { background: var(--cream); border: 3px solid var(--navy); border-radius: 16px; box-shadow: 4px 4px 0 var(--navy); }
 .btn { font: inherit; font-weight: 900; color: var(--navy); background: #fff; border: 3px solid var(--navy); border-radius: 14px;
-  padding: 12px 16px; box-shadow: 0 4px 0 var(--navy); cursor: pointer; touch-action: manipulation; transition: transform .05s, box-shadow .05s; }
-.btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 var(--navy); }
+  padding: 12px 16px; box-shadow: inset 0 2px 0 rgba(255,255,255,.7), 0 4px 0 var(--navy); cursor: pointer; touch-action: manipulation;
+  transition: transform .05s, box-shadow .05s; }
+.btn:active:not(:disabled) { transform: translateY(4px); box-shadow: inset 0 2px 0 rgba(255,255,255,.7), 0 0 0 var(--navy); }
 .btn:disabled { opacity: .6; cursor: default; }
-.btn-primary { background: var(--yellow); width: 100%; font-size: 1.2rem; padding: 14px; }
+.btn-primary { background: linear-gradient(#ffe978, #ffd93d); width: 100%; font-size: 1.2rem; padding: 14px; }
 .btn-ghost { font-size: .9rem; padding: 8px 12px; box-shadow: 0 3px 0 var(--navy); }
+.avatar { display: inline-flex; width: 44px; height: 44px; border-radius: 50%; background: #fff; border: 3px solid var(--c, var(--navy));
+  box-shadow: 0 0 0 2px var(--navy); overflow: hidden; flex: none; }
+.avatar svg { width: 100%; height: 100%; }
+.avatar.sm { width: 22px; height: 22px; border-width: 2px; box-shadow: 0 0 0 1.5px var(--navy); }
+.avatar.lg { width: 72px; height: 72px; border-width: 4px; }
 
 /* ---- セットアップ ---- */
 .choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
@@ -53,33 +63,41 @@ h2::before { content: '▶ '; color: var(--red); }
 .choice .hint { font-size: .68rem; color: var(--muted); display: block; margin-top: 4px; line-height: 1.3; }
 .choice[aria-pressed="true"] { background: var(--yellow); transform: translateY(4px); box-shadow: none; }
 .player-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
-.player-row .swatch { width: 26px; height: 17px; border-radius: 6px 6px 3px 3px; border: 2px solid var(--navy); flex: none; }
+.player-avatar { padding: 0; width: 48px; height: 48px; border-radius: 50%; border: 3px solid var(--c, var(--navy)); background: #fff;
+  box-shadow: 0 0 0 2px var(--navy), 0 4px 0 2px var(--navy); cursor: pointer; overflow: hidden; flex: none; }
+.player-avatar:active { transform: translateY(3px); box-shadow: 0 0 0 2px var(--navy); }
+.player-avatar svg { width: 100%; height: 100%; }
 .player-row input { flex: 1; min-width: 0; font: inherit; font-weight: 700; font-size: 1rem; padding: 11px 12px; border-radius: 12px;
   border: 3px solid var(--navy); background: #fff; color: var(--navy); }
 .player-row input::placeholder { color: #b0b2c8; }
 .player-row .btn { padding: 9px 12px; }
+.hint-text { font-size: .75rem; color: var(--muted); margin: -2px 0 10px 2px; }
 #add-player { width: 100%; margin-top: 4px; }
 .notice { font-size: .8rem; padding: 10px 12px; margin: 18px 0; line-height: 1.6; }
 .banner { padding: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .banner span { flex: 1; font-weight: 900; }
 .banner .btn-primary { width: auto; font-size: 1rem; padding: 10px 16px; }
+.picks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.pick { font: inherit; font-weight: 900; font-size: .68rem; color: var(--navy); background: #fff; border: 3px solid var(--navy); border-radius: 14px;
+  box-shadow: 0 4px 0 var(--navy); padding: 8px 2px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+.pick svg { width: 48px; height: 48px; }
+.pick.selected { background: var(--yellow); transform: translateY(4px); box-shadow: none; }
+.pick:disabled { opacity: .35; cursor: default; }
 
 /* ---- ゲーム ---- */
 #screen-play { padding-top: 0; }
 .topbar { position: sticky; top: 0; z-index: 5; padding: 10px 0 8px; background: linear-gradient(var(--sky) 0%, var(--sky) 86%, transparent); }
-.turn { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; margin-bottom: 10px; }
-.turn .dot { width: 30px; height: 20px; border-radius: 7px 7px 3px 3px; border: 2px solid var(--navy); flex: none; }
+.turn { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; margin-bottom: 10px; }
 #turn-name { font-size: 1.2rem; font-weight: 900; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-roll { display: flex; justify-content: center; align-items: center; gap: 14px; font-size: 1.3rem; }
-.die { display: inline-grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 42px; height: 42px; flex: none;
-  background: #fff; border: 3px solid var(--navy); border-radius: 10px; padding: 4px; box-shadow: 2px 2px 0 var(--navy); }
-.die .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--navy); align-self: center; justify-self: center; }
+.die { display: inline-grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 44px; height: 44px; flex: none;
+  background: linear-gradient(145deg, #fff, #e4e7ff); border: 3px solid var(--navy); border-radius: 10px; padding: 4px; box-shadow: 2px 3px 0 var(--navy), inset -3px -3px 0 rgba(43,45,92,.12); }
+.die .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--navy); align-self: center; justify-self: center; box-shadow: inset 1px 1px 0 rgba(255,255,255,.35); }
 .die.rolling { animation: shake .12s infinite; }
 @keyframes shake { 0% { transform: rotate(-14deg) translateY(-2px); } 50% { transform: rotate(12deg) translateY(2px); } 100% { transform: rotate(-14deg) translateY(-2px); } }
 .standings { display: flex; gap: 6px; overflow-x: auto; padding: 8px 2px 4px; scrollbar-width: none; }
 .standings::-webkit-scrollbar { display: none; }
-.chip { flex: none; font-size: .78rem; padding: 4px 10px; border-radius: 999px; background: #fff; border: 2px solid var(--navy); display: flex; align-items: center; gap: 6px; }
-.chip .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--navy); }
+.chip { flex: none; font-size: .78rem; padding: 3px 10px 3px 4px; border-radius: 999px; background: #fff; border: 2px solid var(--navy); display: flex; align-items: center; gap: 6px; }
 .chip.current { background: var(--yellow); }
 .board-wrap { background: var(--grass); border: 3px solid var(--navy); border-radius: 18px; padding: 10px; box-shadow: 4px 4px 0 var(--navy); margin-top: 8px;
   background-image: linear-gradient(45deg, rgba(255,255,255,.1) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.1) 75%, transparent 75%);
@@ -91,8 +109,8 @@ h2::before { content: '▶ '; color: var(--red); }
 .tile .num, .tile .label { position: absolute; top: 1px; font-size: .62rem; font-weight: 900; color: #fff; line-height: 1.6;
   text-shadow: 1px 0 0 var(--navy), -1px 0 0 var(--navy), 0 1px 0 var(--navy), 0 -1px 0 var(--navy), 1px 1px 0 var(--navy), -1px -1px 0 var(--navy), 1px -1px 0 var(--navy), -1px 1px 0 var(--navy); }
 .tile .num { left: 5px; } .tile .label { right: 5px; }
-.tile .icon { position: absolute; left: 0; right: 0; top: 33%; text-align: center; font-size: 1.3rem; line-height: 1.1; }
-.tile.cat-start .icon, .tile.cat-goal .icon { font-size: 1.6rem; }
+.tile .icon { position: absolute; left: 22%; right: 22%; top: 36%; bottom: 10%; }
+.tile .icon svg { width: 100%; height: 100%; }
 .tile.active { outline: 4px solid var(--yellow); outline-offset: 1px; }
 .tile.landed { animation: pop .35s ease; }
 @keyframes pop { 50% { transform: scale(1.1); } }
@@ -104,49 +122,64 @@ h2::before { content: '▶ '; color: var(--red); }
 .tile.link-left::after { right: 100%; }
 .tile.link-down::after { display: block; left: 50%; width: 12px; height: calc(var(--gap) + 14px); top: 100%; transform: translateX(-50%);
   background: linear-gradient(var(--yellow), var(--yellow)) center / 4px 100% no-repeat, var(--navy); }
-/* 駒(列車) */
-.tokens { position: absolute; left: 2px; right: 2px; bottom: 5px; display: flex; flex-wrap: wrap; gap: 3px 4px; justify-content: center; z-index: 2; }
-.token { position: relative; width: 26px; height: 17px; border-radius: 6px 6px 3px 3px; background: var(--c); border: 2px solid var(--navy);
-  font-size: .66rem; font-weight: 900; color: var(--navy); display: flex; align-items: center; justify-content: center; line-height: 1; }
-.token::after { content: ''; position: absolute; left: 3px; bottom: -6px; width: 5px; height: 5px; border-radius: 50%; background: var(--navy); box-shadow: 11px 0 0 var(--navy); }
-.tokens.many { gap: 4px 3px; }
-.tokens.many .token { width: 15px; height: 10px; font-size: 0; border-width: 1.5px; }
-.tokens.many .token::after { left: 2px; bottom: -4px; width: 3px; height: 3px; box-shadow: 6px 0 0 var(--navy); }
-.token.moving { transform: scale(1.3) translateY(-4px); z-index: 3; }
+/* 駒(キャラクター) */
+.tokens { position: absolute; left: 0; right: 0; bottom: 2px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; z-index: 2; }
+.token { width: 30px; height: 30px; border-radius: 50%; background: #fff; border: 2px solid var(--c); box-shadow: 0 0 0 2px var(--navy); overflow: hidden; flex: none;
+  transition: transform .15s; }
+.token svg { width: 100%; height: 100%; }
+.tokens.n2 .token { width: 22px; height: 22px; }
+.tokens.many { gap: 1px; }
+.tokens.many .token { width: 13px; height: 13px; border-width: 1.5px; box-shadow: 0 0 0 1.5px var(--navy); }
+.token.moving { transform: scale(1.35) translateY(-5px); z-index: 3; }
 
 /* ---- 指令カード(メッセージ窓) ---- */
-.overlay { position: fixed; inset: 0; background: rgba(43,45,92,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
+.overlay { position: fixed; inset: 0; background: rgba(43,45,92,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; overflow-y: auto; }
 .card { width: min(480px, 100%); background: var(--cream); border: 4px solid var(--navy); border-radius: 20px; box-shadow: 6px 6px 0 var(--navy);
-  overflow: hidden; animation: bounce-in .35s cubic-bezier(.2,1.4,.5,1); }
+  overflow: hidden; animation: bounce-in .35s cubic-bezier(.2,1.4,.5,1); position: relative; }
 @keyframes bounce-in { from { transform: scale(.7); opacity: 0; } }
-.card-band { background: var(--cat, var(--c-rest)); padding: 10px 12px; display: flex; align-items: center; justify-content: center; gap: 10px; border-bottom: 4px solid var(--navy); }
-.card-band .icon { font-size: 2.2rem; line-height: 1; }
+.card-band { background: var(--cat, var(--c-rest)); padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 10px; border-bottom: 4px solid var(--navy); }
+.card-band .icon svg { width: 44px; height: 44px; }
 .card-band .cat { font-size: 1.5rem; font-weight: 900; letter-spacing: .08em; }
 .card-body { padding: 14px 18px 20px; text-align: center; }
+.card .speaker { display: flex; justify-content: center; margin: 2px 0 8px; }
 .card .who { font-size: .9rem; color: var(--muted); }
 .card .sub { font-size: .95rem; color: var(--red); font-weight: 900; margin-top: 4px; min-height: 1.2em; }
-.card .text { font-size: 1.35rem; font-weight: 900; line-height: 1.5; margin: 10px 0 18px; overflow-wrap: anywhere; }
+.card .text { font-size: 1.35rem; font-weight: 900; line-height: 1.5; margin: 10px 0 18px; overflow-wrap: anywhere; position: relative;
+  background: #fff; border: 3px solid var(--navy); border-radius: 16px; padding: 14px 14px; }
+.card .text::before { content: ''; position: absolute; top: -12px; left: 50%; width: 18px; height: 18px; background: #fff; border-left: 3px solid var(--navy); border-top: 3px solid var(--navy);
+  transform: translateX(-50%) rotate(45deg); }
 .card .extra { margin-bottom: 14px; }
 .card .extra .btn { display: inline-flex; align-items: center; gap: 10px; }
 .card .extra .result { font-size: 1.4rem; font-weight: 900; min-height: 1.4em; margin-top: 10px; }
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 21; }
+.confetti i { position: absolute; top: -12px; width: 10px; height: 14px; border-radius: 2px; animation: fall 2.8s linear forwards; }
+@keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: .8; } }
 #peek { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); padding: 12px 14px; z-index: 10; font-size: .95rem; line-height: 1.5; cursor: pointer; }
 #peek .head { font-size: .75rem; color: var(--muted); margin-bottom: 2px; }
 
 /* ---- 結果 ---- */
-.rank-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 10px; background: #fff; }
-.rank-row .medal { font-size: 1.6rem; width: 2em; text-align: center; }
-.rank-row .medal.plain { font-size: 1rem; color: var(--muted); }
-.rank-row .dot { width: 30px; height: 20px; border-radius: 7px 7px 3px 3px; border: 2px solid var(--navy); flex: none; }
+.podium { display: flex; align-items: flex-end; justify-content: center; gap: 10px; margin: 6px 0 18px; }
+.podium .spot { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 31%; }
+.podium .spot .pname { font-weight: 900; font-size: .9rem; text-align: center; overflow-wrap: anywhere; line-height: 1.2; }
+.podium .block { width: 100%; border: 3px solid var(--navy); border-radius: 10px 10px 0 0; box-shadow: 4px 4px 0 var(--navy); display: flex; align-items: center; justify-content: center; font-size: 1.7rem; }
+.podium .p1 .block { height: 88px; background: linear-gradient(#ffe978, #ffd93d); }
+.podium .p2 .block { height: 66px; background: linear-gradient(#fff, #dfe3f0); }
+.podium .p3 .block { height: 50px; background: linear-gradient(#f3c28f, #e8a86b); }
+.podium .p1 .avatar { width: 64px; height: 64px; }
+.rank-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 10px; background: #fff; }
+.rank-row .medal { font-size: 1rem; width: 2.2em; text-align: center; color: var(--muted); }
 .rank-row .name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .rank-row .name b { font-weight: 900; font-size: 1.05rem; overflow-wrap: anywhere; }
 .rank-row .note { font-size: .78rem; color: var(--red); }
 .rank-row.last { border-color: var(--red); box-shadow: 4px 4px 0 var(--red); }
+.last-note { text-align: center; font-weight: 900; color: var(--red); margin: 4px 0 10px; }
 .actions { display: grid; gap: 12px; margin-top: 18px; }
 .actions .btn { width: 100%; }
-@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling, .clouds, .confetti i { animation: none; } }
 </style>
 </head>
 <body>
+<div class="clouds" aria-hidden="true"></div>
 <main>
 <section id="screen-setup" class="screen">
   <h1 class="title">🍻 <span class="stroke">飲みスゴロク</span></h1>
@@ -160,6 +193,7 @@ h2::before { content: '▶ '; color: var(--red); }
   <h2>難易度</h2>
   <div class="choices" id="diff-choices"></div>
   <h2>プレイヤー(2〜8人)</h2>
+  <p class="hint-text">顔をタップするとキャラクターを選べます</p>
   <div id="players"></div>
   <button id="add-player" class="btn">＋ プレイヤーを追加</button>
   <p class="notice panel">飲めない人はソフトドリンクでOK。無理な飲酒は絶対にしないこと。<br>ゴールはぴったり止まる必要があります。超えた分は折り返して戻ります。<br>100マス × 鬼はかなりの量になります。</p>
@@ -169,7 +203,7 @@ h2::before { content: '▶ '; color: var(--red); }
 <section id="screen-play" class="screen" hidden>
   <div class="topbar">
     <div class="turn panel">
-      <span class="dot" id="turn-dot"></span>
+      <span class="avatar" id="turn-avatar"></span>
       <span id="turn-name"></span>
       <button id="end" class="btn btn-ghost">終了</button>
     </div>
@@ -181,6 +215,7 @@ h2::before { content: '▶ '; color: var(--red); }
 
 <section id="screen-result" class="screen" hidden>
   <h1 class="title">🏁 <span class="stroke">結果発表</span></h1>
+  <div class="podium" id="podium"></div>
   <div id="ranking"></div>
   <div class="actions">
     <button id="again" class="btn btn-primary">同じ設定でもう一度</button>
@@ -189,10 +224,21 @@ h2::before { content: '▶ '; color: var(--red); }
 </section>
 </main>
 
+<div id="picker-overlay" class="overlay" hidden>
+  <div id="picker" class="card cat-goal">
+    <div class="card-band"><span class="cat outline">キャラクターをえらぶ</span></div>
+    <div class="card-body">
+      <div class="picks" id="picks"></div>
+      <button id="picker-close" class="btn" style="margin-top:14px;width:100%">とじる</button>
+    </div>
+  </div>
+</div>
+
 <div id="card-overlay" class="overlay" hidden>
   <div id="card" class="card">
     <div class="card-band"><span class="icon" id="card-icon"></span><span class="cat outline" id="card-cat"></span></div>
     <div class="card-body">
+      <div class="speaker"><span class="avatar lg" id="card-avatar"></span></div>
       <div class="who" id="card-who"></div>
       <div class="sub" id="card-sub"></div>
       <div class="text" id="card-text"></div>
@@ -204,6 +250,7 @@ h2::before { content: '▶ '; color: var(--red); }
     </div>
   </div>
 </div>
+<div id="confetti" class="confetti" hidden></div>
 <div id="peek" class="panel" hidden></div>
 
 <script id="sugoroku-logic">
@@ -401,16 +448,43 @@ const Sugoroku = (() => {
   const MAX_PLAYERS = 8;
   const PLAYER_COLORS = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#4dd4e8', '#ff7bd2'];
 
+  const CHARACTERS = [
+    { id: 'momotaro', name: 'ももたろう' },
+    { id: 'kintaro', name: 'きんたろう' },
+    { id: 'urashima', name: 'うらしまたろう' },
+    { id: 'kaguya', name: 'かぐやひめ' },
+    { id: 'issun', name: 'いっすんぼうし' },
+    { id: 'akaoni', name: 'あかおに' },
+    { id: 'aooni', name: 'あおおに' },
+    { id: 'inu', name: 'いぬ' },
+    { id: 'saru', name: 'さる' },
+    { id: 'kiji', name: 'きじ' },
+    { id: 'kappa', name: 'かっぱ' },
+    { id: 'binbo', name: 'びんぼうがみ' },
+  ];
+
   function clone(state) { return JSON.parse(JSON.stringify(state)); }
 
-  function createGame({ size, difficulty, names, rng = Math.random }) {
+  /** キャラ指定を検証して配列で返す。未指定なら先頭から順に割り当てる。 */
+  function resolveChars(chars, count) {
+    const ids = CHARACTERS.map((c) => c.id);
+    if (chars == null) return ids.slice(0, count);
+    if (!Array.isArray(chars) || chars.length !== count) throw new Error('キャラの数が人数と合いません');
+    for (const c of chars) if (!ids.includes(c)) throw new Error('不明なキャラ: ' + c);
+    if (new Set(chars).size !== chars.length) throw new Error('キャラが重複しています');
+    return chars.slice();
+  }
+
+  function createGame({ size, difficulty, names, chars, rng = Math.random }) {
     if (!Array.isArray(names) || names.length < MIN_PLAYERS || names.length > MAX_PLAYERS) {
       throw new Error(`プレイヤーは${MIN_PLAYERS}〜${MAX_PLAYERS}人`);
     }
+    const charList = resolveChars(chars, names.length);
     const board = generateBoard(size, difficulty, rng);
     const players = names.map((raw, i) => ({
       name: (String(raw ?? '').trim()) || `プレイヤー${i + 1}`,
       color: PLAYER_COLORS[i],
+      char: charList[i],
       pos: 0,
       rank: null,
     }));
@@ -478,9 +552,153 @@ const Sugoroku = (() => {
   }
 
   return {
-    SIZES, DIFFICULTIES, CATS, TEXTS, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
+    SIZES, DIFFICULTIES, CATS, TEXTS, CHARACTERS, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
     generateBoard, largestRemainder, createGame, applyRoll, endTurn, finishEarly, ranking,
   };
+})();
+</script>
+
+<script>
+// ===== キャラクターとアイコンの絵(インラインSVG) =====
+const SugorokuArt = (() => {
+  'use strict';
+  const N = '#2b2d5c';
+  const S3 = `stroke="${N}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"`;
+  const SKIN = '#ffe3c8';
+  const wrap = (inner, vb = '0 0 100 100') => `<svg viewBox="${vb}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${inner}</svg>`;
+  const head = (fill, cy = 58, r = 29) => `<circle cx="50" cy="${cy}" r="${r}" fill="${fill}" ${S3}/>`;
+  const eyes = (y = 58, dx = 12, r = 4.2) => [-dx, dx].map((d) =>
+    `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="${N}"/><circle cx="${50 + d - 1.4}" cy="${y - 1.4}" r="1.5" fill="#fff"/>`).join('');
+  const blush = (y = 66, dx = 20, r = 5) => [-dx, dx].map((d) => `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="#ff8fa3" opacity=".75"/>`).join('');
+  const smile = (y = 70, w = 6) => `<path d="M${50 - w} ${y} Q50 ${y + 6} ${50 + w} ${y}" fill="none" ${S3}/>`;
+  const openMouth = (y = 70) => `<path d="M43 ${y} Q50 ${y + 10} 57 ${y} Z" fill="#c0392b" ${S3}/>`;
+  const collar = (fill) => `<path d="M28 100 L50 84 L72 100 Z" fill="${fill}" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`;
+
+  const CHAR_ART = {
+    momotaro: () => wrap(
+      head(SKIN) +
+      `<path d="M22 52 Q28 28 50 27 Q72 28 78 52 Q64 44 50 46 Q36 44 22 52 Z" fill="#3a2e2e" ${S3}/>` +
+      `<path d="M50 27 q-2 -8 5 -13" fill="none" ${S3}/>` +
+      `<rect x="19" y="44" width="62" height="10" rx="4" fill="#fff" ${S3}/>` +
+      `<path d="M81 47 l11 -6 l-3 9 l9 3 l-17 1 Z" fill="#fff" ${S3}/>` +
+      `<circle cx="50" cy="49" r="3.5" fill="#ff4d4d"/>` +
+      eyes(62) + blush(69) + smile(73) +
+      `<circle cx="85" cy="25" r="9" fill="#ffb3c6" ${S3}/><path d="M85 17 v8" fill="none" ${S3}/><path d="M85 19 q6 -7 11 -2 q-6 4 -11 2 Z" fill="#2ec27e" ${S3}/>` +
+      collar('#3b8cff')),
+    kintaro: () => wrap(
+      head(SKIN, 60) +
+      `<path d="M21 60 A29 29 0 0 1 79 60 L79 62 L72 56 L65 62 L58 56 L51 62 L44 56 L37 62 L30 56 L23 62 L21 62 Z" fill="#3a2e2e" ${S3}/>` +
+      eyes(69, 12) + blush(75, 21, 6) + smile(79, 6) +
+      `<path d="M33 86 h34 v14 h-34 Z" fill="#ff4d4d" ${S3}/>` +
+      `<text x="50" y="99" font-size="13" font-weight="900" text-anchor="middle" fill="#ffd93d" font-family="sans-serif">金</text>`),
+    urashima: () => wrap(
+      head(SKIN, 60, 28) +
+      `<path d="M8 46 L50 16 L92 46 Z" fill="#e8c36a" ${S3}/><path d="M8 46 Q50 56 92 46 Q50 52 8 46 Z" fill="#d9ad4f" ${S3}/>` +
+      eyes(63) + blush(70) + smile(74) +
+      `<path d="M92 94 L98 46" fill="none" ${S3}/><path d="M98 46 q4 14 -5 24" fill="none" stroke="${N}" stroke-width="2"/>` +
+      `<ellipse cx="16" cy="90" rx="10" ry="7" fill="#2ec27e" ${S3}/><circle cx="27" cy="88" r="4" fill="#7ed957" ${S3}/>` +
+      collar('#2ec27e')),
+    kaguya: () => wrap(
+      `<path d="M20 50 Q20 20 50 20 Q80 20 80 50 L83 100 L17 100 Z" fill="#2b2d5c" ${S3}/>` +
+      head(SKIN, 58, 27) +
+      `<path d="M23 54 Q29 32 50 31 Q71 32 77 54 Q64 46 57 56 Q50 42 43 56 Q36 46 23 54 Z" fill="#2b2d5c"/>` +
+      eyes(61) + blush(68, 19) +
+      `<path d="M46 73 Q50 77 54 73 Z" fill="#ff4d4d" ${S3}/>` +
+      `<circle cx="77" cy="36" r="5" fill="#ffd93d" ${S3}/><path d="M77 41 l-4 10 M77 41 l4 10" fill="none" ${S3}/>` +
+      `<path d="M26 100 L50 82 L74 100 Z" fill="#ff8fa3" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`),
+    issun: () => wrap(
+      head(SKIN, 63, 24) +
+      `<path d="M23 56 A27 27 0 0 1 77 56 Z" fill="#c0392b" ${S3}/><rect x="19" y="53" width="62" height="7" rx="3" fill="#e74c3c" ${S3}/>` +
+      `<path d="M33 42 q8 -9 18 -9" fill="none" stroke="#fff" stroke-width="3" opacity=".7" stroke-linecap="round"/>` +
+      eyes(66, 10, 3.8) + blush(72, 16, 4.5) + smile(75, 5) +
+      `<path d="M84 95 L97 48" stroke="${N}" stroke-width="6" stroke-linecap="round"/><path d="M84 95 L97 48" stroke="#dfe3f0" stroke-width="3" stroke-linecap="round"/>` +
+      `<path d="M80 90 l10 3" ${S3}/>` +
+      collar('#3b8cff')),
+    akaoni: () => wrap(
+      `<path d="M34 36 L29 12 L45 31 Z" fill="#ffd93d" ${S3}/><path d="M66 36 L71 12 L55 31 Z" fill="#ffd93d" ${S3}/>` +
+      head('#ff4d4d') +
+      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#3a2e2e" ${S3}/>` +
+      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
+      eyes(63) + blush(70, 21) +
+      `<path d="M40 72 Q50 82 60 72 Z" fill="#c0392b" ${S3}/><path d="M43 72 l3 6 l3 -6 Z" fill="#fff"/><path d="M51 72 l3 6 l3 -6 Z" fill="#fff"/>` +
+      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
+    aooni: () => wrap(
+      `<path d="M43 34 L50 10 L57 34 Z" fill="#ffd93d" ${S3}/>` +
+      head('#3b8cff') +
+      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#2b2d5c" ${S3}/>` +
+      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
+      eyes(63) + blush(70, 21) +
+      `<path d="M40 72 Q50 80 60 72" fill="none" ${S3}/><path d="M43 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/><path d="M51 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/>` +
+      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
+    inu: () => wrap(
+      `<ellipse cx="21" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(14 21 54)"/><ellipse cx="79" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(-14 79 54)"/>` +
+      head('#fff4e0') +
+      `<circle cx="63" cy="58" r="10" fill="#b5651d"/>` +
+      eyes(59) + blush(67, 21) +
+      `<ellipse cx="50" cy="69" rx="5" ry="3.5" fill="${N}"/><path d="M50 72 v3 M44 77 q6 5 12 0" fill="none" ${S3}/>` +
+      `<path d="M47 78 q3 7 6 0 Z" fill="#ff8fa3" ${S3}/>` +
+      `<rect x="30" y="86" width="40" height="8" rx="4" fill="#ff4d4d" ${S3}/><circle cx="50" cy="94" r="4" fill="#ffd93d" ${S3}/>`),
+    saru: () => wrap(
+      `<circle cx="20" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="20" cy="54" r="4.5" fill="${SKIN}"/><circle cx="80" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="80" cy="54" r="4.5" fill="${SKIN}"/>` +
+      head('#c47a3a') +
+      `<ellipse cx="50" cy="62" rx="20" ry="17" fill="${SKIN}" ${S3}/>` +
+      eyes(58, 9, 4) + `<circle cx="47" cy="67" r="1.6" fill="${N}"/><circle cx="53" cy="67" r="1.6" fill="${N}"/>` + smile(72, 6) + blush(68, 15, 4.5) +
+      `<path d="M78 86 q13 -14 7 -28" fill="none" stroke="${N}" stroke-width="9" stroke-linecap="round"/><path d="M78 86 q13 -14 7 -28" fill="none" stroke="#ffd93d" stroke-width="5" stroke-linecap="round"/>`),
+    kiji: () => wrap(
+      `<ellipse cx="44" cy="25" rx="4" ry="9" fill="#ffd93d" ${S3} transform="rotate(-25 44 25)"/><ellipse cx="54" cy="24" rx="4" ry="9" fill="#ff6b35" ${S3} transform="rotate(10 54 24)"/>` +
+      head('#2ea86f') +
+      `<path d="M24 56 Q50 40 76 56 Q50 68 24 56 Z" fill="#ff4d4d" ${S3}/>` +
+      eyes(56, 13, 4) +
+      `<path d="M42 64 L58 64 L50 78 Z" fill="#ffd93d" ${S3}/>` +
+      blush(72, 21) +
+      `<path d="M23 78 Q50 92 77 78" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`),
+    kappa: () => wrap(
+      head('#7ed957') +
+      `<path d="M22 50 Q22 30 50 29 Q78 30 78 50 L72 45 L66 51 L60 45 L54 51 L48 45 L42 51 L36 45 L30 51 L24 45 Z" fill="#2e8b57" ${S3}/>` +
+      `<ellipse cx="50" cy="31" rx="15" ry="5.5" fill="#ffd93d" ${S3}/><ellipse cx="50" cy="30" rx="10" ry="2.5" fill="#fff6c2"/>` +
+      eyes(61) + blush(69, 21) +
+      `<path d="M43 69 L57 69 L50 78 Z" fill="#ffd93d" ${S3}/>` +
+      `<path d="M26 100 Q50 80 74 100 Z" fill="#2e8b57" ${S3}/><path d="M38 100 q12 -10 24 0" fill="none" ${S3}/>`),
+    binbo: () => wrap(
+      `<path d="M20 52 L15 32 L30 41 L33 21 L44 36 L52 17 L58 36 L68 23 L71 40 L85 31 L80 52 Z" fill="#8d7b6a" ${S3}/>` +
+      head('#e9e6f2') +
+      eyes(60) +
+      `<rect x="31" y="50" width="14" height="8" fill="#e9e6f2"/><rect x="55" y="50" width="14" height="8" fill="#e9e6f2"/>` +
+      `<path d="M31 58 h14 M55 58 h14" fill="none" ${S3}/>` +
+      `<path d="M42 73 q4 -4 8 0 q4 4 8 0" fill="none" ${S3}/>` +
+      `<circle cx="40" cy="79" r="1.2" fill="${N}"/><circle cx="46" cy="81" r="1.2" fill="${N}"/><circle cx="54" cy="81" r="1.2" fill="${N}"/><circle cx="60" cy="79" r="1.2" fill="${N}"/>` +
+      `<rect x="63" y="63" width="10" height="9" fill="#b5651d" ${S3}/><path d="M65 63 v-3 M71 72 v3" ${S3}/>` +
+      `<path d="M33 62 q-3 7 0 9 q3 -2 0 -9 Z" fill="#8ecdfb" ${S3}/>` +
+      `<path d="M26 100 L34 88 L42 100 L50 88 L58 100 L66 88 L74 100 Z" fill="#8d7b6a" ${S3}/>`),
+  };
+
+  const mug = (x, y, s = 1) => `<g transform="translate(${x} ${y}) scale(${s})">` +
+    `<path d="M30 10 h7 a7 7 0 0 1 0 14 h-7" fill="#fff" ${S3}/>` +
+    `<rect x="4" y="4" width="28" height="30" rx="5" fill="#ffb703" ${S3}/>` +
+    `<circle cx="9" cy="4" r="6" fill="#fff" ${S3}/><circle cx="18" cy="1" r="7" fill="#fff" ${S3}/><circle cx="27" cy="4" r="6" fill="#fff" ${S3}/>` +
+    `<circle cx="12" cy="24" r="2" fill="#fff" opacity=".8"/><circle cx="22" cy="18" r="1.6" fill="#fff" opacity=".8"/></g>`;
+  const star = (x, y, s = 1) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -8 l2.4 5.2 l5.6 .8 l-4 4 l1 5.6 l-5 -2.6 l-5 2.6 l1 -5.6 l-4 -4 l5.6 -.8 Z" fill="#ffd93d" ${S3}/>`;
+  const ICON_ART = {
+    self: () => wrap(mug(12, 14), '0 0 64 64'),
+    all: () => wrap(`<g transform="rotate(-18 20 40)">${mug(4, 20, .8)}</g><g transform="rotate(18 44 40)">${mug(30, 20, .8)}</g>${star(32, 12, 1)}${star(10, 14, .55)}${star(54, 14, .55)}`, '0 0 64 64'),
+    pick: () => wrap(
+      `<rect x="26" y="26" width="32" height="11" rx="5.5" fill="${SKIN}" ${S3}/>` +
+      `<rect x="8" y="22" width="28" height="30" rx="9" fill="${SKIN}" ${S3}/>` +
+      `<path d="M20 33 h10 M20 41 h10" fill="none" ${S3}/><path d="M14 22 q6 -9 13 0" fill="${SKIN}" ${S3}/>`, '0 0 64 64'),
+    chug: () => wrap(
+      `<path d="M32 6 C26 18 14 22 14 38 a18 18 0 0 0 36 0 c0 -10 -6 -14 -9 -21 c-2 6 -5 8 -7 6 c4 -8 2 -14 -2 -17 Z" fill="#ff6b35" ${S3}/>` +
+      `<path d="M32 30 c-5 6 -8 10 -8 16 a8 8 0 0 0 16 0 c0 -6 -3 -10 -8 -16 Z" fill="#ffd93d"/>`, '0 0 64 64'),
+    rest: () => wrap(
+      `<ellipse cx="30" cy="56" rx="22" ry="4.5" fill="#fff" ${S3}/>` +
+      `<path d="M14 28 h32 v12 a16 16 0 0 1 -32 0 Z" fill="#7ed957" ${S3}/><ellipse cx="30" cy="28" rx="16" ry="4.5" fill="#b7e4a3" ${S3}/>` +
+      `<path d="M46 32 h5 a6 6 0 0 1 0 12 h-5" fill="#fff" ${S3}/>` +
+      `<path d="M22 20 q4 -5 0 -11 M32 20 q4 -5 0 -11" fill="none" stroke="${N}" stroke-width="3" stroke-linecap="round" opacity=".6"/>`, '0 0 64 64'),
+    start: () => wrap(`<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h32 l-9 11 l9 11 h-32 Z" fill="#ff4d4d" ${S3}/>`, '0 0 64 64'),
+    goal: () => wrap(
+      `<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h34 v24 h-34 Z" fill="#fff" ${S3}/>` +
+      [[21, 10], [38, 10], [29.5, 18], [46.5, 18], [21, 26], [38, 26]].map(([x, y]) => `<rect x="${x}" y="${y}" width="8.5" height="8" fill="${N}"/>`).join(''), '0 0 64 64'),
+  };
+  return { CHAR_ART, ICON_ART };
 })();
 </script>
 
@@ -489,9 +707,12 @@ const Sugoroku = (() => {
 (() => {
   'use strict';
   const S = Sugoroku;
+  const { CHAR_ART, ICON_ART } = SugorokuArt;
   const $ = (id) => document.getElementById(id);
   const KEY_GAME = 'sugoroku.v1.game';
   const KEY_SETUP = 'sugoroku.v1.setup';
+  const CHAR_IDS = S.CHARACTERS.map((c) => c.id);
+  const CHAR_NAME = Object.fromEntries(S.CHARACTERS.map((c) => [c.id, c.name]));
   // サイコロの目ごとのピップ位置(3x3 の行/列)
   const PIPS = { 1: [[2, 2]], 2: [[1, 3], [3, 1]], 3: [[1, 3], [2, 2], [3, 1]], 4: [[1, 1], [1, 3], [3, 1], [3, 3]],
     5: [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3]], 6: [[1, 1], [1, 3], [2, 1], [2, 3], [3, 1], [3, 3]] };
@@ -505,11 +726,12 @@ const Sugoroku = (() => {
   };
 
   let state = null;                 // ゲーム状態。Sugoroku の純粋関数でのみ更新する
-  let setup = { size: 16, difficulty: 'normal', names: ['', ''] };
+  let setup = { size: 16, difficulty: 'normal', names: ['', ''], chars: CHAR_IDS.slice(0, 2) };
   let busy = false;                 // サイコロ・移動アニメ中
   let visPos = null;                // アニメ中の駒の見た目位置 { player, pos }
   let cols = 4;
   let peekTimer = null;
+  let pickingFor = null;            // キャラ選択中のプレイヤー添字
 
   function show(id) {
     for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
@@ -518,6 +740,12 @@ const Sugoroku = (() => {
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+
+  function setAvatar(el, charId, color) {
+    el.dataset.char = charId;
+    el.style.setProperty('--c', color);
+    el.innerHTML = CHAR_ART[charId]();
   }
 
   function renderDie(el, face) {
@@ -569,15 +797,22 @@ const Sugoroku = (() => {
     }
   }
 
+  function firstFreeChar() {
+    return CHAR_IDS.find((id) => !setup.chars.includes(id));
+  }
+
   function renderPlayers() {
     const wrap = $('players');
     wrap.innerHTML = '';
     setup.names.forEach((name, i) => {
       const row = document.createElement('div');
       row.className = 'player-row';
-      const sw = document.createElement('span');
-      sw.className = 'swatch';
-      sw.style.background = S.PLAYER_COLORS[i];
+      const av = document.createElement('button');
+      av.className = 'player-avatar';
+      av.type = 'button';
+      av.setAttribute('aria-label', 'キャラクターを選ぶ');
+      setAvatar(av, setup.chars[i], S.PLAYER_COLORS[i]);
+      av.addEventListener('click', () => openPicker(i));
       const input = document.createElement('input');
       input.className = 'player-name';
       input.placeholder = `プレイヤー${i + 1}`;
@@ -589,17 +824,36 @@ const Sugoroku = (() => {
       del.textContent = '✕';
       del.setAttribute('aria-label', '削除');
       del.disabled = setup.names.length <= S.MIN_PLAYERS;
-      del.addEventListener('click', () => { setup.names.splice(i, 1); renderPlayers(); });
-      row.append(sw, input, del);
+      del.addEventListener('click', () => { setup.names.splice(i, 1); setup.chars.splice(i, 1); renderPlayers(); });
+      row.append(av, input, del);
       wrap.appendChild(row);
     });
     $('add-player').disabled = setup.names.length >= S.MAX_PLAYERS;
   }
 
+  function openPicker(i) {
+    pickingFor = i;
+    const grid = $('picks');
+    grid.innerHTML = '';
+    for (const c of S.CHARACTERS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pick' + (setup.chars[i] === c.id ? ' selected' : '');
+      b.dataset.char = c.id;
+      b.disabled = setup.chars.includes(c.id) && setup.chars[i] !== c.id;
+      b.innerHTML = `${CHAR_ART[c.id]()}<span>${c.name}</span>`;
+      b.addEventListener('click', () => { setup.chars[i] = c.id; closePicker(); renderPlayers(); });
+      grid.appendChild(b);
+    }
+    $('picker-overlay').hidden = false;
+  }
+
+  function closePicker() { $('picker-overlay').hidden = true; pickingFor = null; }
+
   function startGame() {
     const names = setup.names.map((n) => n.trim());
-    store.set(KEY_SETUP, { size: setup.size, difficulty: setup.difficulty, names });
-    state = S.createGame({ size: setup.size, difficulty: setup.difficulty, names });
+    store.set(KEY_SETUP, { size: setup.size, difficulty: setup.difficulty, names, chars: setup.chars });
+    state = S.createGame({ size: setup.size, difficulty: setup.difficulty, names, chars: setup.chars });
     store.set(KEY_GAME, state);
     enterPlay();
   }
@@ -646,7 +900,7 @@ const Sugoroku = (() => {
       el.style.gridColumn = col + 1;
       const c = S.CATS[t.cat];
       const num = t.cat === 'start' || t.cat === 'goal' ? '' : t.index;
-      el.innerHTML = `<span class="band"></span><span class="num">${num}</span><span class="label">${c.label}</span><span class="icon">${c.icon}</span><div class="tokens"></div>`;
+      el.innerHTML = `<span class="band"></span><span class="num">${num}</span><span class="label">${c.label}</span><span class="icon">${ICON_ART[t.cat]()}</span><div class="tokens"></div>`;
       el.addEventListener('click', () => peek(t));
       board.appendChild(el);
     }
@@ -656,26 +910,26 @@ const Sugoroku = (() => {
   function tileEl(index) { return $('board').querySelector(`.tile[data-index="${index}"]`); }
 
   function renderTokens() {
-    for (const el of $('board').querySelectorAll('.tokens')) { el.innerHTML = ''; el.classList.remove('many'); }
+    for (const el of $('board').querySelectorAll('.tokens')) { el.innerHTML = ''; el.classList.remove('many', 'n2'); }
     for (const el of $('board').querySelectorAll('.tile.active')) el.classList.remove('active');
     state.players.forEach((p, i) => {
       const pos = visPos && visPos.player === i ? visPos.pos : p.pos;
       const tk = document.createElement('span');
       tk.className = 'token' + (visPos && visPos.player === i ? ' moving' : '');
-      tk.style.setProperty('--c', p.color);
-      tk.textContent = [...p.name][0] || '?';
+      setAvatar(tk, p.char, p.color);
       tk.title = p.name;
       tileEl(pos).querySelector('.tokens').appendChild(tk);
     });
     for (const el of $('board').querySelectorAll('.tokens')) {
-      if (el.children.length > 2) el.classList.add('many');
+      if (el.children.length > 3) el.classList.add('many');
+      else if (el.children.length > 1) el.classList.add('n2');
     }
     if (state.phase === 'play') tileEl(state.players[state.turn].pos).classList.add('active');
   }
 
   function renderHeader() {
     const p = state.players[state.turn];
-    $('turn-dot').style.background = p.color;
+    setAvatar($('turn-avatar'), p.char, p.color);
     $('turn-name').textContent = `${p.name} さんの番!`;
     const st = $('standings');
     st.innerHTML = '';
@@ -683,7 +937,11 @@ const Sugoroku = (() => {
       const chip = document.createElement('span');
       chip.className = 'chip' + (i === state.turn ? ' current' : '');
       const where = q.rank !== null ? `🏁 ${q.rank}着` : q.pos === 0 ? 'START' : `${q.pos}`;
-      chip.innerHTML = `<span class="dot" style="background:${q.color}"></span>${escapeHtml(q.name)} <b>${where}</b>`;
+      const av = document.createElement('span');
+      av.className = 'avatar sm';
+      setAvatar(av, q.char, q.color);
+      chip.appendChild(av);
+      chip.insertAdjacentHTML('beforeend', `${escapeHtml(q.name)} <b>${where}</b>`);
       st.appendChild(chip);
     });
   }
@@ -729,17 +987,34 @@ const Sugoroku = (() => {
     showCard(mv);
   }
 
+  function showConfetti() {
+    const box = $('confetti');
+    box.innerHTML = '';
+    const colors = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#fff'];
+    for (let i = 0; i < 50; i++) {
+      const piece = document.createElement('i');
+      piece.style.left = `${Math.random() * 100}%`;
+      piece.style.background = colors[i % colors.length];
+      piece.style.animationDelay = `${Math.random() * 1.2}s`;
+      piece.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
+      piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+      box.appendChild(piece);
+    }
+    box.hidden = false;
+  }
+
   function showCard(mv) {
     const p = state.players[mv.player];
     const tile = state.board[mv.to];
     const finished = mv.finished;
     const cat = finished ? 'goal' : tile.cat;
     const c = S.CATS[cat];
-    $('card-who').textContent = finished ? `${p.name} さん` : `${p.name} さん → マス ${mv.to}`;
-    $('card-icon').textContent = c.icon;
+    setAvatar($('card-avatar'), p.char, p.color);
+    $('card-who').textContent = finished ? `${p.name} さん(${CHAR_NAME[p.char]})` : `${p.name} さん(${CHAR_NAME[p.char]}) → マス ${mv.to}`;
+    $('card-icon').innerHTML = ICON_ART[cat]();
     $('card-cat').textContent = c.label;
     $('card-sub').textContent = mv.bounced ? 'ゴールで折り返し!' : '';
-    if (finished) $('card-text').textContent = `${p.rank}着でゴール!`;
+    if (finished) $('card-text').textContent = `${p.rank}着でゴール! やったね!`;
     else if (cat === 'rest') $('card-text').textContent = 'セーフ! 何もなし';
     else $('card-text').textContent = tile.text;
     const extra = !finished && tile.extraDice;
@@ -749,6 +1024,7 @@ const Sugoroku = (() => {
     renderDie($('extra-die'), 6);
     $('card').className = `card cat-${cat}`;
     $('card-overlay').hidden = false;
+    if (finished) showConfetti();
     $('card-ok').focus();
   }
 
@@ -762,6 +1038,7 @@ const Sugoroku = (() => {
 
   function onCardOk() {
     $('card-overlay').hidden = true;
+    $('confetti').hidden = true;
     state = S.endTurn(state);
     if (state.phase === 'result') {
       store.del(KEY_GAME);
@@ -780,6 +1057,7 @@ const Sugoroku = (() => {
     if (!state || state.phase !== 'play') return;
     if (!confirm('ゲームを終了して結果を見ますか?\n(未ゴールの人は進んでいる順で順位が付きます)')) return;
     $('card-overlay').hidden = true;
+    $('confetti').hidden = true;
     state = S.finishEarly(state);
     store.del(KEY_GAME);
     showResult();
@@ -805,17 +1083,40 @@ const Sugoroku = (() => {
   // ---------- 結果 ----------
   function showResult() {
     busy = false;
+    const ranked = S.ranking(state);
+    const podium = $('podium');
+    podium.innerHTML = '';
+    const top = ranked.slice(0, 3);
+    const order = [top[1], top[0], top[2]].filter(Boolean);
+    const medals = ['🥇', '🥈', '🥉'];
+    for (const p of order) {
+      const spot = document.createElement('div');
+      spot.className = `spot p${p.rank}`;
+      const av = document.createElement('span');
+      av.className = 'avatar';
+      setAvatar(av, p.char, p.color);
+      spot.appendChild(av);
+      spot.insertAdjacentHTML('beforeend', `<span class="pname">${escapeHtml(p.name)}</span><div class="block">${medals[p.rank - 1]}</div>`);
+      podium.appendChild(spot);
+    }
     const list = $('ranking');
     list.innerHTML = '';
-    const ranked = S.ranking(state);
-    const medals = ['🥇', '🥈', '🥉'];
     ranked.forEach((p, i) => {
-      const row = document.createElement('div');
       const last = i === ranked.length - 1;
+      if (i < 3 && !last) return;
+      if (i < 3 && last) { // 最下位が表彰台にいる(3人以下)
+        list.insertAdjacentHTML('beforeend', `<p class="last-note">🍻 ${escapeHtml(p.name)} さんが最下位! 罰ゲームはみんなで決めてね</p>`);
+        return;
+      }
+      const row = document.createElement('div');
       row.className = 'rank-row panel' + (last ? ' last' : '');
-      const medal = medals[i] || `${p.rank}位`;
+      const av = document.createElement('span');
+      av.className = 'avatar';
+      setAvatar(av, p.char, p.color);
       const note = last ? '<span class="note">🍻 最下位! 罰ゲームはみんなで決めてね</span>' : '';
-      row.innerHTML = `<span class="medal${medals[i] ? '' : ' plain'}">${medal}</span><span class="dot" style="background:${p.color}"></span><span class="name"><b>${escapeHtml(p.name)}</b>${note}</span>`;
+      row.innerHTML = `<span class="medal">${p.rank}位</span>`;
+      row.appendChild(av);
+      row.insertAdjacentHTML('beforeend', `<span class="name"><b>${escapeHtml(p.name)}</b>${note}</span>`);
       list.appendChild(row);
     });
     show('screen-result');
@@ -829,6 +1130,9 @@ const Sugoroku = (() => {
       if (S.DIFFICULTIES[saved.difficulty]) setup.difficulty = saved.difficulty;
       if (Array.isArray(saved.names) && saved.names.length >= S.MIN_PLAYERS && saved.names.length <= S.MAX_PLAYERS) {
         setup.names = saved.names.map((n) => String(n ?? ''));
+        const chars = Array.isArray(saved.chars) ? saved.chars : [];
+        const ok = chars.length === setup.names.length && chars.every((c) => CHAR_IDS.includes(c)) && new Set(chars).size === chars.length;
+        setup.chars = ok ? chars.slice() : CHAR_IDS.slice(0, setup.names.length);
       }
     }
     renderChoices();
@@ -836,13 +1140,16 @@ const Sugoroku = (() => {
     renderDie($('die'), 6);
 
     const game = store.get(KEY_GAME);
-    const resumable = game && game.version === 1 && game.phase === 'play' && Array.isArray(game.board);
+    const resumable = game && game.version === 1 && game.phase === 'play' && Array.isArray(game.board)
+      && game.players.every((p) => CHAR_IDS.includes(p.char));
     $('resume-banner').hidden = !resumable;
 
-    $('add-player').addEventListener('click', () => { setup.names.push(''); renderPlayers(); });
+    $('add-player').addEventListener('click', () => { setup.names.push(''); setup.chars.push(firstFreeChar()); renderPlayers(); });
     $('start').addEventListener('click', startGame);
     $('resume').addEventListener('click', () => { state = game; enterPlay(); });
     $('discard').addEventListener('click', () => { store.del(KEY_GAME); $('resume-banner').hidden = true; });
+    $('picker-close').addEventListener('click', closePicker);
+    $('picker-overlay').addEventListener('click', (e) => { if (e.target === $('picker-overlay')) closePicker(); });
     $('roll').addEventListener('click', onRoll);
     $('card-ok').addEventListener('click', onCardOk);
     $('extra-dice').addEventListener('click', onExtraDice);

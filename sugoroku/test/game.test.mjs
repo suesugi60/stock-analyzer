@@ -169,3 +169,27 @@ test('状態は JSON で保存・復元しても同じように動く', () => {
   const restored = JSON.parse(JSON.stringify(g));
   assert.deepEqual(S.applyRoll(restored, 5), S.applyRoll(g, 5));
 });
+
+test('CHARACTERS: 12体あり、id と名前が一意', () => {
+  assert.equal(S.CHARACTERS.length, 12);
+  assert.equal(new Set(S.CHARACTERS.map((c) => c.id)).size, 12);
+  assert.equal(new Set(S.CHARACTERS.map((c) => c.name)).size, 12);
+  for (const c of S.CHARACTERS) assert.ok(c.id && c.name);
+});
+
+test('createGame: キャラ未指定なら先頭から順に重複なく割り当てる', () => {
+  const g = newGame(['a', 'b', 'c']);
+  assert.deepEqual(g.players.map((p) => p.char), S.CHARACTERS.slice(0, 3).map((c) => c.id));
+});
+
+test('createGame: 指定したキャラが各プレイヤーに入る', () => {
+  const g = S.createGame({ size: 16, difficulty: 'normal', names: ['a', 'b'], chars: ['kappa', 'akaoni'], rng: seeded(1) });
+  assert.deepEqual(g.players.map((p) => p.char), ['kappa', 'akaoni']);
+});
+
+test('createGame: キャラの重複・不明な id・人数不一致は例外', () => {
+  const base = { size: 16, difficulty: 'normal', names: ['a', 'b'], rng: seeded(1) };
+  assert.throws(() => S.createGame({ ...base, chars: ['kappa', 'kappa'] }));
+  assert.throws(() => S.createGame({ ...base, chars: ['kappa', 'dragon'] }));
+  assert.throws(() => S.createGame({ ...base, chars: ['kappa'] }));
+});

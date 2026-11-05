@@ -74,7 +74,11 @@ test('終了ボタンで結果画面に全員の順位が出る', async () => {
   assert.equal(await page.locator('.tile').count(), 100);
   await page.click('#end');
   await page.locator('#screen-result').waitFor({ state: 'visible', ...T });
-  assert.equal(await page.locator('.rank-row').count(), 2);
+  // 上位3人は表彰台、それ以外は順位の行。合わせて全員分
+  const spots = await page.locator('.podium .spot').count();
+  const rows = await page.locator('.rank-row').count();
+  assert.equal(spots + rows, 2);
+  assert.equal(await page.locator('.podium .avatar[data-char]').count(), 2);
   await ctx.close();
 });
 
@@ -109,5 +113,33 @@ test('サイコロを振ると出目のピップが表示される', async () =>
   const face = Number(await page.locator('#die').getAttribute('data-face'));
   assert.ok(face >= 1 && face <= 6, `data-face=${face}`);
   assert.equal(await page.locator('#die .pip').count(), face);
+  await ctx.close();
+});
+
+test('キャラクターを選ぶと、駒と手番表示にそのキャラが出る', async () => {
+  const { page, ctx, errors } = await newPage();
+  await page.locator('.player-avatar').nth(0).click();
+  await page.locator('#picker').waitFor({ state: 'visible', ...T });
+  assert.equal(await page.locator('#picker .pick').count(), 12);
+  await page.click('#picker .pick[data-char="kappa"]');
+  await page.locator('#picker').waitFor({ state: 'hidden', ...T });
+  assert.equal(await page.locator('.player-avatar').nth(0).getAttribute('data-char'), 'kappa');
+
+  // 2人目のピッカーでは kappa は選べない
+  await page.locator('.player-avatar').nth(1).click();
+  await page.locator('#picker').waitFor({ state: 'visible', ...T });
+  assert.ok(await page.locator('#picker .pick[data-char="kappa"]').isDisabled());
+  await page.click('#picker .pick[data-char="momotaro"]');
+  await page.locator('#picker').waitFor({ state: 'hidden', ...T });
+
+  await page.locator('.player-name').nth(0).fill('A');
+  await page.locator('.player-name').nth(1).fill('B');
+  await page.click('#start');
+  await page.locator('#screen-play').waitFor({ state: 'visible', ...T });
+  assert.equal(await page.locator('.token[data-char="kappa"]').count(), 1);
+  assert.equal(await page.locator('.token[data-char="momotaro"]').count(), 1);
+  assert.equal(await page.locator('#turn-avatar').getAttribute('data-char'), 'kappa');
+  assert.ok((await page.locator('#turn-avatar svg').count()) >= 1, 'アバターはSVG');
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
