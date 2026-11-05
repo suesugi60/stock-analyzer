@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>飲みスゴロク</title>
+</head>
+<body>
+<script id="sugoroku-logic">
+// ===== ゲームロジック(純粋関数。DOM・localStorage に依存しない) =====
+const Sugoroku = (() => {
+  'use strict';
+
+  const SIZES = [16, 32, 50, 100];
+
+  const DIFFICULTIES = {
+    easy:   { label: '優しめ', hint: 'グラスの3分の1',   drink: 'グラスの3分の1を飲む', double: 'グラスの3分の2を飲む',
+              ratios: { rest: 40, self: 30, pick: 20, all: 10, chug: 0 } },
+    normal: { label: '普通',   hint: 'グラスの半分',     drink: 'グラスの半分を飲む',   double: 'グラス1杯を飲む',
+              ratios: { rest: 25, self: 30, pick: 25, all: 12, chug: 8 } },
+    hard:   { label: '難しい', hint: 'グラス1杯を一気',  drink: 'グラス1杯を一気!',     double: 'グラス2杯を一気!',
+              ratios: { rest: 12, self: 30, pick: 28, all: 15, chug: 15 } },
+    oni:    { label: '鬼',     hint: '全部ショット',     drink: 'ショット1杯!',         double: 'ショット2杯!',
+              ratios: { rest: 0, self: 25, pick: 30, all: 20, chug: 25 } },
+  };
+
+  const CATS = {
+    start: { icon: '🚩', label: 'START' },
+    goal:  { icon: '🏁', label: 'GOAL' },
+    rest:  { icon: '😌', label: '休憩' },
+    self:  { icon: '🍺', label: '自分' },
+    pick:  { icon: '👉', label: '指名' },
+    all:   { icon: '🍻', label: '全員' },
+    chug:  { icon: '🔥', label: '一気' },
+  };
+
+  // {drink} = 1人分の基本量、{double} = 一気マス用の重い量(難易度で置換)
+  const TEXTS = {
+    self: [
+      'あなたが{drink}',
+      '立ち上がって{drink}',
+      '全員の手拍子の中で{drink}',
+      '右隣の人と乾杯してから、あなただけ{drink}',
+      '利き手と逆の手で{drink}',
+      '全員に「いつもありがとう」と言ってから{drink}',
+      '今の順位を大声で宣言してから{drink}',
+      '目を閉じて{drink}',
+      '一番好きな食べ物を言ってから{drink}',
+      { text: 'もう1回サイコロを振る。奇数なら{drink}、偶数ならセーフ', extraDice: true },
+      { text: 'もう1回サイコロを振る。4以上ならあなたが{drink}、3以下なら右隣の人が{drink}', extraDice: true },
+      'ものまねを1つ披露してから{drink}',
+      '最近あった嬉しいことを1つ話してから{drink}',
+      '全員と目を合わせてから{drink}',
+    ],
+    pick: [
+      '好きな人を1人指名。その人が{drink}',
+      '右隣の人が{drink}',
+      '左隣の人が{drink}',
+      '自分より進んでいる人全員が{drink}。いなければあなたが{drink}',
+      '自分より遅れている人全員が{drink}。いなければあなたが{drink}',
+      '今トップの人が{drink}(あなたなら右隣の人)',
+      '今ビリの人が{drink}(あなたなら左隣の人)',
+      '右隣の人とじゃんけん。負けた方が{drink}',
+      '左隣の人とじゃんけん。負けた方が{drink}',
+      '一番最近トイレに行った人が{drink}',
+      '一番遅く集合した人が{drink}',
+      '好きな人を指名して、あなたとその人の2人で{drink}',
+      '一番年上の人が{drink}',
+      '一番年下の人が{drink}',
+      'スマホの充電が一番少ない人が{drink}',
+      'あなたの両隣の2人が{drink}',
+      '誕生日が一番近い人が{drink}',
+    ],
+    all: [
+      '全員で乾杯して{drink}',
+      'あなた以外の全員が{drink}',
+      '全員でじゃんけん。最後まで勝ち残った1人だけ免除、他は{drink}',
+      '全員が同時に{drink}。一番遅かった人はもう1回',
+      'あなたが乾杯の音頭を取って、全員が{drink}',
+      '全員が{drink}。ゴール済みの人も参加',
+      '全員立ち上がって{drink}。飲み終わった人から座る',
+      '全員で「お疲れさま!」と叫んでから{drink}',
+    ],
+    chug: [
+      'あなたが{double}',
+      '好きな人を1人指名。その人が{double}',
+      '全員でじゃんけん。最後まで負け残った人が{double}',
+      '全員が{drink}。あなたは{double}',
+      '右隣の人とあなたの2人が{double}',
+      { text: 'もう1回サイコロを振る。偶数なら{double}、奇数なら{drink}', extraDice: true },
+      '今ビリの人とあなたが{double}(あなたがビリなら右隣の人と)',
+      '全員が{double}',
+    ],
+  };
+
+  // ---- ユーティリティ ----
+  function shuffle(arr, rng) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  /** 最大剰余法: 合計 n になるように割合からカテゴリ別個数を出す。 */
+  function largestRemainder(n, ratios) {
+    const cats = Object.keys(ratios);
+    const raw = cats.map((k) => (n * ratios[k]) / 100);
+    const base = raw.map(Math.floor);
+    let rest = n - base.reduce((a, b) => a + b, 0);
+    const order = cats
+      .map((k, i) => ({ i, r: raw[i] - base[i] }))
+      .sort((a, b) => b.r - a.r || a.i - b.i);
+    for (const o of order) {
+      if (rest <= 0) break;
+      base[o.i] += 1;
+      rest -= 1;
+    }
+    const out = {};
+    cats.forEach((k, i) => { out[k] = base[i]; });
+    return out;
+  }
+
+  function fillText(text, diff) {
+    return text.replace(/\{drink\}/g, diff.drink).replace(/\{double\}/g, diff.double);
+  }
+
+  /** カテゴリごとに文言を順に配る。プールを使い切ったら再シャッフル。 */
+  function makeDealer(rng) {
+    const state = {};
+    return (cat) => {
+      let s = state[cat];
+      if (!s || s.i >= s.pool.length) {
+        s = state[cat] = { pool: shuffle(TEXTS[cat], rng), i: 0 };
+      }
+      const entry = s.pool[s.i++];
+      return typeof entry === 'string' ? { text: entry } : entry;
+    };
+  }
+
+  /**
+   * 指令マスのカテゴリ列を作る(長さ n、tile 1..n に対応)。
+   * - 一気(chug)は隣接しない
+   * - tile 1〜3 に一気・全員を置かない
+   * 一気以外を並べてから、一気を「隙間」に1個ずつ差し込む構成的な方法で作る。
+   */
+  function arrangeCats(counts, rng) {
+    const others = [];
+    for (const cat of Object.keys(counts)) {
+      if (cat === 'chug') continue;
+      for (let i = 0; i < counts[cat]; i++) others.push(cat);
+    }
+    let base = shuffle(others, rng);
+    // 先頭3つに all があれば、後ろの all 以外と入れ替える
+    for (let i = 0; i < Math.min(3, base.length); i++) {
+      if (base[i] !== 'all') continue;
+      const candidates = [];
+      for (let j = 3; j < base.length; j++) if (base[j] !== 'all') candidates.push(j);
+      if (candidates.length === 0) break;
+      const j = candidates[Math.floor(rng() * candidates.length)];
+      [base[i], base[j]] = [base[j], base[i]];
+    }
+    // 一気を差し込む隙間(gap g は base[g] の直前。g >= 3 のみ許可)
+    const k = counts.chug || 0;
+    const gaps = [];
+    for (let g = 3; g <= base.length; g++) gaps.push(g);
+    const chosen = new Set(shuffle(gaps, rng).slice(0, k));
+    const out = [];
+    for (let g = 0; g <= base.length; g++) {
+      if (chosen.has(g)) out.push('chug');
+      if (g < base.length) out.push(base[g]);
+    }
+    return out;
+  }
+
+  function generateBoard(size, difficulty, rng = Math.random) {
+    if (!SIZES.includes(size)) throw new Error('マス数が不正: ' + size);
+    const diff = DIFFICULTIES[difficulty];
+    if (!diff) throw new Error('難易度が不正: ' + difficulty);
+    const n = size - 2;
+    const counts = largestRemainder(n, diff.ratios);
+    const cats = arrangeCats(counts, rng);
+    const deal = makeDealer(rng);
+    const board = [{ index: 0, cat: 'start' }];
+    cats.forEach((cat, i) => {
+      const tile = { index: i + 1, cat };
+      if (cat !== 'rest') {
+        const entry = deal(cat);
+        tile.text = fillText(entry.text, diff);
+        if (entry.extraDice) tile.extraDice = true;
+      }
+      board.push(tile);
+    });
+    board.push({ index: size - 1, cat: 'goal' });
+    return board;
+  }
+
+  // ---- ゲーム進行 ----
+  const MIN_PLAYERS = 2;
+  const MAX_PLAYERS = 8;
+  const PLAYER_COLORS = ['#ff6b6b', '#4dabf7', '#51cf66', '#ffd43b', '#cc5de8', '#ff922b', '#22d3ee', '#f783ac'];
+
+  function clone(state) { return JSON.parse(JSON.stringify(state)); }
+
+  function createGame({ size, difficulty, names, rng = Math.random }) {
+    if (!Array.isArray(names) || names.length < MIN_PLAYERS || names.length > MAX_PLAYERS) {
+      throw new Error(`プレイヤーは${MIN_PLAYERS}〜${MAX_PLAYERS}人`);
+    }
+    const board = generateBoard(size, difficulty, rng);
+    const players = names.map((raw, i) => ({
+      name: (String(raw ?? '').trim()) || `プレイヤー${i + 1}`,
+      color: PLAYER_COLORS[i],
+      pos: 0,
+      rank: null,
+    }));
+    return { version: 1, size, difficulty, board, players, turn: 0, phase: 'play', nextRank: 1, lastMove: null };
+  }
+
+  function applyRoll(state, roll) {
+    if (state.phase !== 'play') throw new Error('ゲームは終了しています');
+    if (!Number.isInteger(roll) || roll < 1 || roll > 6) throw new Error('出目が不正: ' + roll);
+    const s = clone(state);
+    const p = s.players[s.turn];
+    if (p.rank !== null) throw new Error('ゴール済みのプレイヤーです');
+    const goal = s.size - 1;
+    const path = [];
+    let pos = p.pos;
+    let dir = 1;
+    for (let i = 0; i < roll; i++) {
+      if (pos === goal) dir = -1; // ゴールで折り返し
+      pos += dir;
+      path.push(pos);
+    }
+    const bounced = dir === -1;
+    const finished = pos === goal;
+    p.pos = pos;
+    if (finished) {
+      p.rank = s.nextRank;
+      s.nextRank += 1;
+    }
+    s.lastMove = { player: s.turn, roll, from: state.players[state.turn].pos, to: pos, path, bounced, finished };
+    return s;
+  }
+
+  function endTurn(state) {
+    const s = clone(state);
+    s.lastMove = null;
+    const n = s.players.length;
+    for (let k = 1; k <= n; k++) {
+      const i = (s.turn + k) % n;
+      if (s.players[i].rank === null) {
+        s.turn = i;
+        return s;
+      }
+    }
+    s.phase = 'result';
+    return s;
+  }
+
+  function finishEarly(state) {
+    const s = clone(state);
+    const pending = s.players
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.rank === null)
+      .sort((a, b) => b.p.pos - a.p.pos || a.i - b.i);
+    for (const { p } of pending) {
+      p.rank = s.nextRank;
+      s.nextRank += 1;
+    }
+    s.lastMove = null;
+    s.phase = 'result';
+    return s;
+  }
+
+  function ranking(state) {
+    return state.players.slice().sort((a, b) => a.rank - b.rank);
+  }
+
+  return {
+    SIZES, DIFFICULTIES, CATS, TEXTS, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
+    generateBoard, largestRemainder, createGame, applyRoll, endTurn, finishEarly, ranking,
+  };
+})();
+</script>
+</body>
+</html>
