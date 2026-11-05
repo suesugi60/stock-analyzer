@@ -87,3 +87,27 @@ test('マスをタップすると指令が見える', async () => {
   assert.ok(txt.length > 0);
   await ctx.close();
 });
+
+test('マスは蛇行の向きに線路でつながり、ゴールには線路が出ない', async () => {
+  const { page, ctx } = await newPage(); // 390px 幅 → 16マスは4列
+  await setupAndStart(page, ['A', 'B'], '16');
+  const cls = async (i) => (await page.locator(`.tile[data-index="${i}"]`).getAttribute('class')).split(/\s+/);
+  assert.ok((await cls(0)).includes('link-right'), 'START は右へ');
+  assert.ok((await cls(3)).includes('link-down'), '行末は下へ');
+  assert.ok((await cls(4)).includes('link-left'), '2行目は左へ');
+  assert.ok((await cls(7)).includes('link-down'), '2行目の行末は下へ');
+  assert.ok((await cls(8)).includes('link-right'), '3行目は右へ');
+  assert.ok(!(await cls(15)).some((c) => c.startsWith('link-')), 'GOAL からは出ない');
+  await ctx.close();
+});
+
+test('サイコロを振ると出目のピップが表示される', async () => {
+  const { page, ctx } = await newPage();
+  await setupAndStart(page, ['A', 'B'], '16');
+  await page.click('#roll');
+  await page.locator('#card').waitFor({ state: 'visible', ...T });
+  const face = Number(await page.locator('#die').getAttribute('data-face'));
+  assert.ok(face >= 1 && face <= 6, `data-face=${face}`);
+  assert.equal(await page.locator('#die .pip').count(), face);
+  await ctx.close();
+});
