@@ -3,9 +3,171 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1117">
 <title>飲みスゴロク</title>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --panel-2: #262b3a; --line: #343a4d;
+  --text: #f1f3f5; --muted: #9aa0ad; --accent: #ffb020; --accent-text: #1a1200; --danger: #ff6b6b;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; -webkit-text-size-adjust: 100%; }
+body { min-height: 100dvh; }
+.screen { max-width: 960px; margin: 0 auto; padding: 16px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
+[hidden] { display: none !important; }
+h1 { font-size: 1.6rem; margin: 8px 0 16px; }
+h2 { font-size: .95rem; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; border-radius: var(--radius);
+  background: var(--panel-2); padding: 12px 16px; touch-action: manipulation; }
+button:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--accent); color: var(--accent-text); font-weight: 700; font-size: 1.15rem; width: 100%; padding: 16px; }
+.btn-ghost { background: transparent; color: var(--muted); }
+
+/* ---- セットアップ ---- */
+.choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.choice { padding: 12px 4px; text-align: center; background: var(--panel); border: 2px solid var(--line); border-radius: var(--radius); }
+.choice .big { font-size: 1.25rem; font-weight: 700; display: block; }
+.choice .hint { font-size: .7rem; color: var(--muted); display: block; margin-top: 4px; line-height: 1.3; }
+.choice[aria-pressed="true"] { border-color: var(--accent); background: #2a2410; }
+.player-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.player-row .swatch { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+.player-row input { flex: 1; min-width: 0; font: inherit; font-size: 1rem; padding: 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.player-row button { padding: 10px 12px; }
+#add-player { width: 100%; margin-top: 4px; }
+.notice { font-size: .8rem; color: var(--muted); background: var(--panel); padding: 10px 12px; border-radius: 12px; margin: 16px 0; line-height: 1.6; }
+.banner { background: #1f2a3a; border: 1px solid #2f4466; padding: 12px; border-radius: var(--radius);
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.banner span { flex: 1; font-weight: 600; }
+.banner .btn-primary { width: auto; font-size: 1rem; padding: 10px 16px; }
+
+/* ---- ゲーム ---- */
+#screen-play { padding-top: 0; }
+.topbar { position: sticky; top: 0; z-index: 5; background: linear-gradient(var(--bg) 88%, transparent); padding: 12px 0 10px; }
+.turn { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.turn .dot { width: 16px; height: 16px; border-radius: 50%; flex: none; border: 2px solid #fff; }
+#turn-name { font-size: 1.25rem; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#roll { font-size: 1.3rem; display: flex; justify-content: center; align-items: center; gap: 12px; }
+#roll .die { font-size: 2rem; line-height: 1; width: 1.3em; display: inline-block; text-align: center; }
+.standings { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 2px; scrollbar-width: none; }
+.standings::-webkit-scrollbar { display: none; }
+.chip { flex: none; font-size: .78rem; padding: 4px 10px; border-radius: 999px; background: var(--panel);
+  border: 1px solid var(--line); display: flex; align-items: center; gap: 6px; }
+.chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+.chip.current { border-color: var(--accent); }
+.board { display: grid; gap: 6px; margin-top: 8px; }
+.tile { position: relative; aspect-ratio: 1; border-radius: 12px; background: var(--panel); border: 2px solid transparent;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 4px;
+  min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tile .num { position: absolute; top: 3px; left: 6px; font-size: .68rem; color: var(--muted); font-weight: 600; }
+.tile .icon { font-size: 1.35rem; line-height: 1.2; }
+.tile .label { font-size: .62rem; color: var(--muted); }
+.tile.cat-start { background: #1e3a5f; } .tile.cat-goal { background: #5a3a08; }
+.tile.cat-rest { background: #262c3a; } .tile.cat-self { background: #4a2d08; }
+.tile.cat-pick { background: #1a2d5a; } .tile.cat-all { background: #0e3d2a; } .tile.cat-chug { background: #5a1414; }
+.tile.active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,176,32,.25); }
+.tile.landed { animation: pop .35s ease; }
+@keyframes pop { 50% { transform: scale(1.08); } }
+.tokens { position: absolute; left: 3px; right: 3px; bottom: 3px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; }
+.token { width: 20px; height: 20px; border-radius: 50%; font-size: .7rem; font-weight: 700; color: #111;
+  display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.tokens.many .token { width: 13px; height: 13px; font-size: 0; border-width: 1px; }
+.token.moving { transform: scale(1.3); z-index: 2; }
+
+/* ---- カード・吹き出し ---- */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.74); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
+.card { width: min(480px, 100%); background: var(--panel); border-radius: 20px; padding: 22px 20px; text-align: center;
+  border: 2px solid var(--line); animation: rise .25s ease; }
+@keyframes rise { from { transform: translateY(20px); opacity: 0; } }
+.card .who { font-size: .9rem; color: var(--muted); }
+.card .icon { font-size: 3.2rem; line-height: 1.2; margin: 4px 0; }
+.card .cat { font-size: .85rem; font-weight: 700; letter-spacing: .15em; color: var(--muted); }
+.card .sub { font-size: .9rem; color: var(--accent); font-weight: 700; margin-top: 6px; min-height: 1.2em; }
+.card .text { font-size: 1.35rem; font-weight: 700; line-height: 1.5; margin: 10px 0 18px; overflow-wrap: anywhere; }
+.card .extra { margin-bottom: 14px; }
+.card .extra .result { font-size: 2.6rem; font-weight: 800; min-height: 1.3em; line-height: 1.3; }
+.card.cat-chug { border-color: #dc2626; } .card.cat-goal { border-color: var(--accent); }
+.card.cat-all { border-color: #059669; } .card.cat-pick { border-color: #2563eb; } .card.cat-self { border-color: #d97706; }
+#peek { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; z-index: 10; font-size: .95rem; line-height: 1.5;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5); cursor: pointer; }
+#peek .head { font-size: .75rem; color: var(--muted); margin-bottom: 2px; }
+
+/* ---- 結果 ---- */
+.rank-row { display: flex; align-items: center; gap: 12px; background: var(--panel); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; }
+.rank-row .medal { font-size: 1.5rem; width: 2em; text-align: center; }
+.rank-row .dot { width: 14px; height: 14px; border-radius: 50%; }
+.rank-row .name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rank-row .name b { font-weight: 700; font-size: 1.05rem; overflow-wrap: anywhere; }
+.rank-row .note { font-size: .78rem; color: var(--danger); }
+.rank-row .medal.plain { font-size: 1rem; color: var(--muted); }
+.rank-row.last { border: 1px solid var(--danger); }
+.actions { display: grid; gap: 8px; margin-top: 16px; }
+.actions button { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .tile.landed, .card { animation: none; } }
+</style>
 </head>
 <body>
+<main>
+<section id="screen-setup" class="screen">
+  <h1>🍻 飲みスゴロク</h1>
+  <div id="resume-banner" class="banner" hidden>
+    <span>前回の続きがあります</span>
+    <button id="resume" class="btn-primary">続きから</button>
+    <button id="discard" class="btn-ghost">破棄</button>
+  </div>
+  <h2>マス数</h2>
+  <div class="choices" id="size-choices"></div>
+  <h2>難易度</h2>
+  <div class="choices" id="diff-choices"></div>
+  <h2>プレイヤー(2〜8人)</h2>
+  <div id="players"></div>
+  <button id="add-player">＋ プレイヤーを追加</button>
+  <p class="notice">飲めない人はソフトドリンクでOK。無理な飲酒は絶対にしないこと。<br>ゴールはぴったり止まる必要があります。超えた分は折り返して戻ります。<br>100マス × 鬼はかなりの量になります。</p>
+  <button id="start" class="btn-primary">ゲームスタート</button>
+</section>
+
+<section id="screen-play" class="screen" hidden>
+  <div class="topbar">
+    <div class="turn">
+      <span class="dot" id="turn-dot"></span>
+      <span id="turn-name"></span>
+      <button id="end" class="btn-ghost">終了</button>
+    </div>
+    <button id="roll" class="btn-primary"><span class="die" id="die">🎲</span><span id="roll-label">サイコロを振る</span></button>
+    <div class="standings" id="standings"></div>
+  </div>
+  <div class="board" id="board"></div>
+</section>
+
+<section id="screen-result" class="screen" hidden>
+  <h1>🏁 結果発表</h1>
+  <div id="ranking"></div>
+  <div class="actions">
+    <button id="again" class="btn-primary">同じ設定でもう一度</button>
+    <button id="to-setup">設定に戻る</button>
+  </div>
+</section>
+</main>
+
+<div id="card-overlay" class="overlay" hidden>
+  <div id="card" class="card">
+    <div class="who" id="card-who"></div>
+    <div class="icon" id="card-icon"></div>
+    <div class="cat" id="card-cat"></div>
+    <div class="sub" id="card-sub"></div>
+    <div class="text" id="card-text"></div>
+    <div class="extra" id="card-extra" hidden>
+      <button id="extra-dice">🎲 サイコロを振る</button>
+      <div class="result" id="extra-result"></div>
+    </div>
+    <button id="card-ok" class="btn-primary">OK!</button>
+  </div>
+</div>
+<div id="peek" hidden></div>
+
 <script id="sugoroku-logic">
 // ===== ゲームロジック(純粋関数。DOM・localStorage に依存しない) =====
 const Sugoroku = (() => {
@@ -281,6 +443,355 @@ const Sugoroku = (() => {
     SIZES, DIFFICULTIES, CATS, TEXTS, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
     generateBoard, largestRemainder, createGame, applyRoll, endTurn, finishEarly, ranking,
   };
+})();
+</script>
+
+<script>
+// ===== 表示層(DOM・localStorage・アニメーション) =====
+(() => {
+  'use strict';
+  const S = Sugoroku;
+  const $ = (id) => document.getElementById(id);
+  const KEY_GAME = 'sugoroku.v1.game';
+  const KEY_SETUP = 'sugoroku.v1.setup';
+  const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, reduced ? 0 : ms));
+
+  const store = {
+    get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 保存できなくても動く */ } },
+    del(k) { try { localStorage.removeItem(k); } catch { /* 同上 */ } },
+  };
+
+  let state = null;                 // ゲーム状態。Sugoroku の純粋関数でのみ更新する
+  let setup = { size: 16, difficulty: 'normal', names: ['', ''] };
+  let busy = false;                 // サイコロ・移動アニメ中
+  let visPos = null;                // アニメ中の駒の見た目位置 { player, pos }
+  let cols = 4;
+  let peekTimer = null;
+
+  function show(id) {
+    for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
+    window.scrollTo(0, 0);
+  }
+
+  // ---------- セットアップ ----------
+  function renderChoices() {
+    const sc = $('size-choices');
+    sc.innerHTML = '';
+    for (const size of S.SIZES) {
+      const b = document.createElement('button');
+      b.className = 'choice';
+      b.dataset.size = size;
+      b.setAttribute('aria-pressed', String(size === setup.size));
+      b.innerHTML = `<span class="big">${size}</span><span class="hint">マス</span>`;
+      b.addEventListener('click', () => { setup.size = size; renderChoices(); });
+      sc.appendChild(b);
+    }
+    const dc = $('diff-choices');
+    dc.innerHTML = '';
+    for (const [key, d] of Object.entries(S.DIFFICULTIES)) {
+      const b = document.createElement('button');
+      b.className = 'choice';
+      b.dataset.diff = key;
+      b.setAttribute('aria-pressed', String(key === setup.difficulty));
+      b.innerHTML = `<span class="big">${d.label}</span><span class="hint">${d.hint}</span>`;
+      b.addEventListener('click', () => { setup.difficulty = key; renderChoices(); });
+      dc.appendChild(b);
+    }
+  }
+
+  function renderPlayers() {
+    const wrap = $('players');
+    wrap.innerHTML = '';
+    setup.names.forEach((name, i) => {
+      const row = document.createElement('div');
+      row.className = 'player-row';
+      const sw = document.createElement('span');
+      sw.className = 'swatch';
+      sw.style.background = S.PLAYER_COLORS[i];
+      const input = document.createElement('input');
+      input.className = 'player-name';
+      input.placeholder = `プレイヤー${i + 1}`;
+      input.maxLength = 12;
+      input.value = name;
+      input.addEventListener('input', () => { setup.names[i] = input.value; });
+      const del = document.createElement('button');
+      del.textContent = '✕';
+      del.setAttribute('aria-label', '削除');
+      del.disabled = setup.names.length <= S.MIN_PLAYERS;
+      del.addEventListener('click', () => { setup.names.splice(i, 1); renderPlayers(); });
+      row.append(sw, input, del);
+      wrap.appendChild(row);
+    });
+    $('add-player').disabled = setup.names.length >= S.MAX_PLAYERS;
+  }
+
+  function startGame() {
+    const names = setup.names.map((n) => n.trim());
+    store.set(KEY_SETUP, { size: setup.size, difficulty: setup.difficulty, names });
+    state = S.createGame({ size: setup.size, difficulty: setup.difficulty, names });
+    store.set(KEY_GAME, state);
+    enterPlay();
+  }
+
+  // ---------- ゲーム画面 ----------
+  function enterPlay() {
+    busy = false;
+    visPos = null;
+    resetRollButton();
+    show('screen-play');
+    renderBoard();
+    renderHeader();
+    if (state.lastMove) showCard(state.lastMove); // 復帰時: 指令カードの途中だった
+    else scrollToTile(state.players[state.turn].pos, false);
+  }
+
+  function computeCols() {
+    const w = Math.min(window.innerWidth, 960) - 32;
+    if (state.size === 16) return 4;
+    if (state.size === 32) return w >= 700 ? 8 : 4;
+    return w >= 700 ? 10 : 5;
+  }
+
+  function renderBoard() {
+    cols = computeCols();
+    const board = $('board');
+    board.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    board.innerHTML = '';
+    for (const t of state.board) {
+      const el = document.createElement('div');
+      el.className = `tile cat-${t.cat}`;
+      el.dataset.index = t.index;
+      const row = Math.floor(t.index / cols);
+      const col = row % 2 === 0 ? t.index % cols : cols - 1 - (t.index % cols); // 蛇行
+      el.style.gridRow = row + 1;
+      el.style.gridColumn = col + 1;
+      const c = S.CATS[t.cat];
+      const num = t.cat === 'start' || t.cat === 'goal' ? '' : t.index;
+      el.innerHTML = `<span class="num">${num}</span><span class="icon">${c.icon}</span><span class="label">${c.label}</span><div class="tokens"></div>`;
+      el.addEventListener('click', () => peek(t));
+      board.appendChild(el);
+    }
+    renderTokens();
+  }
+
+  function tileEl(index) { return $('board').querySelector(`.tile[data-index="${index}"]`); }
+
+  function renderTokens() {
+    for (const el of $('board').querySelectorAll('.tokens')) { el.innerHTML = ''; el.classList.remove('many'); }
+    for (const el of $('board').querySelectorAll('.tile.active')) el.classList.remove('active');
+    state.players.forEach((p, i) => {
+      const pos = visPos && visPos.player === i ? visPos.pos : p.pos;
+      const tk = document.createElement('span');
+      tk.className = 'token' + (visPos && visPos.player === i ? ' moving' : '');
+      tk.style.background = p.color;
+      tk.textContent = [...p.name][0] || '?';
+      tk.title = p.name;
+      tileEl(pos).querySelector('.tokens').appendChild(tk);
+    });
+    for (const el of $('board').querySelectorAll('.tokens')) {
+      if (el.children.length > 3) el.classList.add('many');
+    }
+    if (state.phase === 'play') tileEl(state.players[state.turn].pos).classList.add('active');
+  }
+
+  function renderHeader() {
+    const p = state.players[state.turn];
+    $('turn-dot').style.background = p.color;
+    $('turn-name').textContent = `${p.name} さんの番`;
+    const st = $('standings');
+    st.innerHTML = '';
+    state.players.forEach((q, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'chip' + (i === state.turn ? ' current' : '');
+      const where = q.rank !== null ? `🏁 ${q.rank}着` : q.pos === 0 ? 'START' : `${q.pos}`;
+      chip.innerHTML = `<span class="dot" style="background:${q.color}"></span>${escapeHtml(q.name)} <b>${where}</b>`;
+      st.appendChild(chip);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+
+  function scrollToTile(index, smooth = true) {
+    const el = tileEl(index);
+    if (el) el.scrollIntoView({ block: 'center', behavior: smooth && !reduced ? 'smooth' : 'auto' });
+  }
+
+  function resetRollButton() {
+    $('die').textContent = '🎲';
+    $('roll-label').textContent = 'サイコロを振る';
+    $('roll').disabled = false;
+  }
+
+  async function onRoll() {
+    if (busy || !state || state.phase !== 'play') return;
+    busy = true;
+    $('roll').disabled = true;
+    hidePeek();
+    const roll = 1 + Math.floor(Math.random() * 6);
+    const next = S.applyRoll(state, roll);
+    store.set(KEY_GAME, next); // アニメ中にリロードされても結果は残す
+    const mv = next.lastMove;
+
+    const t0 = Date.now();
+    while (!reduced && Date.now() - t0 < 700) {
+      $('die').textContent = FACES[Math.floor(Math.random() * 6)];
+      await sleep(70);
+    }
+    $('die').textContent = FACES[roll - 1];
+    $('roll-label').textContent = `${roll} が出た!`;
+    await sleep(500);
+
+    for (const pos of mv.path) {
+      visPos = { player: mv.player, pos };
+      renderTokens();
+      scrollToTile(pos);
+      await sleep(230);
+    }
+    visPos = null;
+    state = next;
+    renderTokens();
+    renderHeader();
+    const landed = tileEl(mv.to);
+    landed.classList.add('landed');
+    await sleep(200);
+    showCard(mv);
+  }
+
+  function showCard(mv) {
+    const p = state.players[mv.player];
+    const tile = state.board[mv.to];
+    const finished = mv.finished;
+    const cat = finished ? 'goal' : tile.cat;
+    const c = S.CATS[cat];
+    $('card-who').textContent = finished ? `${p.name} さん` : `${p.name} さん → マス ${mv.to}`;
+    $('card-icon').textContent = c.icon;
+    $('card-cat').textContent = c.label;
+    $('card-sub').textContent = mv.bounced ? 'ゴールで折り返し!' : '';
+    if (finished) $('card-text').textContent = `${p.rank}着でゴール!`;
+    else if (cat === 'rest') $('card-text').textContent = 'セーフ! 何もなし';
+    else $('card-text').textContent = tile.text;
+    const extra = !finished && tile.extraDice;
+    $('card-extra').hidden = !extra;
+    $('extra-result').textContent = '';
+    $('extra-dice').disabled = false;
+    $('card').className = `card cat-${cat}`;
+    $('card-overlay').hidden = false;
+    $('card-ok').focus();
+  }
+
+  async function onExtraDice() {
+    const btn = $('extra-dice');
+    btn.disabled = true;
+    const r = 1 + Math.floor(Math.random() * 6);
+    const t0 = Date.now();
+    while (!reduced && Date.now() - t0 < 600) {
+      $('extra-result').textContent = FACES[Math.floor(Math.random() * 6)];
+      await sleep(70);
+    }
+    $('extra-result').textContent = `${FACES[r - 1]} ${r}`;
+  }
+
+  function onCardOk() {
+    $('card-overlay').hidden = true;
+    state = S.endTurn(state);
+    if (state.phase === 'result') {
+      store.del(KEY_GAME);
+      showResult();
+      return;
+    }
+    store.set(KEY_GAME, state);
+    busy = false;
+    resetRollButton();
+    renderHeader();
+    renderTokens();
+    scrollToTile(state.players[state.turn].pos);
+  }
+
+  function onEnd() {
+    if (!state || state.phase !== 'play') return;
+    if (!confirm('ゲームを終了して結果を見ますか?\n(未ゴールの人は進んでいる順で順位が付きます)')) return;
+    $('card-overlay').hidden = true;
+    state = S.finishEarly(state);
+    store.del(KEY_GAME);
+    showResult();
+  }
+
+  function peek(t) {
+    const box = $('peek');
+    const c = S.CATS[t.cat];
+    let body;
+    if (t.cat === 'start') body = 'スタート地点。サイコロの目だけ進みます。';
+    else if (t.cat === 'goal') body = 'ゴール。ぴったり止まらないと超えた分だけ戻ります。';
+    else if (t.cat === 'rest') body = '休憩。何もなし。';
+    else body = t.text;
+    const head = t.cat === 'start' || t.cat === 'goal' ? `${c.icon} ${c.label}` : `マス ${t.index} · ${c.icon} ${c.label}`;
+    box.innerHTML = `<div class="head">${head}</div>${escapeHtml(body)}`;
+    box.hidden = false;
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(hidePeek, 4000);
+  }
+
+  function hidePeek() { $('peek').hidden = true; clearTimeout(peekTimer); }
+
+  // ---------- 結果 ----------
+  function showResult() {
+    busy = false;
+    const list = $('ranking');
+    list.innerHTML = '';
+    const ranked = S.ranking(state);
+    const medals = ['🥇', '🥈', '🥉'];
+    ranked.forEach((p, i) => {
+      const row = document.createElement('div');
+      const last = i === ranked.length - 1;
+      row.className = 'rank-row' + (last ? ' last' : '');
+      const medal = medals[i] || `${p.rank}位`;
+      const note = last ? '<span class="note">🍻 最下位! 罰ゲームはみんなで決めてね</span>' : '';
+      row.innerHTML = `<span class="medal${medals[i] ? '' : ' plain'}">${medal}</span><span class="dot" style="background:${p.color}"></span><span class="name"><b>${escapeHtml(p.name)}</b>${note}</span>`;
+      list.appendChild(row);
+    });
+    show('screen-result');
+  }
+
+  // ---------- 初期化 ----------
+  function init() {
+    const saved = store.get(KEY_SETUP);
+    if (saved && typeof saved === 'object') {
+      if (S.SIZES.includes(saved.size)) setup.size = saved.size;
+      if (S.DIFFICULTIES[saved.difficulty]) setup.difficulty = saved.difficulty;
+      if (Array.isArray(saved.names) && saved.names.length >= S.MIN_PLAYERS && saved.names.length <= S.MAX_PLAYERS) {
+        setup.names = saved.names.map((n) => String(n ?? ''));
+      }
+    }
+    renderChoices();
+    renderPlayers();
+
+    const game = store.get(KEY_GAME);
+    const resumable = game && game.version === 1 && game.phase === 'play' && Array.isArray(game.board);
+    $('resume-banner').hidden = !resumable;
+
+    $('add-player').addEventListener('click', () => { setup.names.push(''); renderPlayers(); });
+    $('start').addEventListener('click', startGame);
+    $('resume').addEventListener('click', () => { state = game; enterPlay(); });
+    $('discard').addEventListener('click', () => { store.del(KEY_GAME); $('resume-banner').hidden = true; });
+    $('roll').addEventListener('click', onRoll);
+    $('card-ok').addEventListener('click', onCardOk);
+    $('extra-dice').addEventListener('click', onExtraDice);
+    $('end').addEventListener('click', onEnd);
+    $('peek').addEventListener('click', hidePeek);
+    $('again').addEventListener('click', () => { startGame(); });
+    $('to-setup').addEventListener('click', () => { $('resume-banner').hidden = true; renderChoices(); renderPlayers(); show('screen-setup'); });
+    window.addEventListener('resize', () => {
+      if (!state || $('screen-play').hidden) return;
+      if (computeCols() !== cols) renderBoard();
+    });
+  }
+
+  init();
 })();
 </script>
 </body>
