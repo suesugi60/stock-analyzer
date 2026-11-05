@@ -39,6 +39,8 @@ svg { display: block; }
 .outline { color: #fff; -webkit-text-stroke: 4px var(--navy); paint-order: stroke fill; text-shadow: 0 3px 0 var(--navy); }
 .title { font-size: 2.2rem; font-weight: 900; margin: 10px 0 18px; text-align: center; line-height: 1.3; }
 .title .stroke { color: var(--yellow); -webkit-text-stroke: 7px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy); }
+.title.small { font-size: 1.7rem; }
+.title.small .stroke { -webkit-text-stroke: 6px var(--navy); }
 h2 { font-size: .95rem; margin: 22px 0 8px; font-weight: 900; }
 h2::before { content: '▶ '; color: var(--red); }
 .panel { background: var(--cream); border: 3px solid var(--navy); border-radius: 16px; box-shadow: 4px 4px 0 var(--navy); }
@@ -77,10 +79,14 @@ h2::before { content: '▶ '; color: var(--red); }
 .banner { padding: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .banner span { flex: 1; font-weight: 900; }
 .banner .btn-primary { width: auto; font-size: 1rem; padding: 10px 16px; }
+.pick-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 14px; }
+.pick-head .ptitle { font-size: 1.1rem; font-weight: 900; }
+.pick-head .hint-text { margin: 2px 0 0; }
 .picks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+@media (min-width: 700px) { .picks { grid-template-columns: repeat(6, 1fr); } }
 .pick { font: inherit; font-weight: 900; font-size: .68rem; color: var(--navy); background: #fff; border: 3px solid var(--navy); border-radius: 14px;
   box-shadow: 0 4px 0 var(--navy); padding: 8px 2px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
-.pick svg { width: 48px; height: 48px; }
+.pick svg { width: 100%; max-width: 72px; height: auto; aspect-ratio: 1; }
 .pick.selected { background: var(--yellow); transform: translateY(4px); box-shadow: none; }
 .pick:disabled { opacity: .35; cursor: default; }
 
@@ -99,31 +105,41 @@ h2::before { content: '▶ '; color: var(--red); }
 .standings::-webkit-scrollbar { display: none; }
 .chip { flex: none; font-size: .78rem; padding: 3px 10px 3px 4px; border-radius: 999px; background: #fff; border: 2px solid var(--navy); display: flex; align-items: center; gap: 6px; }
 .chip.current { background: var(--yellow); }
-.board-wrap { background: var(--grass); border: 3px solid var(--navy); border-radius: 18px; padding: 10px; box-shadow: 4px 4px 0 var(--navy); margin-top: 8px;
-  background-image: linear-gradient(45deg, rgba(255,255,255,.1) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.1) 75%, transparent 75%);
-  background-size: 26px 26px; }
+.board-wrap { background-color: var(--grass); border: 3px solid var(--navy); border-radius: 18px; padding: 12px; box-shadow: 4px 4px 0 var(--navy); margin-top: 8px;
+  background-image:
+    radial-gradient(circle at 12px 14px, #fff 0 2.5px, transparent 3px), radial-gradient(circle at 48px 60px, #ffd93d 0 2.5px, transparent 3px),
+    radial-gradient(circle at 80px 24px, #ff8fa3 0 2.5px, transparent 3px), radial-gradient(circle at 30px 84px, #fff 0 2px, transparent 2.5px),
+    linear-gradient(45deg, rgba(255,255,255,.1) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.1) 75%, transparent 75%);
+  background-size: 96px 96px, 96px 96px, 96px 96px, 96px 96px, 26px 26px; }
 .board { display: grid; gap: var(--gap); position: relative; z-index: 0; }
-.tile { position: relative; aspect-ratio: 1; border-radius: 12px; background: var(--cream); border: 3px solid var(--navy); box-shadow: 3px 3px 0 var(--navy);
-  min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
-.tile .band { position: absolute; left: 0; right: 0; top: 0; height: 30%; background: var(--cat); border-radius: 8px 8px 0 0; border-bottom: 3px solid var(--navy); }
-.tile .num, .tile .label { position: absolute; top: 1px; font-size: .62rem; font-weight: 900; color: #fff; line-height: 1.6;
+.tile { position: relative; aspect-ratio: 1; border-radius: 14px; border: 3px solid var(--navy); box-shadow: 0 5px 0 var(--navy);
+  background: color-mix(in srgb, var(--cat) 22%, #fff); min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tile .band { position: absolute; left: 0; right: 0; top: 0; height: 28%; background: var(--cat); border-radius: 10px 10px 0 0; border-bottom: 3px solid var(--navy); }
+.tile.cat-chug .band { background: repeating-linear-gradient(-45deg, #ef233c 0 7px, #ff5c5c 7px 14px); }
+.tile.cat-goal .band { background: repeating-linear-gradient(-45deg, #ff6b35 0 7px, #ffa62b 7px 14px); }
+.tile .label { position: absolute; top: 0; left: 0; right: 0; height: 28%; display: flex; align-items: center; justify-content: center; font-size: .66rem; font-weight: 900; color: #fff; letter-spacing: .05em;
   text-shadow: 1px 0 0 var(--navy), -1px 0 0 var(--navy), 0 1px 0 var(--navy), 0 -1px 0 var(--navy), 1px 1px 0 var(--navy), -1px -1px 0 var(--navy), 1px -1px 0 var(--navy), -1px 1px 0 var(--navy); }
-.tile .num { left: 5px; } .tile .label { right: 5px; }
-.tile .icon { position: absolute; left: 22%; right: 22%; top: 36%; bottom: 10%; }
+.tile .num { position: absolute; top: -8px; left: -8px; width: 22px; height: 22px; border-radius: 50%; background: var(--yellow); border: 2px solid var(--navy); box-shadow: 0 2px 0 var(--navy);
+  font-size: .62rem; font-weight: 900; color: var(--navy); display: flex; align-items: center; justify-content: center; z-index: 3; }
+.tile .num:empty { display: none; }
+.tile .icon { position: absolute; left: 50%; top: 60%; width: 60%; aspect-ratio: 1; transform: translate(-50%, -50%); background: #fff; border: 2.5px solid var(--navy); border-radius: 50%;
+  padding: 11%; box-shadow: 0 3px 0 var(--navy); }
 .tile .icon svg { width: 100%; height: 100%; }
-.tile.active { outline: 4px solid var(--yellow); outline-offset: 1px; }
+.tile.cat-chug .icon { animation: glow 1.1s ease-in-out infinite alternate; }
+@keyframes glow { from { box-shadow: 0 3px 0 var(--navy), 0 0 0 0 rgba(255,107,53,0); } to { box-shadow: 0 3px 0 var(--navy), 0 0 0 6px rgba(255,107,53,.45); } }
+.tile.active { outline: 4px solid var(--yellow); outline-offset: 2px; }
 .tile.landed { animation: pop .35s ease; }
 @keyframes pop { 50% { transform: scale(1.1); } }
 /* 線路(蛇行の向きに隣のマスへ) */
 .tile::after { content: ''; position: absolute; z-index: -1; display: none; background: var(--navy); }
-.tile.link-right::after, .tile.link-left::after { display: block; top: 50%; height: 12px; width: calc(var(--gap) + 14px); transform: translateY(-50%);
+.tile.link-right::after, .tile.link-left::after { display: block; top: 50%; height: 14px; width: calc(var(--gap) + 14px); transform: translateY(-50%);
   background: linear-gradient(var(--yellow), var(--yellow)) center / 100% 4px no-repeat, var(--navy); }
 .tile.link-right::after { left: 100%; }
 .tile.link-left::after { right: 100%; }
-.tile.link-down::after { display: block; left: 50%; width: 12px; height: calc(var(--gap) + 14px); top: 100%; transform: translateX(-50%);
+.tile.link-down::after { display: block; left: 50%; width: 14px; height: calc(var(--gap) + 14px); top: 100%; transform: translateX(-50%);
   background: linear-gradient(var(--yellow), var(--yellow)) center / 4px 100% no-repeat, var(--navy); }
 /* 駒(キャラクター) */
-.tokens { position: absolute; left: 0; right: 0; bottom: 2px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; z-index: 2; }
+.tokens { position: absolute; left: 0; right: 0; bottom: -4px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; z-index: 2; }
 .token { width: 30px; height: 30px; border-radius: 50%; background: #fff; border: 2px solid var(--c); box-shadow: 0 0 0 2px var(--navy); overflow: hidden; flex: none;
   transition: transform .15s; }
 .token svg { width: 100%; height: 100%; }
@@ -131,6 +147,34 @@ h2::before { content: '▶ '; color: var(--red); }
 .tokens.many { gap: 1px; }
 .tokens.many .token { width: 13px; height: 13px; border-width: 1.5px; box-shadow: 0 0 0 1.5px var(--navy); }
 .token.moving { transform: scale(1.35) translateY(-5px); z-index: 3; }
+
+/* ---- サイコロを振るシーン(器 + 立体サイコロ) ---- */
+.dice-overlay { z-index: 30; background: rgba(43,45,92,.6); cursor: pointer; }
+.dice-stage { width: min(420px, 100%); display: flex; flex-direction: column; align-items: center; gap: 10px; user-select: none; -webkit-user-select: none; }
+.thrower { display: flex; align-items: center; gap: 10px; }
+.thrower .bubble { background: #fff; border: 3px solid var(--navy); border-radius: 14px; padding: 8px 14px; font-weight: 900; position: relative; box-shadow: 3px 3px 0 var(--navy); }
+.thrower .bubble::before { content: ''; position: absolute; left: -10px; top: 50%; width: 14px; height: 14px; background: #fff; border-left: 3px solid var(--navy); border-bottom: 3px solid var(--navy); transform: translateY(-50%) rotate(45deg); }
+.bowl { position: relative; width: 300px; height: 230px; }
+.bowl-back { position: absolute; left: 10px; right: 10px; top: 70px; height: 150px; border-radius: 50% 50% 46% 46% / 40% 40% 60% 60%; background: linear-gradient(#f3eee2, #cfc6b3); border: 4px solid var(--navy); box-shadow: 0 8px 0 var(--navy); }
+.bowl-back::before { content: ''; position: absolute; left: 6px; right: 6px; top: -4px; height: 70px; border-radius: 50%; background: radial-gradient(ellipse at 50% 60%, #6f6356 0, #8b7f70 55%, #b8ad9a 100%); border: 4px solid var(--navy); }
+.bowl-back::after { content: ''; position: absolute; left: 40px; right: 40px; top: 16px; height: 36px; border-radius: 50%; background: rgba(0,0,0,.25); }
+.bowl-front { position: absolute; left: 10px; right: 10px; top: 100px; height: 120px; border-radius: 8% 8% 46% 46% / 10% 10% 60% 60%; background: linear-gradient(#fbf7ee, #d8d0bd); border: 4px solid var(--navy); border-top: 0; pointer-events: none; z-index: 3; }
+.bowl-front::after { content: ''; position: absolute; left: 0; right: 0; top: 34px; height: 10px; background: #ff4d4d; border-top: 3px solid var(--navy); border-bottom: 3px solid var(--navy); }
+.dice-area { position: absolute; left: 50%; top: 92px; width: 0; height: 0; perspective: 520px; z-index: 2; }
+.cube-tilt { position: absolute; left: -32px; top: -32px; transform-style: preserve-3d; transform: rotateX(24deg); }
+.cube { width: 64px; height: 64px; position: relative; transform-style: preserve-3d; }
+.cube .face { position: absolute; inset: 0; background: linear-gradient(145deg, #fff, #e9ebff); border: 3px solid var(--navy); border-radius: 12px; display: grid;
+  grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); padding: 7px; box-sizing: border-box; }
+.cube .face .pip { width: 10px; height: 10px; border-radius: 50%; background: var(--navy); align-self: center; justify-self: center; }
+.cube .f1 { transform: translateZ(32px); } .cube .f6 { transform: rotateY(180deg) translateZ(32px); }
+.cube .f2 { transform: rotateY(90deg) translateZ(32px); } .cube .f5 { transform: rotateY(-90deg) translateZ(32px); }
+.cube .f3 { transform: rotateX(90deg) translateZ(32px); } .cube .f4 { transform: rotateX(-90deg) translateZ(32px); }
+.cube-shadow { position: absolute; left: -34px; top: 42px; width: 68px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.35); filter: blur(2px); }
+.dice-result { position: absolute; left: 0; right: 0; top: -36px; text-align: center; font-size: 4rem; font-weight: 900; z-index: 4; pointer-events: none; }
+.dice-result:not(:empty) { animation: result-pop .35s cubic-bezier(.2,1.6,.5,1); }
+@keyframes result-pop { from { transform: scale(.3); opacity: 0; } }
+.dice-hint { color: #fff; font-size: .8rem; opacity: .85; }
+.mute { font-size: 1rem; padding: 6px 9px; box-shadow: 0 3px 0 var(--navy); }
 
 /* ---- 指令カード(メッセージ窓) ---- */
 .overlay { position: fixed; inset: 0; background: rgba(43,45,92,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; overflow-y: auto; }
@@ -175,7 +219,7 @@ h2::before { content: '▶ '; color: var(--red); }
 .last-note { text-align: center; font-weight: 900; color: var(--red); margin: 4px 0 10px; }
 .actions { display: grid; gap: 12px; margin-top: 18px; }
 .actions .btn { width: 100%; }
-@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling, .clouds, .confetti i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling, .clouds, .confetti i, .tile.cat-chug .icon, .dice-result { animation: none; } }
 </style>
 </head>
 <body>
@@ -193,11 +237,21 @@ h2::before { content: '▶ '; color: var(--red); }
   <h2>難易度</h2>
   <div class="choices" id="diff-choices"></div>
   <h2>プレイヤー(2〜8人)</h2>
-  <p class="hint-text">顔をタップするとキャラクターを選べます</p>
+  <p class="hint-text">スタートを押すと、ひとりずつキャラクターを選びます(顔をタップしても選べます)</p>
   <div id="players"></div>
   <button id="add-player" class="btn">＋ プレイヤーを追加</button>
   <p class="notice panel">飲めない人はソフトドリンクでOK。無理な飲酒は絶対にしないこと。<br>ゴールはぴったり止まる必要があります。超えた分は折り返して戻ります。<br>100マス × 鬼はかなりの量になります。</p>
   <button id="start" class="btn btn-primary">ゲームスタート</button>
+</section>
+
+<section id="screen-pick" class="screen" hidden>
+  <h1 class="title small"><span class="stroke">キャラクターをえらぶ</span></h1>
+  <div class="pick-head panel">
+    <span class="avatar lg" id="pick-avatar"></span>
+    <div><div class="ptitle" id="pick-title"></div><p class="hint-text" id="pick-hint">好きなキャラをタップしてね</p></div>
+  </div>
+  <div class="picks" id="picks"></div>
+  <button id="pick-back" class="btn" style="margin-top:16px;width:100%">もどる</button>
 </section>
 
 <section id="screen-play" class="screen" hidden>
@@ -205,6 +259,7 @@ h2::before { content: '▶ '; color: var(--red); }
     <div class="turn panel">
       <span class="avatar" id="turn-avatar"></span>
       <span id="turn-name"></span>
+      <button id="mute" class="btn mute" aria-label="音の切り替え">🔊</button>
       <button id="end" class="btn btn-ghost">終了</button>
     </div>
     <button id="roll" class="btn btn-primary btn-roll"><span class="die" id="die"></span><span id="roll-label">サイコロを振る</span></button>
@@ -224,16 +279,6 @@ h2::before { content: '▶ '; color: var(--red); }
 </section>
 </main>
 
-<div id="picker-overlay" class="overlay" hidden>
-  <div id="picker" class="card cat-goal">
-    <div class="card-band"><span class="cat outline">キャラクターをえらぶ</span></div>
-    <div class="card-body">
-      <div class="picks" id="picks"></div>
-      <button id="picker-close" class="btn" style="margin-top:14px;width:100%">とじる</button>
-    </div>
-  </div>
-</div>
-
 <div id="card-overlay" class="overlay" hidden>
   <div id="card" class="card">
     <div class="card-band"><span class="icon" id="card-icon"></span><span class="cat outline" id="card-cat"></span></div>
@@ -243,15 +288,174 @@ h2::before { content: '▶ '; color: var(--red); }
       <div class="sub" id="card-sub"></div>
       <div class="text" id="card-text"></div>
       <div class="extra" id="card-extra" hidden>
-        <button id="extra-dice" class="btn"><span class="die" id="extra-die"></span>サイコロを振る</button>
+        <button id="extra-dice" class="btn">🎲 サイコロを振る</button>
         <div class="result" id="extra-result"></div>
       </div>
       <button id="card-ok" class="btn btn-primary">OK!</button>
     </div>
   </div>
 </div>
+<div id="dice-overlay" class="overlay dice-overlay" hidden>
+  <div class="dice-stage">
+    <div class="thrower"><span class="avatar lg" id="dice-thrower"></span><div class="bubble" id="dice-thrower-name"></div></div>
+    <div class="bowl">
+      <div class="bowl-back"></div>
+      <div class="dice-area">
+        <div class="cube-shadow" id="cube-shadow"></div>
+        <div class="cube-tilt"><div class="cube" id="cube"></div></div>
+      </div>
+      <div class="bowl-front"></div>
+      <div class="dice-result outline" id="dice-result"></div>
+    </div>
+    <div class="dice-hint">タップで飛ばす</div>
+  </div>
+</div>
 <div id="confetti" class="confetti" hidden></div>
 <div id="peek" class="panel" hidden></div>
+
+<script>
+// ===== キャラクターとアイコンの絵(インラインSVG) =====
+const SugorokuArt = (() => {
+  'use strict';
+  const N = '#2b2d5c';
+  const S3 = `stroke="${N}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"`;
+  const SKIN = '#ffe3c8';
+  const wrap = (inner, vb = '0 0 100 100') => `<svg viewBox="${vb}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${inner}</svg>`;
+  const head = (fill, cy = 58, r = 29) => `<circle cx="50" cy="${cy}" r="${r}" fill="${fill}" ${S3}/>`;
+  const eyes = (y = 58, dx = 12, r = 4.2) => [-dx, dx].map((d) =>
+    `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="${N}"/><circle cx="${50 + d - 1.4}" cy="${y - 1.4}" r="1.5" fill="#fff"/>`).join('');
+  const blush = (y = 66, dx = 20, r = 5) => [-dx, dx].map((d) => `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="#ff8fa3" opacity=".75"/>`).join('');
+  const smile = (y = 70, w = 6) => `<path d="M${50 - w} ${y} Q50 ${y + 6} ${50 + w} ${y}" fill="none" ${S3}/>`;
+  const openMouth = (y = 70) => `<path d="M43 ${y} Q50 ${y + 10} 57 ${y} Z" fill="#c0392b" ${S3}/>`;
+  const collar = (fill) => `<path d="M28 100 L50 84 L72 100 Z" fill="${fill}" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`;
+
+  const CHAR_ART = {
+    momotaro: () => wrap(
+      head(SKIN) +
+      `<path d="M22 52 Q28 28 50 27 Q72 28 78 52 Q64 44 50 46 Q36 44 22 52 Z" fill="#3a2e2e" ${S3}/>` +
+      `<path d="M50 27 q-2 -8 5 -13" fill="none" ${S3}/>` +
+      `<rect x="19" y="44" width="62" height="10" rx="4" fill="#fff" ${S3}/>` +
+      `<path d="M81 47 l11 -6 l-3 9 l9 3 l-17 1 Z" fill="#fff" ${S3}/>` +
+      `<circle cx="50" cy="49" r="3.5" fill="#ff4d4d"/>` +
+      eyes(62) + blush(69) + smile(73) +
+      `<circle cx="85" cy="25" r="9" fill="#ffb3c6" ${S3}/><path d="M85 17 v8" fill="none" ${S3}/><path d="M85 19 q6 -7 11 -2 q-6 4 -11 2 Z" fill="#2ec27e" ${S3}/>` +
+      collar('#3b8cff')),
+    kintaro: () => wrap(
+      head(SKIN, 60) +
+      `<path d="M21 60 A29 29 0 0 1 79 60 L79 62 L72 56 L65 62 L58 56 L51 62 L44 56 L37 62 L30 56 L23 62 L21 62 Z" fill="#3a2e2e" ${S3}/>` +
+      eyes(69, 12) + blush(75, 21, 6) + smile(79, 6) +
+      `<path d="M33 86 h34 v14 h-34 Z" fill="#ff4d4d" ${S3}/>` +
+      `<text x="50" y="99" font-size="13" font-weight="900" text-anchor="middle" fill="#ffd93d" font-family="sans-serif">金</text>`),
+    urashima: () => wrap(
+      head(SKIN, 60, 28) +
+      `<path d="M8 46 L50 16 L92 46 Z" fill="#e8c36a" ${S3}/><path d="M8 46 Q50 56 92 46 Q50 52 8 46 Z" fill="#d9ad4f" ${S3}/>` +
+      eyes(63) + blush(70) + smile(74) +
+      `<path d="M92 94 L98 46" fill="none" ${S3}/><path d="M98 46 q4 14 -5 24" fill="none" stroke="${N}" stroke-width="2"/>` +
+      `<ellipse cx="16" cy="90" rx="10" ry="7" fill="#2ec27e" ${S3}/><circle cx="27" cy="88" r="4" fill="#7ed957" ${S3}/>` +
+      collar('#2ec27e')),
+    kaguya: () => wrap(
+      `<path d="M20 50 Q20 20 50 20 Q80 20 80 50 L83 100 L17 100 Z" fill="#2b2d5c" ${S3}/>` +
+      head(SKIN, 58, 27) +
+      `<path d="M23 54 Q29 32 50 31 Q71 32 77 54 Q64 46 57 56 Q50 42 43 56 Q36 46 23 54 Z" fill="#2b2d5c"/>` +
+      eyes(61) + blush(68, 19) +
+      `<path d="M46 73 Q50 77 54 73 Z" fill="#ff4d4d" ${S3}/>` +
+      `<circle cx="77" cy="36" r="5" fill="#ffd93d" ${S3}/><path d="M77 41 l-4 10 M77 41 l4 10" fill="none" ${S3}/>` +
+      `<path d="M26 100 L50 82 L74 100 Z" fill="#ff8fa3" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`),
+    issun: () => wrap(
+      head(SKIN, 63, 24) +
+      `<path d="M23 56 A27 27 0 0 1 77 56 Z" fill="#c0392b" ${S3}/><rect x="19" y="53" width="62" height="7" rx="3" fill="#e74c3c" ${S3}/>` +
+      `<path d="M33 42 q8 -9 18 -9" fill="none" stroke="#fff" stroke-width="3" opacity=".7" stroke-linecap="round"/>` +
+      eyes(66, 10, 3.8) + blush(72, 16, 4.5) + smile(75, 5) +
+      `<path d="M84 95 L97 48" stroke="${N}" stroke-width="6" stroke-linecap="round"/><path d="M84 95 L97 48" stroke="#dfe3f0" stroke-width="3" stroke-linecap="round"/>` +
+      `<path d="M80 90 l10 3" ${S3}/>` +
+      collar('#3b8cff')),
+    akaoni: () => wrap(
+      `<path d="M34 36 L29 12 L45 31 Z" fill="#ffd93d" ${S3}/><path d="M66 36 L71 12 L55 31 Z" fill="#ffd93d" ${S3}/>` +
+      head('#ff4d4d') +
+      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#3a2e2e" ${S3}/>` +
+      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
+      eyes(63) + blush(70, 21) +
+      `<path d="M40 72 Q50 82 60 72 Z" fill="#c0392b" ${S3}/><path d="M43 72 l3 6 l3 -6 Z" fill="#fff"/><path d="M51 72 l3 6 l3 -6 Z" fill="#fff"/>` +
+      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
+    aooni: () => wrap(
+      `<path d="M43 34 L50 10 L57 34 Z" fill="#ffd93d" ${S3}/>` +
+      head('#3b8cff') +
+      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#2b2d5c" ${S3}/>` +
+      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
+      eyes(63) + blush(70, 21) +
+      `<path d="M40 72 Q50 80 60 72" fill="none" ${S3}/><path d="M43 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/><path d="M51 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/>` +
+      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
+    inu: () => wrap(
+      `<ellipse cx="21" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(14 21 54)"/><ellipse cx="79" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(-14 79 54)"/>` +
+      head('#fff4e0') +
+      `<circle cx="63" cy="58" r="10" fill="#b5651d"/>` +
+      eyes(59) + blush(67, 21) +
+      `<ellipse cx="50" cy="69" rx="5" ry="3.5" fill="${N}"/><path d="M50 72 v3 M44 77 q6 5 12 0" fill="none" ${S3}/>` +
+      `<path d="M47 78 q3 7 6 0 Z" fill="#ff8fa3" ${S3}/>` +
+      `<rect x="30" y="86" width="40" height="8" rx="4" fill="#ff4d4d" ${S3}/><circle cx="50" cy="94" r="4" fill="#ffd93d" ${S3}/>`),
+    saru: () => wrap(
+      `<circle cx="20" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="20" cy="54" r="4.5" fill="${SKIN}"/><circle cx="80" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="80" cy="54" r="4.5" fill="${SKIN}"/>` +
+      head('#c47a3a') +
+      `<ellipse cx="50" cy="62" rx="20" ry="17" fill="${SKIN}" ${S3}/>` +
+      eyes(58, 9, 4) + `<circle cx="47" cy="67" r="1.6" fill="${N}"/><circle cx="53" cy="67" r="1.6" fill="${N}"/>` + smile(72, 6) + blush(68, 15, 4.5) +
+      `<path d="M78 86 q13 -14 7 -28" fill="none" stroke="${N}" stroke-width="9" stroke-linecap="round"/><path d="M78 86 q13 -14 7 -28" fill="none" stroke="#ffd93d" stroke-width="5" stroke-linecap="round"/>`),
+    kiji: () => wrap(
+      `<ellipse cx="44" cy="25" rx="4" ry="9" fill="#ffd93d" ${S3} transform="rotate(-25 44 25)"/><ellipse cx="54" cy="24" rx="4" ry="9" fill="#ff6b35" ${S3} transform="rotate(10 54 24)"/>` +
+      head('#2ea86f') +
+      `<path d="M24 56 Q50 40 76 56 Q50 68 24 56 Z" fill="#ff4d4d" ${S3}/>` +
+      eyes(56, 13, 4) +
+      `<path d="M42 64 L58 64 L50 78 Z" fill="#ffd93d" ${S3}/>` +
+      blush(72, 21) +
+      `<path d="M23 78 Q50 92 77 78" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`),
+    kappa: () => wrap(
+      head('#7ed957') +
+      `<path d="M22 50 Q22 30 50 29 Q78 30 78 50 L72 45 L66 51 L60 45 L54 51 L48 45 L42 51 L36 45 L30 51 L24 45 Z" fill="#2e8b57" ${S3}/>` +
+      `<ellipse cx="50" cy="31" rx="15" ry="5.5" fill="#ffd93d" ${S3}/><ellipse cx="50" cy="30" rx="10" ry="2.5" fill="#fff6c2"/>` +
+      eyes(61) + blush(69, 21) +
+      `<path d="M43 69 L57 69 L50 78 Z" fill="#ffd93d" ${S3}/>` +
+      `<path d="M26 100 Q50 80 74 100 Z" fill="#2e8b57" ${S3}/><path d="M38 100 q12 -10 24 0" fill="none" ${S3}/>`),
+    binbo: () => wrap(
+      `<path d="M20 52 L15 32 L30 41 L33 21 L44 36 L52 17 L58 36 L68 23 L71 40 L85 31 L80 52 Z" fill="#8d7b6a" ${S3}/>` +
+      head('#e9e6f2') +
+      eyes(60) +
+      `<rect x="31" y="50" width="14" height="8" fill="#e9e6f2"/><rect x="55" y="50" width="14" height="8" fill="#e9e6f2"/>` +
+      `<path d="M31 58 h14 M55 58 h14" fill="none" ${S3}/>` +
+      `<path d="M42 73 q4 -4 8 0 q4 4 8 0" fill="none" ${S3}/>` +
+      `<circle cx="40" cy="79" r="1.2" fill="${N}"/><circle cx="46" cy="81" r="1.2" fill="${N}"/><circle cx="54" cy="81" r="1.2" fill="${N}"/><circle cx="60" cy="79" r="1.2" fill="${N}"/>` +
+      `<rect x="63" y="63" width="10" height="9" fill="#b5651d" ${S3}/><path d="M65 63 v-3 M71 72 v3" ${S3}/>` +
+      `<path d="M33 62 q-3 7 0 9 q3 -2 0 -9 Z" fill="#8ecdfb" ${S3}/>` +
+      `<path d="M26 100 L34 88 L42 100 L50 88 L58 100 L66 88 L74 100 Z" fill="#8d7b6a" ${S3}/>`),
+  };
+
+  const mug = (x, y, s = 1) => `<g transform="translate(${x} ${y}) scale(${s})">` +
+    `<path d="M30 10 h7 a7 7 0 0 1 0 14 h-7" fill="#fff" ${S3}/>` +
+    `<rect x="4" y="4" width="28" height="30" rx="5" fill="#ffb703" ${S3}/>` +
+    `<circle cx="9" cy="4" r="6" fill="#fff" ${S3}/><circle cx="18" cy="1" r="7" fill="#fff" ${S3}/><circle cx="27" cy="4" r="6" fill="#fff" ${S3}/>` +
+    `<circle cx="12" cy="24" r="2" fill="#fff" opacity=".8"/><circle cx="22" cy="18" r="1.6" fill="#fff" opacity=".8"/></g>`;
+  const star = (x, y, s = 1) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -8 l2.4 5.2 l5.6 .8 l-4 4 l1 5.6 l-5 -2.6 l-5 2.6 l1 -5.6 l-4 -4 l5.6 -.8 Z" fill="#ffd93d" ${S3}/>`;
+  const ICON_ART = {
+    self: () => wrap(mug(12, 14), '0 0 64 64'),
+    all: () => wrap(`<g transform="rotate(-18 20 40)">${mug(4, 20, .8)}</g><g transform="rotate(18 44 40)">${mug(30, 20, .8)}</g>${star(32, 12, 1)}${star(10, 14, .55)}${star(54, 14, .55)}`, '0 0 64 64'),
+    pick: () => wrap(
+      `<rect x="26" y="26" width="32" height="11" rx="5.5" fill="${SKIN}" ${S3}/>` +
+      `<rect x="8" y="22" width="28" height="30" rx="9" fill="${SKIN}" ${S3}/>` +
+      `<path d="M20 33 h10 M20 41 h10" fill="none" ${S3}/><path d="M14 22 q6 -9 13 0" fill="${SKIN}" ${S3}/>`, '0 0 64 64'),
+    chug: () => wrap(
+      `<path d="M32 6 C26 18 14 22 14 38 a18 18 0 0 0 36 0 c0 -10 -6 -14 -9 -21 c-2 6 -5 8 -7 6 c4 -8 2 -14 -2 -17 Z" fill="#ff6b35" ${S3}/>` +
+      `<path d="M32 30 c-5 6 -8 10 -8 16 a8 8 0 0 0 16 0 c0 -6 -3 -10 -8 -16 Z" fill="#ffd93d"/>`, '0 0 64 64'),
+    rest: () => wrap(
+      `<ellipse cx="30" cy="56" rx="22" ry="4.5" fill="#fff" ${S3}/>` +
+      `<path d="M14 28 h32 v12 a16 16 0 0 1 -32 0 Z" fill="#7ed957" ${S3}/><ellipse cx="30" cy="28" rx="16" ry="4.5" fill="#b7e4a3" ${S3}/>` +
+      `<path d="M46 32 h5 a6 6 0 0 1 0 12 h-5" fill="#fff" ${S3}/>` +
+      `<path d="M22 20 q4 -5 0 -11 M32 20 q4 -5 0 -11" fill="none" stroke="${N}" stroke-width="3" stroke-linecap="round" opacity=".6"/>`, '0 0 64 64'),
+    start: () => wrap(`<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h32 l-9 11 l9 11 h-32 Z" fill="#ff4d4d" ${S3}/>`, '0 0 64 64'),
+    goal: () => wrap(
+      `<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h34 v24 h-34 Z" fill="#fff" ${S3}/>` +
+      [[21, 10], [38, 10], [29.5, 18], [46.5, 18], [21, 26], [38, 26]].map(([x, y]) => `<rect x="${x}" y="${y}" width="8.5" height="8" fill="${N}"/>`).join(''), '0 0 64 64'),
+  };
+  return { CHAR_ART, ICON_ART };
+})();
+</script>
 
 <script id="sugoroku-logic">
 // ===== ゲームロジック(純粋関数。DOM・localStorage に依存しない) =====
@@ -444,6 +648,7 @@ const Sugoroku = (() => {
   }
 
   // ---- ゲーム進行 ----
+  const GOALS_TO_END = 2; // この人数がゴールしたらゲーム終了
   const MIN_PLAYERS = 2;
   const MAX_PLAYERS = 8;
   const PLAYER_COLORS = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#4dd4e8', '#ff7bd2'];
@@ -517,10 +722,28 @@ const Sugoroku = (() => {
     return s;
   }
 
+  /** 未ゴールの人に、進んでいる順(同位置は手番順)で残りの順位を付ける。 */
+  function assignRemainingRanks(s) {
+    const pending = s.players
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.rank === null)
+      .sort((a, b) => b.p.pos - a.p.pos || a.i - b.i);
+    for (const { p } of pending) {
+      p.rank = s.nextRank;
+      s.nextRank += 1;
+    }
+  }
+
   function endTurn(state) {
     const s = clone(state);
     s.lastMove = null;
     const n = s.players.length;
+    const finished = s.players.filter((p) => p.rank !== null).length;
+    if (finished >= GOALS_TO_END || finished === n) {
+      assignRemainingRanks(s);
+      s.phase = 'result';
+      return s;
+    }
     for (let k = 1; k <= n; k++) {
       const i = (s.turn + k) % n;
       if (s.players[i].rank === null) {
@@ -534,14 +757,7 @@ const Sugoroku = (() => {
 
   function finishEarly(state) {
     const s = clone(state);
-    const pending = s.players
-      .map((p, i) => ({ p, i }))
-      .filter(({ p }) => p.rank === null)
-      .sort((a, b) => b.p.pos - a.p.pos || a.i - b.i);
-    for (const { p } of pending) {
-      p.rank = s.nextRank;
-      s.nextRank += 1;
-    }
+    assignRemainingRanks(s);
     s.lastMove = null;
     s.phase = 'result';
     return s;
@@ -552,153 +768,9 @@ const Sugoroku = (() => {
   }
 
   return {
-    SIZES, DIFFICULTIES, CATS, TEXTS, CHARACTERS, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
+    SIZES, DIFFICULTIES, CATS, TEXTS, CHARACTERS, GOALS_TO_END, MIN_PLAYERS, MAX_PLAYERS, PLAYER_COLORS,
     generateBoard, largestRemainder, createGame, applyRoll, endTurn, finishEarly, ranking,
   };
-})();
-</script>
-
-<script>
-// ===== キャラクターとアイコンの絵(インラインSVG) =====
-const SugorokuArt = (() => {
-  'use strict';
-  const N = '#2b2d5c';
-  const S3 = `stroke="${N}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"`;
-  const SKIN = '#ffe3c8';
-  const wrap = (inner, vb = '0 0 100 100') => `<svg viewBox="${vb}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${inner}</svg>`;
-  const head = (fill, cy = 58, r = 29) => `<circle cx="50" cy="${cy}" r="${r}" fill="${fill}" ${S3}/>`;
-  const eyes = (y = 58, dx = 12, r = 4.2) => [-dx, dx].map((d) =>
-    `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="${N}"/><circle cx="${50 + d - 1.4}" cy="${y - 1.4}" r="1.5" fill="#fff"/>`).join('');
-  const blush = (y = 66, dx = 20, r = 5) => [-dx, dx].map((d) => `<circle cx="${50 + d}" cy="${y}" r="${r}" fill="#ff8fa3" opacity=".75"/>`).join('');
-  const smile = (y = 70, w = 6) => `<path d="M${50 - w} ${y} Q50 ${y + 6} ${50 + w} ${y}" fill="none" ${S3}/>`;
-  const openMouth = (y = 70) => `<path d="M43 ${y} Q50 ${y + 10} 57 ${y} Z" fill="#c0392b" ${S3}/>`;
-  const collar = (fill) => `<path d="M28 100 L50 84 L72 100 Z" fill="${fill}" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`;
-
-  const CHAR_ART = {
-    momotaro: () => wrap(
-      head(SKIN) +
-      `<path d="M22 52 Q28 28 50 27 Q72 28 78 52 Q64 44 50 46 Q36 44 22 52 Z" fill="#3a2e2e" ${S3}/>` +
-      `<path d="M50 27 q-2 -8 5 -13" fill="none" ${S3}/>` +
-      `<rect x="19" y="44" width="62" height="10" rx="4" fill="#fff" ${S3}/>` +
-      `<path d="M81 47 l11 -6 l-3 9 l9 3 l-17 1 Z" fill="#fff" ${S3}/>` +
-      `<circle cx="50" cy="49" r="3.5" fill="#ff4d4d"/>` +
-      eyes(62) + blush(69) + smile(73) +
-      `<circle cx="85" cy="25" r="9" fill="#ffb3c6" ${S3}/><path d="M85 17 v8" fill="none" ${S3}/><path d="M85 19 q6 -7 11 -2 q-6 4 -11 2 Z" fill="#2ec27e" ${S3}/>` +
-      collar('#3b8cff')),
-    kintaro: () => wrap(
-      head(SKIN, 60) +
-      `<path d="M21 60 A29 29 0 0 1 79 60 L79 62 L72 56 L65 62 L58 56 L51 62 L44 56 L37 62 L30 56 L23 62 L21 62 Z" fill="#3a2e2e" ${S3}/>` +
-      eyes(69, 12) + blush(75, 21, 6) + smile(79, 6) +
-      `<path d="M33 86 h34 v14 h-34 Z" fill="#ff4d4d" ${S3}/>` +
-      `<text x="50" y="99" font-size="13" font-weight="900" text-anchor="middle" fill="#ffd93d" font-family="sans-serif">金</text>`),
-    urashima: () => wrap(
-      head(SKIN, 60, 28) +
-      `<path d="M8 46 L50 16 L92 46 Z" fill="#e8c36a" ${S3}/><path d="M8 46 Q50 56 92 46 Q50 52 8 46 Z" fill="#d9ad4f" ${S3}/>` +
-      eyes(63) + blush(70) + smile(74) +
-      `<path d="M92 94 L98 46" fill="none" ${S3}/><path d="M98 46 q4 14 -5 24" fill="none" stroke="${N}" stroke-width="2"/>` +
-      `<ellipse cx="16" cy="90" rx="10" ry="7" fill="#2ec27e" ${S3}/><circle cx="27" cy="88" r="4" fill="#7ed957" ${S3}/>` +
-      collar('#2ec27e')),
-    kaguya: () => wrap(
-      `<path d="M20 50 Q20 20 50 20 Q80 20 80 50 L83 100 L17 100 Z" fill="#2b2d5c" ${S3}/>` +
-      head(SKIN, 58, 27) +
-      `<path d="M23 54 Q29 32 50 31 Q71 32 77 54 Q64 46 57 56 Q50 42 43 56 Q36 46 23 54 Z" fill="#2b2d5c"/>` +
-      eyes(61) + blush(68, 19) +
-      `<path d="M46 73 Q50 77 54 73 Z" fill="#ff4d4d" ${S3}/>` +
-      `<circle cx="77" cy="36" r="5" fill="#ffd93d" ${S3}/><path d="M77 41 l-4 10 M77 41 l4 10" fill="none" ${S3}/>` +
-      `<path d="M26 100 L50 82 L74 100 Z" fill="#ff8fa3" ${S3}/><path d="M38 100 L50 91 L62 100 Z" fill="#fff"/>`),
-    issun: () => wrap(
-      head(SKIN, 63, 24) +
-      `<path d="M23 56 A27 27 0 0 1 77 56 Z" fill="#c0392b" ${S3}/><rect x="19" y="53" width="62" height="7" rx="3" fill="#e74c3c" ${S3}/>` +
-      `<path d="M33 42 q8 -9 18 -9" fill="none" stroke="#fff" stroke-width="3" opacity=".7" stroke-linecap="round"/>` +
-      eyes(66, 10, 3.8) + blush(72, 16, 4.5) + smile(75, 5) +
-      `<path d="M84 95 L97 48" stroke="${N}" stroke-width="6" stroke-linecap="round"/><path d="M84 95 L97 48" stroke="#dfe3f0" stroke-width="3" stroke-linecap="round"/>` +
-      `<path d="M80 90 l10 3" ${S3}/>` +
-      collar('#3b8cff')),
-    akaoni: () => wrap(
-      `<path d="M34 36 L29 12 L45 31 Z" fill="#ffd93d" ${S3}/><path d="M66 36 L71 12 L55 31 Z" fill="#ffd93d" ${S3}/>` +
-      head('#ff4d4d') +
-      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#3a2e2e" ${S3}/>` +
-      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
-      eyes(63) + blush(70, 21) +
-      `<path d="M40 72 Q50 82 60 72 Z" fill="#c0392b" ${S3}/><path d="M43 72 l3 6 l3 -6 Z" fill="#fff"/><path d="M51 72 l3 6 l3 -6 Z" fill="#fff"/>` +
-      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
-    aooni: () => wrap(
-      `<path d="M43 34 L50 10 L57 34 Z" fill="#ffd93d" ${S3}/>` +
-      head('#3b8cff') +
-      `<path d="M23 48 Q22 32 36 34 Q40 22 52 26 Q64 20 68 32 Q80 32 77 48 Q50 38 23 48 Z" fill="#2b2d5c" ${S3}/>` +
-      `<path d="M33 53 l12 4 M67 53 l-12 4" fill="none" ${S3}/>` +
-      eyes(63) + blush(70, 21) +
-      `<path d="M40 72 Q50 80 60 72" fill="none" ${S3}/><path d="M43 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/><path d="M51 73 l3 6 l3 -6 Z" fill="#fff" stroke="${N}" stroke-width="2"/>` +
-      `<path d="M28 100 L50 84 L72 100 Z" fill="#ffd93d" ${S3}/><path d="M36 100 l6 -10 M48 100 l4 -14 M60 100 l-5 -10" stroke="${N}" stroke-width="3" stroke-linecap="round"/>`),
-    inu: () => wrap(
-      `<ellipse cx="21" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(14 21 54)"/><ellipse cx="79" cy="54" rx="9" ry="17" fill="#b5651d" ${S3} transform="rotate(-14 79 54)"/>` +
-      head('#fff4e0') +
-      `<circle cx="63" cy="58" r="10" fill="#b5651d"/>` +
-      eyes(59) + blush(67, 21) +
-      `<ellipse cx="50" cy="69" rx="5" ry="3.5" fill="${N}"/><path d="M50 72 v3 M44 77 q6 5 12 0" fill="none" ${S3}/>` +
-      `<path d="M47 78 q3 7 6 0 Z" fill="#ff8fa3" ${S3}/>` +
-      `<rect x="30" y="86" width="40" height="8" rx="4" fill="#ff4d4d" ${S3}/><circle cx="50" cy="94" r="4" fill="#ffd93d" ${S3}/>`),
-    saru: () => wrap(
-      `<circle cx="20" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="20" cy="54" r="4.5" fill="${SKIN}"/><circle cx="80" cy="54" r="9" fill="#c47a3a" ${S3}/><circle cx="80" cy="54" r="4.5" fill="${SKIN}"/>` +
-      head('#c47a3a') +
-      `<ellipse cx="50" cy="62" rx="20" ry="17" fill="${SKIN}" ${S3}/>` +
-      eyes(58, 9, 4) + `<circle cx="47" cy="67" r="1.6" fill="${N}"/><circle cx="53" cy="67" r="1.6" fill="${N}"/>` + smile(72, 6) + blush(68, 15, 4.5) +
-      `<path d="M78 86 q13 -14 7 -28" fill="none" stroke="${N}" stroke-width="9" stroke-linecap="round"/><path d="M78 86 q13 -14 7 -28" fill="none" stroke="#ffd93d" stroke-width="5" stroke-linecap="round"/>`),
-    kiji: () => wrap(
-      `<ellipse cx="44" cy="25" rx="4" ry="9" fill="#ffd93d" ${S3} transform="rotate(-25 44 25)"/><ellipse cx="54" cy="24" rx="4" ry="9" fill="#ff6b35" ${S3} transform="rotate(10 54 24)"/>` +
-      head('#2ea86f') +
-      `<path d="M24 56 Q50 40 76 56 Q50 68 24 56 Z" fill="#ff4d4d" ${S3}/>` +
-      eyes(56, 13, 4) +
-      `<path d="M42 64 L58 64 L50 78 Z" fill="#ffd93d" ${S3}/>` +
-      blush(72, 21) +
-      `<path d="M23 78 Q50 92 77 78" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>`),
-    kappa: () => wrap(
-      head('#7ed957') +
-      `<path d="M22 50 Q22 30 50 29 Q78 30 78 50 L72 45 L66 51 L60 45 L54 51 L48 45 L42 51 L36 45 L30 51 L24 45 Z" fill="#2e8b57" ${S3}/>` +
-      `<ellipse cx="50" cy="31" rx="15" ry="5.5" fill="#ffd93d" ${S3}/><ellipse cx="50" cy="30" rx="10" ry="2.5" fill="#fff6c2"/>` +
-      eyes(61) + blush(69, 21) +
-      `<path d="M43 69 L57 69 L50 78 Z" fill="#ffd93d" ${S3}/>` +
-      `<path d="M26 100 Q50 80 74 100 Z" fill="#2e8b57" ${S3}/><path d="M38 100 q12 -10 24 0" fill="none" ${S3}/>`),
-    binbo: () => wrap(
-      `<path d="M20 52 L15 32 L30 41 L33 21 L44 36 L52 17 L58 36 L68 23 L71 40 L85 31 L80 52 Z" fill="#8d7b6a" ${S3}/>` +
-      head('#e9e6f2') +
-      eyes(60) +
-      `<rect x="31" y="50" width="14" height="8" fill="#e9e6f2"/><rect x="55" y="50" width="14" height="8" fill="#e9e6f2"/>` +
-      `<path d="M31 58 h14 M55 58 h14" fill="none" ${S3}/>` +
-      `<path d="M42 73 q4 -4 8 0 q4 4 8 0" fill="none" ${S3}/>` +
-      `<circle cx="40" cy="79" r="1.2" fill="${N}"/><circle cx="46" cy="81" r="1.2" fill="${N}"/><circle cx="54" cy="81" r="1.2" fill="${N}"/><circle cx="60" cy="79" r="1.2" fill="${N}"/>` +
-      `<rect x="63" y="63" width="10" height="9" fill="#b5651d" ${S3}/><path d="M65 63 v-3 M71 72 v3" ${S3}/>` +
-      `<path d="M33 62 q-3 7 0 9 q3 -2 0 -9 Z" fill="#8ecdfb" ${S3}/>` +
-      `<path d="M26 100 L34 88 L42 100 L50 88 L58 100 L66 88 L74 100 Z" fill="#8d7b6a" ${S3}/>`),
-  };
-
-  const mug = (x, y, s = 1) => `<g transform="translate(${x} ${y}) scale(${s})">` +
-    `<path d="M30 10 h7 a7 7 0 0 1 0 14 h-7" fill="#fff" ${S3}/>` +
-    `<rect x="4" y="4" width="28" height="30" rx="5" fill="#ffb703" ${S3}/>` +
-    `<circle cx="9" cy="4" r="6" fill="#fff" ${S3}/><circle cx="18" cy="1" r="7" fill="#fff" ${S3}/><circle cx="27" cy="4" r="6" fill="#fff" ${S3}/>` +
-    `<circle cx="12" cy="24" r="2" fill="#fff" opacity=".8"/><circle cx="22" cy="18" r="1.6" fill="#fff" opacity=".8"/></g>`;
-  const star = (x, y, s = 1) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 -8 l2.4 5.2 l5.6 .8 l-4 4 l1 5.6 l-5 -2.6 l-5 2.6 l1 -5.6 l-4 -4 l5.6 -.8 Z" fill="#ffd93d" ${S3}/>`;
-  const ICON_ART = {
-    self: () => wrap(mug(12, 14), '0 0 64 64'),
-    all: () => wrap(`<g transform="rotate(-18 20 40)">${mug(4, 20, .8)}</g><g transform="rotate(18 44 40)">${mug(30, 20, .8)}</g>${star(32, 12, 1)}${star(10, 14, .55)}${star(54, 14, .55)}`, '0 0 64 64'),
-    pick: () => wrap(
-      `<rect x="26" y="26" width="32" height="11" rx="5.5" fill="${SKIN}" ${S3}/>` +
-      `<rect x="8" y="22" width="28" height="30" rx="9" fill="${SKIN}" ${S3}/>` +
-      `<path d="M20 33 h10 M20 41 h10" fill="none" ${S3}/><path d="M14 22 q6 -9 13 0" fill="${SKIN}" ${S3}/>`, '0 0 64 64'),
-    chug: () => wrap(
-      `<path d="M32 6 C26 18 14 22 14 38 a18 18 0 0 0 36 0 c0 -10 -6 -14 -9 -21 c-2 6 -5 8 -7 6 c4 -8 2 -14 -2 -17 Z" fill="#ff6b35" ${S3}/>` +
-      `<path d="M32 30 c-5 6 -8 10 -8 16 a8 8 0 0 0 16 0 c0 -6 -3 -10 -8 -16 Z" fill="#ffd93d"/>`, '0 0 64 64'),
-    rest: () => wrap(
-      `<ellipse cx="30" cy="56" rx="22" ry="4.5" fill="#fff" ${S3}/>` +
-      `<path d="M14 28 h32 v12 a16 16 0 0 1 -32 0 Z" fill="#7ed957" ${S3}/><ellipse cx="30" cy="28" rx="16" ry="4.5" fill="#b7e4a3" ${S3}/>` +
-      `<path d="M46 32 h5 a6 6 0 0 1 0 12 h-5" fill="#fff" ${S3}/>` +
-      `<path d="M22 20 q4 -5 0 -11 M32 20 q4 -5 0 -11" fill="none" stroke="${N}" stroke-width="3" stroke-linecap="round" opacity=".6"/>`, '0 0 64 64'),
-    start: () => wrap(`<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h32 l-9 11 l9 11 h-32 Z" fill="#ff4d4d" ${S3}/>`, '0 0 64 64'),
-    goal: () => wrap(
-      `<path d="M18 8 v50" stroke="${N}" stroke-width="5" stroke-linecap="round"/><path d="M21 10 h34 v24 h-34 Z" fill="#fff" ${S3}/>` +
-      [[21, 10], [38, 10], [29.5, 18], [46.5, 18], [21, 26], [38, 26]].map(([x, y]) => `<rect x="${x}" y="${y}" width="8.5" height="8" fill="${N}"/>`).join(''), '0 0 64 64'),
-  };
-  return { CHAR_ART, ICON_ART };
 })();
 </script>
 
@@ -731,7 +803,9 @@ const SugorokuArt = (() => {
   let visPos = null;                // アニメ中の駒の見た目位置 { player, pos }
   let cols = 4;
   let peekTimer = null;
-  let pickingFor = null;            // キャラ選択中のプレイヤー添字
+  let pick = null;                  // キャラ選択画面の状態 { mode: 'all' | 'single', i }
+  let muted = store.get('sugoroku.v1.muted') === true;
+  let audioCtx = null;
 
   function show(id) {
     for (const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id;
@@ -748,8 +822,7 @@ const SugorokuArt = (() => {
     el.innerHTML = CHAR_ART[charId]();
   }
 
-  function renderDie(el, face) {
-    el.dataset.face = face;
+  function renderPips(el, face) {
     el.innerHTML = '';
     for (const [r, c] of PIPS[face]) {
       const pip = document.createElement('span');
@@ -759,16 +832,102 @@ const SugorokuArt = (() => {
     }
   }
 
-  /** サイコロをガタガタ回してから最終の目を見せる。 */
-  async function spinDie(el, finalFace, ms) {
-    el.classList.add('rolling');
-    const t0 = Date.now();
-    while (!reduced && Date.now() - t0 < ms) {
-      renderDie(el, 1 + Math.floor(Math.random() * 6));
-      await sleep(70);
+  function renderDie(el, face) {
+    el.dataset.face = face;
+    renderPips(el, face);
+  }
+
+  // ---------- 音(その場で合成。ファイルなし) ----------
+  function playClack(vol = 1) {
+    if (muted) return;
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const t = audioCtx.currentTime;
+      const len = Math.floor(audioCtx.sampleRate * 0.06);
+      const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 1.5;
+      const g = audioCtx.createGain();
+      g.gain.value = 0.6 * vol;
+      src.connect(bp).connect(g).connect(audioCtx.destination);
+      src.start(t);
+      const o = audioCtx.createOscillator();
+      o.type = 'triangle'; o.frequency.value = 2800;
+      const g2 = audioCtx.createGain();
+      g2.gain.setValueAtTime(0.18 * vol, t);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      o.connect(g2).connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.11);
+    } catch { /* 音が出なくてもゲームは続く */ }
+  }
+
+  function renderMute() { $('mute').textContent = muted ? '🔇' : '🔊'; }
+
+  // ---------- サイコロを振るシーン ----------
+  // 面 F を正面に向ける回転(度)。面の配置: 1=前 6=後 2=右 5=左 3=上 4=下
+  const FINAL_ROT = { 1: [0, 0], 6: [0, 180], 2: [0, -90], 5: [0, 90], 3: [-90, 0], 4: [90, 0] };
+  let diceSkip = null;
+
+  function buildCube() {
+    const cube = $('cube');
+    if (cube.children.length === 6) return;
+    cube.innerHTML = '';
+    for (let f = 1; f <= 6; f++) {
+      const face = document.createElement('div');
+      face.className = `face f${f}`;
+      renderPips(face, f);
+      cube.appendChild(face);
     }
-    el.classList.remove('rolling');
-    renderDie(el, finalFace);
+  }
+
+  /** 器にサイコロを投げ込み、跳ねて出目が正面を向くまでの演出。タップで飛ばせる。 */
+  async function playDiceScene(face, player) {
+    buildCube();
+    const overlay = $('dice-overlay');
+    const cube = $('cube');
+    const shadow = $('cube-shadow');
+    setAvatar($('dice-thrower'), player.char, player.color);
+    $('dice-thrower-name').textContent = `${player.name} さんが振る!`;
+    $('dice-result').textContent = '';
+    overlay.hidden = false;
+    const [fx, fy] = FINAL_ROT[face];
+    const dur = reduced ? 1 : 1700;
+    const endRot = `rotateX(${fx + 720}deg) rotateY(${fy + 1080}deg)`;
+    const frames = [
+      { transform: 'translate(-90px, -280px) rotateX(0deg) rotateY(0deg)', offset: 0, easing: 'ease-in' },
+      { transform: 'translate(-40px, 0px) rotateX(290deg) rotateY(380deg)', offset: 0.3, easing: 'ease-out' },
+      { transform: 'translate(-5px, -80px) rotateX(420deg) rotateY(560deg)', offset: 0.47, easing: 'ease-in' },
+      { transform: 'translate(22px, 0px) rotateX(560deg) rotateY(760deg)', offset: 0.62, easing: 'ease-out' },
+      { transform: 'translate(34px, -34px) rotateX(640deg) rotateY(900deg)', offset: 0.74, easing: 'ease-in' },
+      { transform: 'translate(14px, 0px) rotateX(700deg) rotateY(1020deg)', offset: 0.86, easing: 'ease-out' },
+      { transform: 'translate(17px, -10px) rotateX(712deg) rotateY(1060deg)', offset: 0.93, easing: 'ease-in' },
+      { transform: `translate(18px, 0px) ${endRot}`, offset: 1 },
+    ];
+    const shadowFrames = [
+      { transform: 'translateX(-90px) scale(.4)', opacity: .15, offset: 0 },
+      { transform: 'translateX(-40px) scale(1)', opacity: .35, offset: 0.3 },
+      { transform: 'translateX(-5px) scale(.7)', opacity: .22, offset: 0.47 },
+      { transform: 'translateX(22px) scale(1)', opacity: .35, offset: 0.62 },
+      { transform: 'translateX(34px) scale(.85)', opacity: .3, offset: 0.74 },
+      { transform: 'translateX(18px) scale(1)', opacity: .35, offset: 1 },
+    ];
+    const anim = cube.animate(frames, { duration: dur, fill: 'forwards' });
+    const sAnim = shadow.animate(shadowFrames, { duration: dur, fill: 'forwards' });
+    const timers = [0.3, 0.62, 0.86].map((at, k) => setTimeout(() => playClack(1 - k * 0.25), dur * at));
+    let skipped = false;
+    diceSkip = () => { skipped = true; anim.finish(); sAnim.finish(); };
+    await new Promise((r) => anim.addEventListener('finish', r, { once: true }));
+    diceSkip = null;
+    for (const t of timers) clearTimeout(t);
+    playClack(0.4);
+    $('dice-result').textContent = `${face}!`;
+    await sleep(skipped ? 250 : 700);
+    overlay.hidden = true;
+    anim.cancel(); sAnim.cancel();
   }
 
   // ---------- セットアップ ----------
@@ -812,7 +971,7 @@ const SugorokuArt = (() => {
       av.type = 'button';
       av.setAttribute('aria-label', 'キャラクターを選ぶ');
       setAvatar(av, setup.chars[i], S.PLAYER_COLORS[i]);
-      av.addEventListener('click', () => openPicker(i));
+      av.addEventListener('click', () => openPick(i, 'single'));
       const input = document.createElement('input');
       input.className = 'player-name';
       input.placeholder = `プレイヤー${i + 1}`;
@@ -831,8 +990,15 @@ const SugorokuArt = (() => {
     $('add-player').disabled = setup.names.length >= S.MAX_PLAYERS;
   }
 
-  function openPicker(i) {
-    pickingFor = i;
+  // ---------- キャラ選択画面 ----------
+  // mode 'all': スタート後に全員が順番に選ぶ。'single': セットアップの顔をタップした人だけ選び直す
+  function openPick(i, mode) {
+    pick = { i, mode };
+    const n = setup.names.length;
+    const name = setup.names[i].trim() || `プレイヤー${i + 1}`;
+    setAvatar($('pick-avatar'), setup.chars[i], S.PLAYER_COLORS[i]);
+    $('pick-title').textContent = mode === 'all' ? `${i + 1}/${n}人目: ${name} さんのキャラクター` : `${name} さんのキャラクター`;
+    $('pick-hint').textContent = `いまは「${CHAR_NAME[setup.chars[i]]}」。好きなキャラをタップしてね`;
     const grid = $('picks');
     grid.innerHTML = '';
     for (const c of S.CHARACTERS) {
@@ -840,15 +1006,35 @@ const SugorokuArt = (() => {
       b.type = 'button';
       b.className = 'pick' + (setup.chars[i] === c.id ? ' selected' : '');
       b.dataset.char = c.id;
-      b.disabled = setup.chars.includes(c.id) && setup.chars[i] !== c.id;
+      // 順番に選ぶときは、先に選び終えた人のキャラだけ選べない(後の人の仮キャラは選べる)
+      const taken = mode === 'all' ? setup.chars.slice(0, i) : setup.chars.filter((_, j) => j !== i);
+      b.disabled = taken.includes(c.id);
       b.innerHTML = `${CHAR_ART[c.id]()}<span>${c.name}</span>`;
-      b.addEventListener('click', () => { setup.chars[i] = c.id; closePicker(); renderPlayers(); });
+      b.addEventListener('click', () => choosePick(c.id));
       grid.appendChild(b);
     }
-    $('picker-overlay').hidden = false;
+    show('screen-pick');
   }
 
-  function closePicker() { $('picker-overlay').hidden = true; pickingFor = null; }
+  function choosePick(charId) {
+    const { i, mode } = pick;
+    setup.chars[i] = charId;
+    // 後の人の仮キャラが重なったら、空いているキャラに振り直す
+    for (let j = 0; j < setup.chars.length; j++) {
+      if (j === i) continue;
+      if (setup.chars[j] === charId) setup.chars[j] = CHAR_IDS.find((id) => !setup.chars.includes(id));
+    }
+    renderPlayers();
+    if (mode === 'single') { show('screen-setup'); return; }
+    if (i + 1 < setup.names.length) openPick(i + 1, 'all');
+    else startGame();
+  }
+
+  function onPickBack() {
+    const { i, mode } = pick;
+    if (mode === 'all' && i > 0) openPick(i - 1, 'all');
+    else show('screen-setup');
+  }
 
   function startGame() {
     const names = setup.names.map((n) => n.trim());
@@ -967,15 +1153,16 @@ const SugorokuArt = (() => {
     store.set(KEY_GAME, next); // アニメ中にリロードされても結果は残す
     const mv = next.lastMove;
 
-    await spinDie($('die'), roll, 700);
+    await playDiceScene(roll, state.players[state.turn]);
+    renderDie($('die'), roll);
     $('roll-label').textContent = `${roll} が出た!`;
-    await sleep(500);
+    await sleep(250);
 
     for (const pos of mv.path) {
       visPos = { player: mv.player, pos };
       renderTokens();
       scrollToTile(pos);
-      await sleep(230);
+      await sleep(200);
     }
     visPos = null;
     state = next;
@@ -1021,7 +1208,6 @@ const SugorokuArt = (() => {
     $('card-extra').hidden = !extra;
     $('extra-result').textContent = '';
     $('extra-dice').disabled = false;
-    renderDie($('extra-die'), 6);
     $('card').className = `card cat-${cat}`;
     $('card-overlay').hidden = false;
     if (finished) showConfetti();
@@ -1032,7 +1218,8 @@ const SugorokuArt = (() => {
     const btn = $('extra-dice');
     btn.disabled = true;
     const r = 1 + Math.floor(Math.random() * 6);
-    await spinDie($('extra-die'), r, 600);
+    const mv = state.lastMove;
+    await playDiceScene(r, state.players[mv ? mv.player : state.turn]);
     $('extra-result').textContent = `${r} が出た!`;
   }
 
@@ -1145,11 +1332,13 @@ const SugorokuArt = (() => {
     $('resume-banner').hidden = !resumable;
 
     $('add-player').addEventListener('click', () => { setup.names.push(''); setup.chars.push(firstFreeChar()); renderPlayers(); });
-    $('start').addEventListener('click', startGame);
+    $('start').addEventListener('click', () => openPick(0, 'all'));
+    $('pick-back').addEventListener('click', onPickBack);
+    $('dice-overlay').addEventListener('click', () => { if (diceSkip) diceSkip(); });
+    $('mute').addEventListener('click', () => { muted = !muted; store.set('sugoroku.v1.muted', muted); renderMute(); });
+    renderMute();
     $('resume').addEventListener('click', () => { state = game; enterPlay(); });
     $('discard').addEventListener('click', () => { store.del(KEY_GAME); $('resume-banner').hidden = true; });
-    $('picker-close').addEventListener('click', closePicker);
-    $('picker-overlay').addEventListener('click', (e) => { if (e.target === $('picker-overlay')) closePicker(); });
     $('roll').addEventListener('click', onRoll);
     $('card-ok').addEventListener('click', onCardOk);
     $('extra-dice').addEventListener('click', onExtraDice);

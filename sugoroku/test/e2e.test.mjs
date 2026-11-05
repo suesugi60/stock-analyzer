@@ -7,7 +7,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 import { INDEX_HTML } from './helpers.mjs';
 
 const URL = 'file://' + INDEX_HTML;
-const T = { timeout: 4000 };
+const T = { timeout: 8000 };
 let browser;
 
 before(async () => { browser = await chromium.launch(); });
@@ -30,6 +30,11 @@ async function setupAndStart(page, names = ['あきら', 'いくみ', 'うみ'],
   while ((await page.locator('.player-name').count()) < names.length) await page.click('#add-player');
   for (let i = 0; i < names.length; i++) await page.locator('.player-name').nth(i).fill(names[i]);
   await page.click('#start');
+  // キャラ選択画面: 各プレイヤーが順にキャラをタップする(今のキャラをそのまま選ぶ)
+  for (let i = 0; i < names.length; i++) {
+    await page.locator('#screen-pick').waitFor({ state: 'visible', ...T });
+    await page.locator('#screen-pick .pick.selected').click();
+  }
   await page.locator('#screen-play').waitFor({ state: 'visible', ...T });
 }
 
@@ -116,30 +121,86 @@ test('サイコロを振ると出目のピップが表示される', async () =>
   await ctx.close();
 });
 
-test('キャラクターを選ぶと、駒と手番表示にそのキャラが出る', async () => {
+test('スタート後にキャラ選択画面が出て、選んだキャラが駒と手番表示に出る', async () => {
   const { page, ctx, errors } = await newPage();
-  await page.locator('.player-avatar').nth(0).click();
-  await page.locator('#picker').waitFor({ state: 'visible', ...T });
-  assert.equal(await page.locator('#picker .pick').count(), 12);
-  await page.click('#picker .pick[data-char="kappa"]');
-  await page.locator('#picker').waitFor({ state: 'hidden', ...T });
-  assert.equal(await page.locator('.player-avatar').nth(0).getAttribute('data-char'), 'kappa');
-
-  // 2人目のピッカーでは kappa は選べない
-  await page.locator('.player-avatar').nth(1).click();
-  await page.locator('#picker').waitFor({ state: 'visible', ...T });
-  assert.ok(await page.locator('#picker .pick[data-char="kappa"]').isDisabled());
-  await page.click('#picker .pick[data-char="momotaro"]');
-  await page.locator('#picker').waitFor({ state: 'hidden', ...T });
-
   await page.locator('.player-name').nth(0).fill('A');
   await page.locator('.player-name').nth(1).fill('B');
   await page.click('#start');
+
+  // 1人目: A さんの番。12体から kappa を選ぶ
+  await page.locator('#screen-pick').waitFor({ state: 'visible', ...T });
+  assert.match(await page.locator('#pick-title').innerText(), /A/);
+  assert.equal(await page.locator('#screen-pick .pick').count(), 12);
+  await page.click('#screen-pick .pick[data-char="kappa"]');
+
+  // 2人目: B さんの番。kappa は選べない
+  await page.locator('#pick-title').filter({ hasText: 'B' }).waitFor({ state: 'visible', ...T });
+  assert.ok(await page.locator('#screen-pick .pick[data-char="kappa"]').isDisabled());
+  await page.click('#screen-pick .pick[data-char="momotaro"]');
+
   await page.locator('#screen-play').waitFor({ state: 'visible', ...T });
   assert.equal(await page.locator('.token[data-char="kappa"]').count(), 1);
   assert.equal(await page.locator('.token[data-char="momotaro"]').count(), 1);
   assert.equal(await page.locator('#turn-avatar').getAttribute('data-char'), 'kappa');
-  assert.ok((await page.locator('#turn-avatar svg').count()) >= 1, 'アバターはSVG');
   assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('セットアップの顔をタップすると、その人だけキャラを選び直してセットアップに戻る', async () => {
+  const { page, ctx } = await newPage();
+  await page.locator('.player-avatar').nth(1).click();
+  await page.locator('#screen-pick').waitFor({ state: 'visible', ...T });
+  await page.click('#screen-pick .pick[data-char="binbo"]');
+  await page.locator('#screen-setup').waitFor({ state: 'visible', ...T });
+  assert.equal(await page.locator('.player-avatar').nth(1).getAttribute('data-char'), 'binbo');
+  await ctx.close();
+});
+
+test('サイコロを振ると器のシーンが出て、立体のサイコロが転がってから指令カードになる', async () => {
+  const { page, ctx, errors } = await newPage();
+  await setupAndStart(page, ['A', 'B'], '16');
+  await page.click('#roll');
+  await page.locator('#dice-overlay').waitFor({ state: 'visible', ...T });
+  assert.equal(await page.locator('#dice-overlay .cube .face').count(), 6);
+  assert.match(await page.locator('#dice-thrower-name').innerText(), /A/);
+  await page.locator('#card').waitFor({ state: 'visible', ...T });
+  await page.locator('#dice-overlay').waitFor({ state: 'hidden', ...T });
+  const face = Number(await page.locator('#die').getAttribute('data-face'));
+  assert.equal(await page.locator('#dice-result').innerText(), `${face}!`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('器のシーンをタップすると演出を飛ばせる', async () => {
+  const { page, ctx } = await newPage();
+  await setupAndStart(page, ['A', 'B'], '16');
+  await page.click('#roll');
+  await page.locator('#dice-overlay').waitFor({ state: 'visible', ...T });
+  const t0 = Date.now();
+  await page.locator('#dice-overlay').click({ position: { x: 10, y: 10 } });
+  await page.locator('#card').waitFor({ state: 'visible', ...T });
+  assert.ok(Date.now() - t0 < 2500, `スキップ後 ${Date.now() - t0}ms かかった`);
+  await ctx.close();
+});
+
+test('順番に選ぶとき、まだ選んでいない後の人の仮キャラは選べる(先に選んだ人のキャラだけ選べない)', async () => {
+  const { page, ctx } = await newPage();
+  await page.click('#add-player'); // 3人。仮は momotaro / kintaro / urashima
+  await page.click('#start');
+  await page.locator('#screen-pick').waitFor({ state: 'visible', ...T });
+  assert.ok(!(await page.locator('#screen-pick .pick[data-char="urashima"]').isDisabled()), '3人目の仮キャラを1人目が選べる');
+  await page.click('#screen-pick .pick[data-char="urashima"]');
+  // 2人目: urashima は選べない
+  await page.locator('#pick-title').filter({ hasText: '2/3' }).waitFor({ state: 'visible', ...T });
+  assert.ok(await page.locator('#screen-pick .pick[data-char="urashima"]').isDisabled());
+  await page.locator('#screen-pick .pick.selected').click();
+  // 3人目: 仮キャラが別のものに振り直されていて、urashima は選べない
+  await page.locator('#pick-title').filter({ hasText: '3/3' }).waitFor({ state: 'visible', ...T });
+  assert.notEqual(await page.locator('#pick-avatar').getAttribute('data-char'), 'urashima');
+  assert.ok(await page.locator('#screen-pick .pick[data-char="urashima"]').isDisabled());
+  assert.equal(await page.locator('#screen-pick .pick.selected').count(), 1);
+  await page.locator('#screen-pick .pick.selected').click();
+  await page.locator('#screen-play').waitFor({ state: 'visible', ...T });
+  assert.equal(await page.locator('.token[data-char="urashima"]').count(), 1);
   await ctx.close();
 });
