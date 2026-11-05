@@ -40,11 +40,11 @@ CLI 引数か環境変数で渡す(引数が優先)。GitHub には保存しな�
 
 ### 終了コードと結果
 
-標準出力の最終行が `RESULT {...}` の JSON。
+標準出力の最終行が `RESULT {...}` の JSON。同じ内容を出力フォルダの `result.json` にも保存する。
 
 | コード | status | 意味 |
 |---|---|---|
-| 0 | `submitted` | 送信完了。`03_result.png` と `reservationNumber` を確認 |
+| 0 | `submitted` | 予約確定。`03_result.png`、`reservationNumber`(予約ID)、`manageUrl`(変更・キャンセル用ページ) を確認 |
 | 0 | `dry-run` / `confirm-page` | 各モードで正常に止まった |
 | 2 | `unavailable` | その日時に空きがない、または席のみプランを選べない。選べる時間が `slots` に入る |
 | 3 | `needs-manual-confirm` | 確定画面の最終ボタンを特定できず止まった。`02_confirm_page.png` を確認 |

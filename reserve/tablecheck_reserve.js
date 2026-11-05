@@ -200,9 +200,10 @@ async function main() {
     const doneShot = await shot('03_result.png');
     const doneText = (await page.evaluate(() => document.body.innerText)).replace(/\n{2,}/g, '\n');
     summary.result = { url: page.url(), screenshot: doneShot, text: doneText.slice(0, 2500) };
-    summary.reservationNumber = doneText.match(/予約番号[^\dA-Z]*([A-Z0-9-]{4,})/)?.[1] || null;
+    summary.reservationNumber = doneText.match(/予約(?:ID|番号)[^\dA-Z]*([A-Z0-9-]{4,})/)?.[1] || page.url().match(/\/reservations\/([A-Z0-9]+)/)?.[1] || null;
+    summary.manageUrl = page.url().match(/\/reservations\/[A-Z0-9]+/) ? page.url().replace(/\?.*$/, '') : null;
     summary.status = /受け付け|受付|承り|完了|確定|ありがとう/.test(doneText) ? 'submitted' : 'unknown';
-    log(`   結果: ${summary.status}${summary.reservationNumber ? ' 予約番号 ' + summary.reservationNumber : ''} → ${doneShot}`);
+    log(`   結果: ${summary.status}${summary.reservationNumber ? ' 予約ID ' + summary.reservationNumber : ''}${summary.manageUrl ? ' 変更・キャンセル: ' + summary.manageUrl : ''} → ${doneShot}`);
     return summary;
   } catch (e) {
     if (!(e instanceof Fail)) { await shot('error.png').catch(() => {}); }
@@ -213,6 +214,7 @@ async function main() {
 }
 
 main().then(summary => {
+  fs.writeFileSync(path.join(summary.out, 'result.json'), JSON.stringify(summary, null, 2));
   console.log('RESULT ' + JSON.stringify(summary));
   process.exit(0);
 }).catch(e => {
