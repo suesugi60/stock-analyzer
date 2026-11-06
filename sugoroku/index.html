@@ -112,34 +112,33 @@ h2::before { content: '▶ '; color: var(--red); }
     linear-gradient(45deg, rgba(255,255,255,.1) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.1) 75%, transparent 75%);
   background-size: 96px 96px, 96px 96px, 96px 96px, 96px 96px, 26px 26px; }
 .board { display: grid; gap: var(--gap); position: relative; z-index: 0; }
-.tile { position: relative; aspect-ratio: 1; border-radius: 14px; border: 3px solid var(--navy); box-shadow: 0 5px 0 var(--navy);
-  background: color-mix(in srgb, var(--cat) 22%, #fff); min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
-.tile .band { position: absolute; left: 0; right: 0; top: 0; height: 28%; background: var(--cat); border-radius: 10px 10px 0 0; border-bottom: 3px solid var(--navy); }
-.tile.cat-chug .band { background: repeating-linear-gradient(-45deg, #ef233c 0 7px, #ff5c5c 7px 14px); }
-.tile.cat-goal .band { background: repeating-linear-gradient(-45deg, #ff6b35 0 7px, #ffa62b 7px 14px); }
-.tile .label { position: absolute; top: 0; left: 0; right: 0; height: 28%; display: flex; align-items: center; justify-content: center; font-size: .66rem; font-weight: 900; color: #fff; letter-spacing: .05em;
-  text-shadow: 1px 0 0 var(--navy), -1px 0 0 var(--navy), 0 1px 0 var(--navy), 0 -1px 0 var(--navy), 1px 1px 0 var(--navy), -1px -1px 0 var(--navy), 1px -1px 0 var(--navy), -1px 1px 0 var(--navy); }
-.tile .num { position: absolute; top: -8px; left: -8px; width: 22px; height: 22px; border-radius: 50%; background: var(--yellow); border: 2px solid var(--navy); box-shadow: 0 2px 0 var(--navy);
-  font-size: .62rem; font-weight: 900; color: var(--navy); display: flex; align-items: center; justify-content: center; z-index: 3; }
-.tile .num:empty { display: none; }
-.tile .icon { position: absolute; left: 50%; top: 60%; width: 60%; aspect-ratio: 1; transform: translate(-50%, -50%); background: #fff; border: 2.5px solid var(--navy); border-radius: 50%;
-  padding: 11%; box-shadow: 0 3px 0 var(--navy); }
+.tile { position: relative; aspect-ratio: 1; min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tile .coin { position: absolute; inset: 4% 4% 10% 4%; border-radius: 50%; border: 3px solid var(--navy);
+  background: radial-gradient(circle at 38% 30%, color-mix(in srgb, var(--cat) 35%, #fff) 0, var(--cat) 55%, color-mix(in srgb, var(--cat) 65%, #000) 100%);
+  box-shadow: 0 7px 0 color-mix(in srgb, var(--cat) 55%, #000), 0 10px 0 var(--navy); transition: box-shadow .15s; }
+.tile .coin::before { content: ''; position: absolute; left: 16%; top: 7%; width: 50%; height: 26%; border-radius: 50%; background: rgba(255,255,255,.55); transform: rotate(-12deg); }
+.tile .icon { position: absolute; left: 24%; top: 18%; width: 52%; height: 52%; filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 2px #fff); pointer-events: none; }
 .tile .icon svg { width: 100%; height: 100%; }
-.tile.cat-chug .icon { animation: glow 1.1s ease-in-out infinite alternate; }
-@keyframes glow { from { box-shadow: 0 3px 0 var(--navy), 0 0 0 0 rgba(255,107,53,0); } to { box-shadow: 0 3px 0 var(--navy), 0 0 0 6px rgba(255,107,53,.45); } }
-.tile.active { outline: 4px solid var(--yellow); outline-offset: 2px; }
+.tile .label { position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); background: #fff; border: 2px solid var(--navy); border-radius: 999px;
+  padding: 1px 8px; font-size: .6rem; font-weight: 900; color: var(--navy); white-space: nowrap; box-shadow: 0 2px 0 var(--navy); z-index: 4; }
+.tile .num { position: absolute; top: -8px; left: -8px; width: 22px; height: 22px; border-radius: 50%; background: var(--yellow); border: 2px solid var(--navy); box-shadow: 0 2px 0 var(--navy);
+  font-size: .62rem; font-weight: 900; color: var(--navy); display: flex; align-items: center; justify-content: center; z-index: 5; }
+.tile .num:empty { display: none; }
+.tile.cat-chug .coin { animation: chug-glow 1s ease-in-out infinite alternate; }
+@keyframes chug-glow { to { filter: brightness(1.25) saturate(1.2); } }
+.tile.active .coin { box-shadow: 0 0 0 4px var(--yellow), 0 7px 0 color-mix(in srgb, var(--cat) 55%, #000), 0 10px 0 var(--navy); }
 .tile.landed { animation: pop .35s ease; }
 @keyframes pop { 50% { transform: scale(1.1); } }
-/* 線路(蛇行の向きに隣のマスへ) */
-.tile::after { content: ''; position: absolute; z-index: -1; display: none; background: var(--navy); }
-.tile.link-right::after, .tile.link-left::after { display: block; top: 50%; height: 14px; width: calc(var(--gap) + 14px); transform: translateY(-50%);
-  background: linear-gradient(var(--yellow), var(--yellow)) center / 100% 4px no-repeat, var(--navy); }
-.tile.link-right::after { left: 100%; }
-.tile.link-left::after { right: 100%; }
-.tile.link-down::after { display: block; left: 50%; width: 14px; height: calc(var(--gap) + 14px); top: 100%; transform: translateX(-50%);
-  background: linear-gradient(var(--yellow), var(--yellow)) center / 4px 100% no-repeat, var(--navy); }
+/* 道(蛇行の向きに隣のマスへ。白い点線) */
+.tile::after { content: ''; position: absolute; z-index: -1; display: none; filter: drop-shadow(0 2px 0 var(--navy)); }
+.tile.link-right::after, .tile.link-left::after { display: block; top: 50%; height: 12px; width: calc(var(--gap) + 10px); transform: translateY(-50%);
+  background: radial-gradient(circle, #fff 0 3.5px, transparent 4px) center / 11px 12px repeat-x; }
+.tile.link-right::after { left: calc(100% - 5px); }
+.tile.link-left::after { right: calc(100% - 5px); }
+.tile.link-down::after { display: block; left: 50%; width: 12px; height: calc(var(--gap) + 10px); top: calc(100% - 5px); transform: translateX(-50%);
+  background: radial-gradient(circle, #fff 0 3.5px, transparent 4px) center / 12px 11px repeat-y; }
 /* 駒(キャラクター) */
-.tokens { position: absolute; left: 0; right: 0; bottom: -4px; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; z-index: 2; }
+.tokens { position: absolute; left: 0; right: 0; bottom: 12%; display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; z-index: 2; }
 .token { width: 30px; height: 30px; border-radius: 50%; background: #fff; border: 2px solid var(--c); box-shadow: 0 0 0 2px var(--navy); overflow: hidden; flex: none;
   transition: transform .15s; }
 .token svg { width: 100%; height: 100%; }
@@ -219,7 +218,7 @@ h2::before { content: '▶ '; color: var(--red); }
 .last-note { text-align: center; font-weight: 900; color: var(--red); margin: 4px 0 10px; }
 .actions { display: grid; gap: 12px; margin-top: 18px; }
 .actions .btn { width: 100%; }
-@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling, .clouds, .confetti i, .tile.cat-chug .icon, .dice-result { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tile.landed, .card, .die.rolling, .clouds, .confetti i, .tile.cat-chug .coin, .dice-result { animation: none; } }
 </style>
 </head>
 <body>
@@ -1086,7 +1085,7 @@ const Sugoroku = (() => {
       el.style.gridColumn = col + 1;
       const c = S.CATS[t.cat];
       const num = t.cat === 'start' || t.cat === 'goal' ? '' : t.index;
-      el.innerHTML = `<span class="band"></span><span class="num">${num}</span><span class="label">${c.label}</span><span class="icon">${ICON_ART[t.cat]()}</span><div class="tokens"></div>`;
+      el.innerHTML = `<div class="coin"></div><span class="icon">${ICON_ART[t.cat]()}</span><span class="num">${num}</span><span class="label">${c.label}</span><div class="tokens"></div>`;
       el.addEventListener('click', () => peek(t));
       board.appendChild(el);
     }
