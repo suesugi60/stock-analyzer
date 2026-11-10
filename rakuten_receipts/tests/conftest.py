@@ -86,11 +86,12 @@ class FakeSite:
 class FakeUI:
     """利用者の代わり。confirm には answers を先頭から順に返す。"""
 
-    def __init__(self, answers: Optional[List[bool]] = None) -> None:
+    def __init__(self, answers: Optional[List[bool]] = None, on_enter=None) -> None:
         self.answers = list(answers or [])
         self.infos: List[str] = []
         self.confirms: List[str] = []
         self.enters: List[str] = []
+        self.on_enter = on_enter  # wait_enter のたびに呼ぶ(人がブラウザを操作する代わり)。引数は何回目か
 
     def info(self, message: str) -> None:
         self.infos.append(message)
@@ -102,6 +103,8 @@ class FakeUI:
 
     def wait_enter(self, message: str) -> None:
         self.enters.append(message)
+        if self.on_enter is not None:
+            self.on_enter(len(self.enters))
 
 
 def make_reservations(count: int, hotel: str = "ホテルA") -> List[Reservation]:
@@ -175,8 +178,10 @@ def dummy_site(tmp_path_factory) -> str:
     server.server_close()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def browser():
+    # モジュール単位にする。Playwright の同期 API は同じスレッドで二重に開始できないので、
+    # open_session を使うテスト(test_browser / test_cli)と同時に生きていてはいけない。
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:

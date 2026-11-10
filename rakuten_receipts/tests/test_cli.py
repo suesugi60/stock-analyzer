@@ -1,0 +1,291 @@
+from __future__ import annotations
+
+import csv
+import subprocess
+import sys
+from contextlib import contextmanager
+
+import pytest
+
+from rakuten_receipts import browser, cli, runner
+from rakuten_receipts.runner import Summary
+
+from .conftest import FakeUI
+
+NAME_TITLE = ["--name", "株式会社サンプル", "--title", "御中"]
+
+
+class NoBrowser:
+    """ブラウザを開かないはずの場面で渡す。呼ばれたら回数が残る。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    @contextmanager
+    def __call__(self):
+        self.calls += 1
+        raise AssertionError("ブラウザを開いてはいけない場面で open_session が呼ばれた")
+        yield  # pragma: no cover
+
+
+class HeadlessSession:
+    """本物のブラウザをヘッドレスで開き、BrowserContext を控えておく。"""
+
+    def __init__(self, profile_dir):
+        self.profile_dir = profile_dir
+        self.context = None
+        self.closed = False
+
+    @contextmanager
+    def __call__(self):
+        try:
+            with browser.open_session(self.profile_dir, headless=True) as context:
+                self.context = context
+                yield context
+        finally:
+            self.closed = True  # open_session を抜けた(ブラウザは閉じられた)
+
+
+@pytest.fixture
+def out(tmp_path):
+    return tmp_path / "receipts-out"
+
+
+@pytest.fixture
+def run_cli(tmp_path, dummy_site, monkeypatch):
+    """ダミーサイトに対して main を動かす。
+
+    pages は Enter のたびに人が開くページ。None は何もしない。関数なら session を渡して呼ぶ。
+    """
+    monkeypatch.setattr(runner, "INTERVAL_SECONDS", (0.0, 0.0))
+
+    def run(argv, answers=(), pages=("list_p1.html",), on_enter=None):
+        session = HeadlessSession(tmp_path / "profile")
+
+        def default_on_enter(count):
+            target = pages[min(count - 1, len(pages) - 1)]
+            if callable(target):
+                target(session)
+            elif target is not None:
+                session.context.pages[0].goto(dummy_site + target)
+
+        ui = FakeUI(list(answers), on_enter=on_enter or default_on_enter)
+        code = cli.main(argv, open_session=session, ui=ui, start_url=dummy_site + "unknown.html")
+        return code, ui, session
+
+    return run
+
+
+def read_ledger(out):
+    with open(out / "receipts.csv", encoding="utf-8-sig", newline="") as f:
+        return {row["予約番号"]: row for row in csv.DictReader(f)}
+
+
+# --- 引数(ブラウザを開かない) ---
+
+@pytest.mark.parametrize("argv", [
+    ["download", "--title", "御中"],                                   # 宛名なし
+    ["download", "--name", "株式会社サンプル"],                        # 敬称なし
+    ["download", "--name", "株式会社サンプル", "--title", "殿"],        # 敬称は 様 か 御中
+    ["list", "--from", "2025/03/15"],                                  # 日付の書式
+    ["list", "--from", "2025-02-30"],                                  # 暦にない日付
+    ["download", *NAME_TITLE, "--limit", "0"],                         # 1以上
+    ["download", *NAME_TITLE, "--limit", "abc"],
+    [],                                                                # サブコマンドなし
+])
+def test_bad_arguments_exit_2(argv, out, capsys):
+    no_browser = NoBrowser()
+    assert cli.main(argv + (["--out", str(out)] if argv else []), open_session=no_browser, ui=FakeUI()) == 2
+    assert no_browser.calls == 0
+
+
+def test_from_after_to(out, capsys):
+    no_browser = NoBrowser()
+    code = cli.main(["list", "--from", "2025-04-01", "--to", "2025-03-01", "--out", str(out)],
+                    open_session=no_browser, ui=FakeUI())
+    assert code == 2 and no_browser.calls == 0
+    assert "--from" in capsys.readouterr().err
+
+
+def test_out_inside_repo_is_error(capsys):
+    no_browser = NoBrowser()
+    target = cli.REPO_ROOT / "rakuten_receipts" / "tmp-out"
+    code = cli.main(["list", "--out", str(target)], open_session=no_browser, ui=FakeUI())
+    assert code == 2 and no_browser.calls == 0
+    assert not target.exists()
+    assert "リポジトリ" in capsys.readouterr().err
+
+
+def test_invalid_addressee_exits_before_browser(out, capsys):
+    no_browser = NoBrowser()
+    code = cli.main(["download", "--name", "㈱サンプル", "--title", "御中", "--out", str(out)],
+                    open_session=no_browser, ui=FakeUI())
+    assert code == 2 and no_browser.calls == 0
+    assert "環境依存文字" in capsys.readouterr().err
+
+
+def test_help_exits_0(capsys):
+    assert cli.main(["--help"], open_session=NoBrowser(), ui=FakeUI()) == 0
+    shown = capsys.readouterr().out
+    assert "list" in shown and "download" in shown
+
+
+def test_module_help():
+    done = subprocess.run([sys.executable, "-m", "rakuten_receipts", "--help"],
+                          cwd=str(cli.REPO_ROOT), capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0
+    assert "list" in done.stdout and "download" in done.stdout
+
+
+# --- 起動と一覧タブ ---
+
+def test_browser_launch_error_is_exit_1(out, capsys):
+    @contextmanager
+    def broken():
+        raise browser.BrowserLaunchError("ブラウザを起動できませんでした。テスト用の理由")
+        yield  # pragma: no cover
+
+    assert cli.main(["list", "--out", str(out)], open_session=broken, ui=FakeUI()) == 1
+    err = capsys.readouterr().err
+    assert "ブラウザを起動できませんでした" in err and "Traceback" not in err
+
+
+def test_no_list_tab_reprompts_then_exit_1(run_cli, out):
+    code, ui, _ = run_cli(["list", "--out", str(out)], pages=(None,))
+    assert code == 1
+    assert len(ui.enters) == cli.LIST_TAB_RETRIES == 3
+    assert "予約一覧のタブが見つかりません" in ui.enters[1]
+    assert list((out / "debug").glob("*.png")) and list((out / "debug").glob("*.html"))
+    assert not (out / "receipts.csv").exists()
+
+
+def test_list_tab_found_on_second_try(run_cli, out):
+    code, ui, _ = run_cli(["list", "--out", str(out)], pages=(None, "list_p1.html"))
+    assert code == 0 and len(ui.enters) == 2
+
+
+def test_ctrl_c_is_exit_130(run_cli, out, capsys):
+    def interrupt(count):
+        raise KeyboardInterrupt()
+
+    code, _, session = run_cli(["list", "--out", str(out)], on_enter=interrupt)
+    assert code == 130
+    assert session.closed  # ブラウザは閉じて終わる
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_unexpected_error_is_exit_1_with_log(run_cli, out, monkeypatch, capsys):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "run_list", boom)
+    code, ui, _ = run_cli(["list", "--out", str(out)])
+    assert code == 1
+    (log,) = (out / "debug").glob("*_error.txt")
+    assert "RuntimeError: boom" in log.read_text(encoding="utf-8")
+    assert "Traceback" not in capsys.readouterr().err
+    assert any(str(log) in m for m in ui.infos)
+
+
+# --- ダミーサイトでの通し(ヘッドレス) ---
+
+def test_e2e_list(run_cli, out):
+    assert not out.exists()
+    code, ui, _ = run_cli(["list", "--out", str(out)])
+    assert code == 0
+    rows = read_ledger(out)
+    assert list(rows) == ["RY001", "RY002", "RY003", "RY004", "RY005", "RY006"]
+    assert rows["RY002"]["状態"] == "対象外" and rows["RY001"]["状態"] == "未取得"
+    assert list(out.glob("*.pdf")) == []
+    assert ui.confirms == []
+
+
+def test_e2e_download(run_cli, out):
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    assert code == 0
+    assert sorted(p.name for p in out.glob("*.pdf")) == [
+        "2025-03-15_ホテルサンプル東京_RY001.pdf",
+        "2025-03-22_ビジネスホテル架空大阪_RY003.pdf",
+        "2025-04-01_リゾート見本沖縄_RY004.pdf",
+    ]
+    for pdf in out.glob("*.pdf"):
+        assert pdf.read_bytes().startswith(b"%PDF-")
+    rows = read_ledger(out)
+    assert {rid: row["状態"] for rid, row in rows.items()} == {
+        "RY001": "取得済み", "RY002": "対象外", "RY003": "取得済み",
+        "RY004": "取得済み", "RY005": "要確認", "RY006": "要確認"}
+    assert rows["RY004"]["メモ"] == "発行済みを再表示"
+    assert rows["RY001"]["ファイル名"] == "2025-03-15_ホテルサンプル東京_RY001.pdf"
+    debug_names = " ".join(p.name for p in (out / "debug").iterdir())
+    assert "RY005" in debug_names and "RY006" in debug_names
+    assert any("取得 3" in m and "要確認 2" in m for m in ui.infos)
+
+
+def test_e2e_download_range(run_cli, out):
+    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE,
+                          "--from", "2025-03-15", "--to", "2025-03-31"], answers=[True, True])
+    assert code == 0
+    assert sorted(p.name[:10] for p in out.glob("*.pdf")) == ["2025-03-15", "2025-03-22"]
+
+
+def test_e2e_download_limit(run_cli, out):
+    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    assert code == 0
+    assert [p.name[:10] for p in out.glob("*.pdf")] == ["2025-03-15"]
+
+
+def test_e2e_download_declined_issues_nothing(run_cli, out):
+    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[False])
+    assert code == 0
+    assert list(out.glob("*.pdf")) == []
+    assert read_ledger(out)["RY001"]["状態"] == "未取得"
+
+
+def test_e2e_list_unreadable_saves_diagnostics(run_cli, out):
+    code, _, _ = run_cli(["list", "--out", str(out)], pages=("list_empty.html",))
+    assert code == 1
+    assert list((out / "debug").glob("*list*.png"))
+    assert not (out / "receipts.csv").exists()
+
+
+def test_name_is_stripped(run_cli, out, monkeypatch):
+    seen = {}
+
+    def fake_download(site, ledger, opts, ui, **kwargs):
+        seen["name"] = opts.name
+        return Summary()
+
+    monkeypatch.setattr(cli, "run_download", fake_download)
+    code, _, _ = run_cli(["download", "--out", str(out), "--name", " 株式会社サンプル ", "--title", "御中"])
+    assert code == 0 and seen["name"] == "株式会社サンプル"
+
+
+def test_abort_is_exit_1(run_cli, out, monkeypatch):
+    monkeypatch.setattr(cli, "run_download", lambda *a, **k: Summary(review=3, aborted=True))
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE])
+    assert code == 1
+    assert any("中止" in m for m in ui.infos)
+
+
+def test_keep_browser_open_waits_for_enter(run_cli, out, monkeypatch):
+    monkeypatch.setattr(cli, "run_download", lambda *a, **k: Summary(failed=1, keep_browser_open=True))
+    seen = {}
+
+    def at_second_enter(session):
+        seen["browser_open"] = not session.closed and len(session.context.pages) >= 1
+
+    code, ui, session = run_cli(["download", "--out", str(out), *NAME_TITLE],
+                                pages=("list_p1.html", at_second_enter))
+    assert len(ui.enters) == 2
+    assert "ブラウザを開いたまま" in ui.enters[1]
+    assert seen["browser_open"] is True  # 手で保存できるよう、Enter を押すまで閉じない
+    assert session.closed
+
+
+# --- ConsoleUI ---
+
+@pytest.mark.parametrize("typed, expected", [("y", True), ("Y", True), ("yes", True), (" y ", True),
+                                             ("", False), ("n", False), ("はい", False), ("yy", False)])
+def test_console_confirm(monkeypatch, typed, expected):
+    monkeypatch.setattr("builtins.input", lambda prompt="": typed)
+    assert cli.ConsoleUI().confirm("続けますか? [y/N]") is expected
