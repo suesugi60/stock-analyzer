@@ -758,3 +758,82 @@
 ## 実装後に利用者が行うこと(この計画の範囲外)
 
 テストが保証するのは「想定した画面構成に対して正しく動くこと」まで。本物の画面での確認は、利用者が Mac で README の3段階を実行して行う。`list` が実画面と合わなければ、`debug/` の診断ファイルをもとに `site.py` の定数と読み取り方を直す。
+
+---
+
+### Task 7: 領収書まとめ.pdf(追記。利用者の追加要望)
+
+設計書の「追記(2026-11-10): 領収書まとめ.pdf」を実装する。
+
+**Files:**
+- Create: `rakuten_receipts/merge.py`
+- Modify: `rakuten_receipts/cli.py`, `rakuten_receipts/requirements.txt`, `rakuten_receipts/README.md`, `rakuten_receipts/tests/conftest.py`(`sample.pdf` を本物の1ページ PDF にする)
+- Test: `rakuten_receipts/tests/test_merge.py`, `rakuten_receipts/tests/test_cli.py`
+
+**Interfaces:**
+- Consumes: `Ledger`・`LedgerRow`(Task 2)、`Status`(Task 1)
+- Produces:
+
+  ```python
+  # merge.py
+  MERGED_NAME = "領収書まとめ.pdf"
+  @dataclass
+  class MergeResult:
+      path: Optional[Path]      # 作ったファイル。1件もなければ None
+      merged: int               # 結合した領収書の数
+      skipped: List[str]        # ファイルがない・読めないため飛ばした予約番号
+  def merge_receipts(ledger: Ledger, out_dir: Path) -> MergeResult
+  ```
+
+  `cli.py`: サブコマンド `merge`(引数は `--out` だけ。ブラウザを開かない)。`download` の最後にも `merge_receipts` を呼ぶ。
+
+- [ ] **Step 1: 環境**: `.venv/bin/pip install pypdf`。`requirements.txt` に `pypdf>=4.0` を足す。
+
+- [ ] **Step 2: 失敗するテストを書く**
+
+  テスト用の PDF は pypdf で作る(1件ごとにページの幅を変え、結合後の順番を幅で確かめる)。
+
+  ```python
+  # test_merge.py
+  def test_merges_done_rows_in_checkin_order():   # 3/20, 3/15, 日付不明 → 3/15, 3/20, 日付不明 の順。merged == 3
+  def test_same_checkin_orders_by_reservation_id()
+  def test_multi_page_receipt_keeps_all_pages()
+  def test_only_done_rows_are_merged():           # 未取得・要確認・対象外の行は、ファイルがあっても入れない
+  def test_missing_file_is_skipped_and_reported(): # skipped == ["RY002"]、残りは結合される
+  def test_corrupt_pdf_is_skipped_and_reported()
+  def test_nothing_to_merge_writes_nothing():     # path is None、ファイルなし
+  def test_nothing_to_merge_keeps_previous_file()
+  def test_rerun_replaces_previous_merged_file(): # 1件増やして再実行 → ページ数が増える。一時ファイルが残らない
+  def test_outline_has_one_entry_per_receipt():   # しおり ["2025-03-15 ホテルA", …]
+  def test_merged_file_itself_is_never_a_source()
+
+  # test_cli.py
+  def test_merge_command_does_not_open_browser():  # 0。領収書まとめ.pdf ができる
+  def test_merge_command_without_ledger_is_exit_1()
+  def test_merge_command_reports_skipped()
+  def test_e2e_download_writes_merged_pdf():       # RY001・RY003・RY004 の3ページ。ui.info に場所が出る
+  def test_e2e_download_declined_writes_no_merged_pdf()
+  ```
+
+- [ ] **Step 3: 失敗を確認する**
+
+  Run: `.venv/bin/python -m pytest rakuten_receipts/tests/test_merge.py -q`
+  Expected: `No module named 'rakuten_receipts.merge'` で収集エラー
+
+- [ ] **Step 4: `merge.py` と `cli.py` を実装する**
+
+  `pypdf.PdfWriter.append(path, outline_item=...)` で結合する。1件ずつ `try` で囲み、読めないものは `skipped` に入れる。
+  一時ファイルに書いてから `os.replace`。
+
+- [ ] **Step 5: 通ることを確認する**
+
+  Run: `.venv/bin/python -m pytest rakuten_receipts/tests -q`
+  Expected: 全件 PASS
+
+- [ ] **Step 6: README に追記し、コミットしてプッシュ**
+
+  ```bash
+  git add rakuten_receipts docs
+  git commit -m "領収書ツール: 全領収書を1つにまとめた PDF を出力"
+  git push -u origin claude/dazzling-edison-ltz6j5
+  ```
