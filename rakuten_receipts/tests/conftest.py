@@ -24,6 +24,7 @@ class FakeSite:
         self.saved_paths: List[Path] = []
         self._current = ""
         self._open_counts: Dict[str, int] = {}
+        self._go_counts: Dict[str, int] = {}
 
     def _script(self) -> dict:
         return self.scripts.get(self._current, {})
@@ -32,6 +33,20 @@ class FakeSite:
         error = self._script().get(key)
         if error is not None:
             raise error
+
+    def _hook(self, key: str) -> None:
+        hook = self._script().get(key)
+        if hook is not None:
+            hook()
+
+    def _per_call(self, key: str, default, counts: Dict[str, int]):
+        """台本の値がリストなら、呼び出しごとに順に返す(最後の値を使い回す)。"""
+        count = counts.get(self._current, 0)
+        counts[self._current] = count + 1
+        value = self._script().get(key, default)
+        if isinstance(value, list):
+            value = value[min(count, len(value) - 1)]
+        return value
 
     def ops(self, name: str) -> List[str]:
         return [rid for op, rid in self.calls if op == name]
@@ -43,12 +58,8 @@ class FakeSite:
     def open_receipt(self, reservation: Reservation) -> Screen:
         self._current = reservation.reservation_id
         self.calls.append(("open", self._current))
-        count = self._open_counts.get(self._current, 0)
-        self._open_counts[self._current] = count + 1
-        value = self._script().get("open", Screen.ADDRESSEE_INPUT)
-        if isinstance(value, list):
-            value = value[min(count, len(value) - 1)]
-        return value
+        self._maybe_raise("open_raises")
+        return self._per_call("open", Screen.ADDRESSEE_INPUT, self._open_counts)
 
     def fill_addressee(self, name: str, title: str) -> None:
         self.calls.append(("fill", self._current))
@@ -57,7 +68,9 @@ class FakeSite:
 
     def go_to_confirm(self) -> Screen:
         self.calls.append(("go_confirm", self._current))
-        return self._script().get("confirm_screen", Screen.CONFIRM)
+        self._hook("on_go")
+        self._maybe_raise("go_raises")
+        return self._per_call("confirm_screen", Screen.CONFIRM, self._go_counts)
 
     def read_confirm_text(self) -> str:
         self.calls.append(("read_confirm", self._current))
@@ -65,6 +78,7 @@ class FakeSite:
 
     def submit_issue(self) -> None:
         self.calls.append(("submit", self._current))
+        self._hook("on_submit")
         self._maybe_raise("submit_raises")
 
     def save_receipt(self, path: Path) -> None:
@@ -99,7 +113,10 @@ class FakeUI:
     def confirm(self, message: str) -> bool:
         self.confirms.append(message)
         assert self.answers, f"想定していない確認が出た: {message}"
-        return self.answers.pop(0)
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):  # 確認の最中に Ctrl+C を押した、など
+            raise answer
+        return answer
 
     def wait_enter(self, message: str) -> None:
         self.enters.append(message)
