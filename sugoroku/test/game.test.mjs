@@ -133,18 +133,35 @@ test('endTurn: ゴール済みの人は飛ばす', () => {
   assert.equal(g.turn, 2);
 });
 
-test('endTurn: 残り1人でもその人が振り続け、全員ゴールで result になる', () => {
-  let g = at(newGame(), [15, 15, 10]);
-  g.players[0].rank = 1;
-  g.players[1].rank = 2;
-  g.nextRank = 3;
-  g.turn = 2;
-  g = S.endTurn(S.applyRoll(g, 2)); // 12
+test('endTurn: 2人プレイでは1人目のゴールだけでは続き、2人目のゴールで result になる', () => {
+  let g = at(newGame(['a', 'b']), [12, 10]);
+  g = S.endTurn(S.applyRoll(g, 3)); // a がゴール
   assert.equal(g.phase, 'play');
-  assert.equal(g.turn, 2);
-  g = S.endTurn(S.applyRoll(g, 3)); // 15 = goal
+  assert.equal(g.turn, 1);
+  g = S.endTurn(S.applyRoll(g, 5)); // b がゴール
   assert.equal(g.phase, 'result');
-  assert.equal(g.players[2].rank, 3);
+  assert.deepEqual(g.players.map((p) => p.rank), [1, 2]);
+});
+
+test('GOALS_TO_END: 2人がゴールしたら終了し、残りは進んでいる順(同位置は手番順)で順位が付く', () => {
+  assert.equal(S.GOALS_TO_END, 2);
+  let g = at(newGame(['a', 'b', 'c', 'd'], 16), [15, 12, 9, 9]);
+  g.players[0].rank = 1;
+  g.nextRank = 2;
+  g.turn = 1;
+  g = S.applyRoll(g, 3); // b がゴール。カードを見せるまでは play のまま
+  assert.equal(g.phase, 'play');
+  assert.equal(g.players[1].rank, 2);
+  g = S.endTurn(g);
+  assert.equal(g.phase, 'result');
+  assert.deepEqual(g.players.map((p) => p.rank), [1, 2, 3, 4]);
+});
+
+test('1人目がゴールしただけでは続く', () => {
+  let g = at(newGame(), [12, 0, 0]);
+  g = S.endTurn(S.applyRoll(g, 3));
+  assert.equal(g.phase, 'play');
+  assert.equal(g.turn, 1);
 });
 
 test('finishEarly: 未ゴールの人は位置の遠い順(同位置は手番順)で残りの順位に入る', () => {
