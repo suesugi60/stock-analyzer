@@ -2,6 +2,7 @@
 <html lang="ja">
 <head><meta charset="utf-8"><title>ダミーページ(テスト用。実在のサイトではありません)</title></head>
 <body>
+<p>これはテスト用のダミーページです。実在のサイトの画面でも、本物の領収書でもありません。</p>
 <h1>宛名の確認</h1>
 <table>
   <tr><th>宛名</th><td id="atena"></td></tr>
@@ -13,7 +14,7 @@
   <input type="hidden" name="keisho" value="">
   <button type="submit">発行する</button>
 </form>
-<p id="issue-download" hidden><a href="sample.pdf" download="receipt.pdf">発行する</a></p>
+<p id="issue-download" hidden><a id="issue-link" href="sample.pdf" download="receipt.pdf">発行する</a></p>
 <script>
   const params = new URLSearchParams(location.search);
   for (const key of ["atena", "keisho"]) {
@@ -22,9 +23,17 @@
   for (const key of ["id", "atena", "keisho"]) {
     document.querySelector("#issue-form [name=" + key + "]").value = params.get(key) || "";
   }
-  if (params.get("mode") === "download") {
+  const mode = params.get("mode");
+  if (mode === "download" || mode === "badfile") {
     document.getElementById("issue-form").hidden = true;
     document.getElementById("issue-download").hidden = false;
+    if (mode === "badfile") {
+      // PDF ではないファイル(エラーページの HTML)を落としてくるサイトを模す
+      document.getElementById("issue-link").href = "unknown.html";
+    }
+  }
+  if (mode === "slow") {
+    document.getElementById("issue-form").action = "interstitial.html";
   }
 </script>
 </body>

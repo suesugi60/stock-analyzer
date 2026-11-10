@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>ダミーページ(テスト用。実在のサイトではありません)</title></head>
+<body>
+<p id="loading">読み込み中です</p>
+<script>
+  // 読み込みの 0.8 秒後に領収書の中身を描く(中身を後から描くサイトを模す)
+  setTimeout(() => {
+    const id = new URLSearchParams(location.search).get("id") || "";
+    document.body.innerHTML =
+      "<p>これはテスト用のダミーです。本物の領収書ではありません。</p>" +
+      "<h1>領収書</h1><p>発行済みの宛名 御中</p><p>金額 9,000円(税込)</p>" +
+      "<p>予約番号 " + id + "</p><p>楽天グループ株式会社</p><p>登録番号 T1234567890123</p>";
+  }, 800);
+</script>
+</body>
+</html>

@@ -25,7 +25,9 @@ TEXT_GO_CONFIRM = "領収書の発行"
 TEXT_SUBMIT = "発行する"
 TEXT_RESERVATION_ID = "予約番号"
 FIX_MARKERS_ANYWHERE = ("再発行", "発行済")
-FIX_MARKERS_IN_CONTROLS = ("修正",)  # ボタン・リンク・見出しの文言に限って見る
+# ボタン・リンク・見出しの文言に限って見る(注記の文中に出てくるだけでは目印にしない)。
+# サイト共通のヘッダーやナビの中にあるものも見ない
+FIX_MARKERS_IN_CONTROLS = ("修正", "変更", "訂正")
 TEXT_RECEIPT_TITLE = "領収書"
 INVOICE_NUMBER = re.compile(r"T\d{13}")  # 適格請求書発行事業者の登録番号。領収書には必ず載る
 LOGIN_HOSTS = ("login.account.rakuten.com", "id.rakuten.co.jp")
@@ -37,6 +39,7 @@ NEXT_PATTERN = re.compile(r"^\s*(次へ|次の\d*件|次ページ|次)\s*[>»›
 MAX_PAGES = 50
 PAGE_CHANGE_WAIT_MS = 3000
 ISSUE_TIMEOUT_MS = 30000  # 「発行する」を押してから領収書が出るまで待つ時間
+PDF_MAGIC = b"%PDF-"
 TEXT_ADDRESSEE_LABEL = "宛名"
 
 _ID_PREFIX = TEXT_RESERVATION_ID + r"[\s::]*"
@@ -74,10 +77,11 @@ const findBlocks = (idLabel) => {
 
 _JS_FACTS = "(a) => {" + _JS_HELPERS + """
   const body = document.body ? document.body.innerText : '';
+  // サイト共通のヘッダーやナビにあるものは、領収書の画面の中身とはみなさない
+  const inChrome = (el) => !!el.closest('header, nav, footer, [role=search], [role=banner], [role=navigation]');
   const controls = Array.from(document.querySelectorAll(CONTROLS)).filter(visible);
   const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, legend')).filter(visible);
-  // サイト共通のヘッダーなどにある検索欄は、宛名の入力欄とはみなさない
-  const inChrome = (el) => !!el.closest('header, nav, footer, [role=search], [role=banner], [role=navigation]');
+  const ownParts = controls.concat(headings).filter((el) => !inChrome(el));
   const textInputs = Array.from(document.querySelectorAll('input, textarea')).filter((el) => {
     const type = (el.getAttribute('type') || 'text').toLowerCase();
     return (el.tagName === 'TEXTAREA' || type === 'text') && visible(el) && !el.disabled && !inChrome(el);
@@ -88,7 +92,7 @@ _JS_FACTS = "(a) => {" + _JS_HELPERS + """
     submitExact: controls.some((c) => textOf(c) === a.submit),
     goConfirm: controls.some((c) => textOf(c).includes(a.goConfirm)),
     fixAnywhere: a.fixAnywhere.some((m) => body.includes(m)),
-    fixInControls: controls.concat(headings).some((c) => a.fixInControls.some((m) => textOf(c).includes(m))),
+    fixInControls: ownParts.some((c) => a.fixInControls.some((m) => textOf(c).includes(m))),
     hasReceiptTitle: body.includes(a.receiptTitle),
     hasInvoice: new RegExp(a.invoice).test(body),
     hasReceiptLink: controls.some((c) => textOf(c).includes(a.receiptLink)),
@@ -245,10 +249,12 @@ def detect_screen(page: Page) -> Screen:
     })
     if facts["hasPassword"]:
         return Screen.LOGIN
+    fix_markers = facts["fixAnywhere"] or facts["fixInControls"]
     if not facts["hasTextInput"] and facts["submitExact"]:
-        return Screen.CONFIRM
+        # 「発行する」があっても、修正・再発行の目印がある画面では押さない
+        return Screen.ADDRESSEE_FIX if fix_markers else Screen.CONFIRM
     if facts["hasTextInput"]:
-        if facts["fixAnywhere"] or facts["fixInControls"]:
+        if fix_markers:
             return Screen.ADDRESSEE_FIX
         if facts["goConfirm"]:
             return Screen.ADDRESSEE_INPUT
@@ -258,6 +264,21 @@ def detect_screen(page: Page) -> Screen:
     if facts["hasReservationId"]:
         return Screen.LIST
     return Screen.UNKNOWN
+
+
+def save_page_diagnostics(page: Page, debug_dir: Path, label: str) -> Optional[Path]:
+    """page のスクリーンショットと HTML を debug_dir に残す。失敗しても例外にしない。"""
+    try:
+        debug_dir = Path(debug_dir)
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base = debug_dir / f"{stamp}_{_UNSAFE_LABEL.sub('_', label)}"
+        png = Path(str(base) + ".png")
+        Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(png), full_page=True)
+        return png
+    except Exception:  # noqa: BLE001 - 診断の保存に失敗しても本体の処理は止めない
+        return None
 
 
 class Site:
@@ -271,7 +292,19 @@ class Site:
         self.debug_dir = Path(debug_dir)
         self.timeout_ms = timeout_ms
         self._flow: Optional[Page] = None  # 発行操作中のページ(一覧と同じタブのこともある)
-        self._download: Optional[Download] = None  # 「発行する」などで始まったダウンロード
+        self._download: Optional[Download] = None  # このフローの領収書として受け取ったダウンロード
+        self._downloads: List[Download] = []  # このフローの間に始まったダウンロード
+        self._popups: List[Page] = []  # このフローの間に開いたタブ
+        for existing in context.pages:
+            existing.on("download", self._on_download)
+        context.on("page", self._on_page)
+
+    def _on_download(self, download: Download) -> None:
+        self._downloads.append(download)
+
+    def _on_page(self, new_page: Page) -> None:
+        self._popups.append(new_page)
+        new_page.on("download", self._on_download)
 
     def _current(self) -> Page:
         return self._flow if self._flow is not None else self.list_page
@@ -309,10 +342,12 @@ class Site:
         found: Dict[str, Reservation] = {}
         for index in range(MAX_PAGES):
             blocks = self._read_blocks(page)
+            added = 0
             for block in blocks:
                 reservation_id = block["reservation_id"]
                 if reservation_id in found:
                     continue
+                added += 1
                 found[reservation_id] = Reservation(
                     reservation_id=reservation_id,
                     hotel_name=block["hotel"] or NO_HOTEL,
@@ -322,6 +357,8 @@ class Site:
                     receipt_available=bool(block["hasReceipt"]),
                     page_index=index,
                 )
+            if index > 0 and added == 0:
+                break
             if not self._go_next(page, {block["reservation_id"] for block in blocks}):
                 break
         return list(found.values())
@@ -338,44 +375,58 @@ class Site:
                 raise UnexpectedScreen(step, detect_screen(page), f"「{text}」が見つからない")
             page.wait_for_timeout(100)
 
-    def _click_and_settle(self, target: Locator, timeout_ms: int, step: str) -> None:
-        """クリックし、ダウンロード開始・新しいタブ・画面の変化のどれかが起きるまで待つ。"""
+    def _flow_popups(self, since: int) -> List[Page]:
+        """クリックの後に、操作中のページから開かれたタブ(利用者が自分で開いたタブは含めない)。"""
+        opened = []
+        for popup in self._popups[since:]:
+            try:
+                if not popup.is_closed() and popup.opener() is not None:
+                    opened.append(popup)
+            except PlaywrightError:
+                continue
+        return opened
+
+    def _click_and_wait(self, target: Locator, timeout_ms: int, step: str,
+                        want: Optional[Set[Screen]] = None) -> Screen:
+        """クリックし、画面が落ち着くまで待って、その画面種別を返す。
+
+        ダウンロードが始まったら領収書として受け取り RECEIPT を返す。新しいタブが開いたら、そちらを
+        操作対象にする。「処理中」のような分からない画面のうちは待ち続け、want を指定されたら
+        その画面になるまで待つ。時間切れのときは、そのときの画面種別を返す。
+        何も変わらなかったときだけ UnexpectedScreen。
+        """
         page = self._current()
+        self._flow = page
         before = (page.url, detect_screen(page))
-        downloads: List[Download] = []
-        popups: List[Page] = []
-
-        def on_download(download: Download) -> None:
-            downloads.append(download)
-
-        def on_page(new_page: Page) -> None:
-            popups.append(new_page)
-
-        page.on("download", on_download)
-        self.context.on("page", on_page)
-        try:
-            target.click(timeout=timeout_ms)
-            deadline = time.monotonic() + timeout_ms / 1000
-            while True:
-                if downloads:
-                    self._download = downloads[0]
-                    self._flow = page
-                    return
-                if popups:
-                    popup = popups[0]
-                    popup.wait_for_load_state("load", timeout=timeout_ms)
-                    self._flow = popup
-                    return
-                if (page.url, detect_screen(page)) != before:
-                    page.wait_for_load_state("load", timeout=timeout_ms)
-                    self._flow = page
-                    return
-                if time.monotonic() >= deadline:
+        downloads_before, popups_before = len(self._downloads), len(self._popups)
+        target.click(timeout=self.timeout_ms)
+        deadline = time.monotonic() + timeout_ms / 1000
+        changed = False
+        screen = before[1]
+        while True:
+            if len(self._downloads) > downloads_before:
+                self._download = self._downloads[-1]
+                return Screen.RECEIPT
+            popups = self._flow_popups(popups_before)
+            if popups and self._flow is not popups[-1]:
+                self._flow = popups[-1]
+                changed = True
+            current = self._current()
+            try:
+                signature = (current.url, detect_screen(current))
+            except PlaywrightError:
+                signature = None  # 遷移の途中。次の周で読み直す
+            if signature is not None:
+                screen = signature[1]
+                if current is not page or signature != before:
+                    changed = True
+                if changed and screen is not Screen.UNKNOWN and (want is None or screen in want):
+                    return screen
+            if time.monotonic() >= deadline:
+                if not changed:
                     raise UnexpectedScreen(step, before[1], "クリックしても画面が変わらない")
-                page.wait_for_timeout(100)
-        finally:
-            page.remove_listener("download", on_download)
-            self.context.remove_listener("page", on_page)
+                return screen
+            self.list_page.wait_for_timeout(100)
 
     @_as_unexpected
     def open_receipt(self, reservation: Reservation) -> Screen:
@@ -399,10 +450,7 @@ class Site:
         if not tagged:
             raise UnexpectedScreen(
                 "open_receipt", screen, f"予約番号 {reservation.reservation_id} の「{TEXT_RECEIPT_LINK}」が見つからない")
-        self._click_and_settle(page.locator("[data-rr-click]").first, self.timeout_ms, "open_receipt")
-        if self._download is not None:
-            return Screen.RECEIPT
-        return detect_screen(self._current())
+        return self._click_and_wait(page.locator("[data-rr-click]").first, self.timeout_ms, "open_receipt")
 
     def _addressee_field(self, page: Page) -> Locator:
         candidates = (
@@ -420,19 +468,23 @@ class Site:
         """宛名を入力し、敬称を選ぶ。入力後に画面の値を読み直して確かめる。"""
         page = self._current()
         field = self._addressee_field(page)
+        if field.input_value(timeout=self.timeout_ms).strip():
+            # 発行済みの宛名を直す画面かもしれない。修正は1回限りなので、上書きしない
+            raise UnexpectedScreen("fill_addressee", detect_screen(page), "宛名欄に既に値が入っている(修正画面の可能性)")
         field.fill(name, timeout=self.timeout_ms)
 
         radio = page.get_by_role("radio", name=title, exact=True)
         select = page.locator("select").filter(
             has=page.locator("option", has_text=re.compile(rf"^\s*{re.escape(title)}\s*$")))
-        if radio.count() >= 1:
+        radios, selects = radio.count(), select.count()
+        if radios == 1:
             radio.first.check(timeout=self.timeout_ms)
             title_ok = radio.first.is_checked()
-        elif select.count() == 1:
+        elif radios == 0 and selects == 1:
             select.first.select_option(label=title, timeout=self.timeout_ms)
             title_ok = select.first.evaluate(_JS_SELECTED_OPTION) == title
         else:
-            raise UnexpectedScreen("fill_addressee", detect_screen(page), f"敬称「{title}」の選択肢が見つからない")
+            raise UnexpectedScreen("fill_addressee", detect_screen(page), f"敬称「{title}」の選択肢を1つに決められない")
 
         if field.input_value() != name or not title_ok:
             raise UnexpectedScreen("fill_addressee", detect_screen(page), "入力した宛名・敬称が画面に反映されていない")
@@ -440,10 +492,8 @@ class Site:
     @_as_unexpected
     def go_to_confirm(self) -> Screen:
         """「領収書の発行」を押し、移った先の画面種別を返す。"""
-        page = self._current()
-        button = self._find_control(page, TEXT_GO_CONFIRM, False, "go_to_confirm")
-        self._click_and_settle(button, self.timeout_ms, "go_to_confirm")
-        return detect_screen(self._current())
+        button = self._find_control(self._current(), TEXT_GO_CONFIRM, False, "go_to_confirm")
+        return self._click_and_wait(button, self.timeout_ms, "go_to_confirm")
 
     @_as_unexpected
     def read_confirm_text(self) -> str:
@@ -451,10 +501,9 @@ class Site:
 
     @_as_unexpected
     def submit_issue(self) -> None:
-        """「発行する」を押す。ここから先は取り消せない。"""
-        page = self._current()
-        button = self._find_control(page, TEXT_SUBMIT, True, "submit_issue")
-        self._click_and_settle(button, ISSUE_TIMEOUT_MS, "submit_issue")
+        """「発行する」を押し、領収書(ページかダウンロード)が出るまで待つ。ここから先は取り消せない。"""
+        button = self._find_control(self._current(), TEXT_SUBMIT, True, "submit_issue")
+        self._click_and_wait(button, ISSUE_TIMEOUT_MS, "submit_issue", want={Screen.RECEIPT})
 
     @_as_unexpected
     def save_receipt(self, path: Path) -> None:
@@ -463,6 +512,11 @@ class Site:
         if self._download is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._download.save_as(str(path))
+            with open(path, "rb") as f:
+                head = f.read(len(PDF_MAGIC))
+            if head != PDF_MAGIC:
+                path.unlink()
+                raise UnexpectedScreen("save_receipt", detail="ダウンロードされたファイルが PDF ではない")
             return
         page = self._current()
         screen = detect_screen(page)
@@ -477,23 +531,17 @@ class Site:
 
     def save_diagnostics(self, label: str) -> Optional[Path]:
         """いまの画面のスクリーンショットと HTML を残す。失敗しても例外にしない。"""
-        try:
-            page = self._current()
-            self.debug_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            base = self.debug_dir / f"{stamp}_{_UNSAFE_LABEL.sub('_', label)}"
-            png = Path(str(base) + ".png")
-            Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
-            page.screenshot(path=str(png), full_page=True)
-            return png
-        except Exception:  # noqa: BLE001 - 診断の保存に失敗しても本体の処理は止めない
-            return None
+        return save_page_diagnostics(self._current(), self.debug_dir, label)
 
     def close_flow(self) -> None:
-        """発行操作を終える。別タブで進んでいたら閉じ、操作対象を一覧に戻す。"""
-        flow, self._flow, self._download = self._flow, None, None
-        if flow is not None and flow is not self.list_page:
+        """発行操作を終える。この操作で開いたタブを閉じ、操作対象を一覧に戻す。"""
+        popups = self._flow_popups(0)
+        self._flow, self._download = None, None
+        self._downloads, self._popups = [], []
+        for popup in popups:
+            if popup is self.list_page:
+                continue
             try:
-                flow.close()
+                popup.close()
             except PlaywrightError:
                 pass

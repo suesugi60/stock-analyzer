@@ -180,3 +180,59 @@ def test_evaluate_reraises_other_errors(page):
 
     with pytest.raises(Error):
         evaluate_with_retry(page, "() => { throw new Error('boom'); }")
+
+
+# --- レビュー指摘: 修正・再発行の目印 ---
+
+INPUT_FORM = "<label for='a'>宛名</label><input id='a' type='text'><button>領収書の発行</button>"
+
+
+@pytest.mark.parametrize("extra", [
+    "<p>この領収書は再発行です</p>",
+    "<p>発行済の領収書です</p>",
+    "<h2>宛名の修正</h2>",
+    "<button>変更する</button>",
+    "<h3>宛名の訂正</h3>",
+    "<a href='#'>宛名を修正する</a>",
+])
+def test_each_fix_marker_makes_an_input_page_a_fix_page(page, extra):
+    page.set_content(INPUT_FORM + extra)
+    assert detect_screen(page) is Screen.ADDRESSEE_FIX
+
+
+def test_input_page_without_markers_is_input(page):
+    page.set_content(INPUT_FORM + "<p>宛名の修正は1回限りです。内容を変更する場合はご注意ください。</p>")
+    assert detect_screen(page) is Screen.ADDRESSEE_INPUT  # 注記の文中の「修正」「変更」は目印にしない
+
+
+def test_markers_in_site_navigation_are_ignored(page):
+    page.set_content("<nav><a href='#'>予約の変更・キャンセル</a></nav>" + INPUT_FORM)
+    assert detect_screen(page) is Screen.ADDRESSEE_INPUT
+
+
+@pytest.mark.parametrize("extra", [
+    "<h2>宛名の修正</h2>", "<p>この領収書は発行済です</p>", "<p>再発行の確認</p>", "<h2>宛名の変更</h2>",
+])
+def test_fix_markers_veto_the_confirm_screen(page, extra):
+    # 「発行する」があっても、修正・再発行の目印がある画面は確認画面とみなさない(押さない)
+    page.set_content("<p>宛名 株式会社サンプル 御中</p><button>発行する</button>" + extra)
+    assert detect_screen(page) is Screen.ADDRESSEE_FIX
+
+
+def test_page_with_receipt_link_is_not_a_receipt(page):
+    # 領収書の体裁でも「領収書発行」のリンクがあれば一覧。領収書として保存しない
+    page.set_content("<h1>領収書</h1><p>登録番号 T1234567890123</p><p>予約番号 RY1</p>"
+                     "<a href='#'>領収書発行</a>")
+    assert detect_screen(page) is Screen.LIST
+
+
+# --- レビュー指摘: ページ送りが循環する一覧 ---
+
+def test_pager_cycle_stops_without_hammering_the_site(context, page, dummy_site, tmp_path):
+    # 「次へ」が a → b → a と循環する。新しい予約が増えないページに来たら止まる
+    page.goto(dummy_site + "list_cycle_a.html")
+    loads = []
+    page.on("framenavigated", lambda frame: loads.append(frame.url))
+    rs = make_site(context, page, tmp_path).read_reservations()
+    assert [r.reservation_id for r in rs] == ["RY301", "RY302"]
+    assert len(loads) <= 2  # b へ進み、a に戻ったところで終わり
