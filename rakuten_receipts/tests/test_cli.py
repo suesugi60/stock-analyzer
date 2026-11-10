@@ -76,6 +76,11 @@ def run_cli(tmp_path, dummy_site, monkeypatch):
     return run
 
 
+def receipts(out):
+    """個別の領収書 PDF(まとめファイルを除く)。"""
+    return [p for p in out.glob("*.pdf") if p.name != "領収書まとめ.pdf"]
+
+
 def read_ledger(out):
     with open(out / "receipts.csv", encoding="utf-8-sig", newline="") as f:
         return {row["予約番号"]: row for row in csv.DictReader(f)}
@@ -203,12 +208,12 @@ def test_e2e_list(run_cli, out):
 def test_e2e_download(run_cli, out):
     code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
     assert code == 0
-    assert sorted(p.name for p in out.glob("*.pdf")) == [
+    assert sorted(p.name for p in receipts(out)) == [
         "2025-03-15_ホテルサンプル東京_RY001.pdf",
         "2025-03-22_ビジネスホテル架空大阪_RY003.pdf",
         "2025-04-01_リゾート見本沖縄_RY004.pdf",
     ]
-    for pdf in out.glob("*.pdf"):
+    for pdf in receipts(out):
         assert pdf.read_bytes().startswith(b"%PDF-")
     rows = read_ledger(out)
     assert {rid: row["状態"] for rid, row in rows.items()} == {
@@ -225,13 +230,13 @@ def test_e2e_download_range(run_cli, out):
     code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE,
                           "--from", "2025-03-15", "--to", "2025-03-31"], answers=[True, True])
     assert code == 0
-    assert sorted(p.name[:10] for p in out.glob("*.pdf")) == ["2025-03-15", "2025-03-22"]
+    assert sorted(p.name[:10] for p in receipts(out)) == ["2025-03-15", "2025-03-22"]
 
 
 def test_e2e_download_limit(run_cli, out):
     code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
     assert code == 0
-    assert [p.name[:10] for p in out.glob("*.pdf")] == ["2025-03-15"]
+    assert [p.name[:10] for p in receipts(out)] == ["2025-03-15"]
 
 
 def test_e2e_download_declined_issues_nothing(run_cli, out):
@@ -280,6 +285,96 @@ def test_keep_browser_open_waits_for_enter(run_cli, out, monkeypatch):
     assert "ブラウザを開いたまま" in ui.enters[1]
     assert seen["browser_open"] is True  # 手で保存できるよう、Enter を押すまで閉じない
     assert session.closed
+
+
+# --- 領収書まとめ.pdf ---
+
+def page_widths(path):
+    from pypdf import PdfReader
+
+    return [int(page.mediabox.width) for page in PdfReader(str(path)).pages]
+
+
+def test_e2e_download_writes_merged_pdf(run_cli, out):
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    assert code == 0
+    merged = out / "領収書まとめ.pdf"
+    widths = page_widths(merged)
+    assert len(widths) == 3          # RY001・RY003・RY004 の3件
+    assert widths[1] == 333          # 2番目(3/22 の RY003)はダウンロードされた PDF
+    assert any(str(merged) in m and "3 件" in m for m in ui.infos)
+    # まとめファイルは台帳にも個別の領収書にも数えない
+    assert sorted(p.name for p in out.glob("*.pdf") if p.name != "領収書まとめ.pdf") == [
+        "2025-03-15_ホテルサンプル東京_RY001.pdf",
+        "2025-03-22_ビジネスホテル架空大阪_RY003.pdf",
+        "2025-04-01_リゾート見本沖縄_RY004.pdf",
+    ]
+
+
+def test_e2e_download_declined_writes_no_merged_pdf(run_cli, out):
+    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[False])
+    assert code == 0
+    assert not (out / "領収書まとめ.pdf").exists()
+
+
+def test_e2e_second_download_rebuilds_merged_pdf(run_cli, out):
+    run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    assert len(page_widths(out / "領収書まとめ.pdf")) == 1
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    assert len(page_widths(out / "領収書まとめ.pdf")) == 3
+
+
+def test_merge_failure_keeps_download_result(run_cli, out, monkeypatch):
+    # まとめファイルを作れなくても、発行と保存の結果(終了コード・台帳)は変えない
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli, "merge_receipts", broken)
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    assert code == 0
+    assert read_ledger(out)["RY001"]["状態"] == "取得済み"
+    assert any("まとめファイルを作れませんでした" in m for m in ui.infos)
+    (log,) = (out / "debug").glob("*_error.txt")
+    assert "disk full" in log.read_text(encoding="utf-8")
+
+
+def test_merge_command_does_not_open_browser(run_cli, out, capsys):
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    (out / "領収書まとめ.pdf").unlink()
+    no_browser = NoBrowser()
+    assert cli.main(["merge", "--out", str(out)], open_session=no_browser, ui=FakeUI()) == 0
+    assert no_browser.calls == 0
+    assert len(page_widths(out / "領収書まとめ.pdf")) == 3
+
+
+def test_merge_command_reports_skipped(run_cli, out):
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    (out / "2025-03-22_ビジネスホテル架空大阪_RY003.pdf").unlink()
+    ui = FakeUI()
+    assert cli.main(["merge", "--out", str(out)], open_session=NoBrowser(), ui=ui) == 0
+    assert len(page_widths(out / "領収書まとめ.pdf")) == 2
+    assert any("RY003" in m for m in ui.infos)
+
+
+def test_merge_command_without_ledger_is_exit_1(out, capsys):
+    ui = FakeUI()
+    assert cli.main(["merge", "--out", str(out)], open_session=NoBrowser(), ui=ui) == 1
+    assert not out.exists()  # 何も作らない
+    assert "台帳" in capsys.readouterr().err
+
+
+def test_merge_command_with_nothing_done(run_cli, out):
+    run_cli(["list", "--out", str(out)])
+    ui = FakeUI()
+    assert cli.main(["merge", "--out", str(out)], open_session=NoBrowser(), ui=ui) == 0
+    assert not (out / "領収書まとめ.pdf").exists()
+    assert any("まとめる領収書がありません" in m for m in ui.infos)
+
+
+def test_merge_command_rejects_date_range(out):
+    # merge は台帳の取得済み全件が対象。期間の指定は受け付けない
+    assert cli.main(["merge", "--out", str(out), "--from", "2025-01-01"],
+                    open_session=NoBrowser(), ui=FakeUI()) == 2
 
 
 # --- ConsoleUI ---

@@ -154,7 +154,21 @@ import shutil
 import threading
 
 FIXTURES = Path(__file__).parent / "fixtures"
-SAMPLE_PDF = b"%PDF-1.4\n%dummy\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+def _one_page_pdf() -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=333, height=444)  # 結合後に見分けられるよう、珍しい大きさにする
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+SAMPLE_PDF = _one_page_pdf()  # ダミーサイトが「発行する」で落としてくる、本物の1ページ PDF
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
