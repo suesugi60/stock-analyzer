@@ -9,20 +9,23 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import browser
-from .ledger import Ledger
+from .ledger import Ledger, LedgerError
 from .merge import MergeResult, merge_receipts
 from .naming import TITLES, validate_addressee
 from .runner import ListUnreadable, Options, Summary, run_download, run_list
-from .site import Site
+from .site import Site, save_page_diagnostics
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = Path.home() / "Documents" / "rakuten-receipts"
 LIST_TAB_RETRIES = 3
+SITE_TIMEOUT_MS = 15000  # 画面の切り替わりや要素が現れるのを待つ時間
 
 PROMPT_OPEN_LIST = "ログインして、予約確認の国内宿泊で過去の予約一覧を表示したら Enter を押してください"
 PROMPT_LIST_NOT_FOUND = ("予約一覧のタブが見つかりません。"
                          "予約確認の国内宿泊で過去の予約一覧を表示してから、もう一度 Enter を押してください")
-PROMPT_KEEP_OPEN = "ブラウザを開いたままにしています。領収書を手で保存したら Enter を押してください"
+PROMPT_KEEP_OPEN = ("ブラウザを開いたままにしています。領収書が発行されているかを確かめ、"
+                    "必要なら手で保存してから Enter を押してください")
+NO_INPUT = "入力を受け取れません。Enter や y を入力できるターミナルで実行してください"
 
 
 class ConsoleUI:
@@ -32,7 +35,10 @@ class ConsoleUI:
         print(message)
 
     def confirm(self, message: str) -> bool:
-        return input(message + " ").strip().lower() in ("y", "yes")
+        try:
+            return input(message + " ").strip().lower() in ("y", "yes")
+        except EOFError:
+            return False  # 入力を受け取れないなら、発行しない
 
     def wait_enter(self, message: str) -> None:
         input(message + " ")
@@ -84,9 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _inside_repo(path: Path) -> bool:
-    """path が、このツールを置いている git リポジトリの中か。"""
-    if not (REPO_ROOT / ".git").exists():
-        return False
+    """path が、このツールを置いているフォルダ(リポジトリ、または公開用の元フォルダ)の中か。
+
+    .git の有無では判断しない。公開用の元フォルダには .git がなく、そこから公開リポジトリへ
+    丸ごと同期されるため。
+    """
     resolved = path.expanduser().resolve()
     root = REPO_ROOT.resolve()
     return resolved == root or root in resolved.parents
@@ -98,7 +106,8 @@ def _check_args(args: argparse.Namespace) -> List[str]:
     if date_from and date_to and date_from > date_to:
         problems.append("--from は --to と同じか、それより前の日付にしてください")
     if _inside_repo(args.out):
-        problems.append(f"--out はリポジトリの外を指定してください(領収書を公開リポジトリに置かないため): {args.out}")
+        problems.append("--out は、このツールを置いたフォルダ(リポジトリ)の外を指定してください"
+                        f"(領収書を公開リポジトリに置かないため): {args.out}")
     if args.command == "download":
         problems.extend(validate_addressee(args.name))
     return problems
@@ -128,7 +137,12 @@ def _run_merge(out: Path, ui) -> int:
     if not ledger_path.exists():
         print(f"台帳が見つかりません: {ledger_path}。先に list か download を実行してください", file=sys.stderr)
         return 1
-    _report_merge(merge_receipts(Ledger(ledger_path), out), ui, mention_empty=True)
+    try:
+        ledger = Ledger(ledger_path)
+    except LedgerError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    _report_merge(merge_receipts(ledger, out), ui, mention_empty=True)
     return 0
 
 
@@ -139,7 +153,7 @@ def _write_error_log(debug_dir: Path) -> Path:
     return log
 
 
-def _run(command: str, opts: Options, ui, open_session, start_url: str) -> int:
+def _run(command: str, opts: Options, ledger: Ledger, ui, open_session, start_url: str) -> int:
     out = opts.out_dir
     debug_dir = out / "debug"
     out.mkdir(parents=True, exist_ok=True)
@@ -154,12 +168,11 @@ def _run(command: str, opts: Options, ui, open_session, start_url: str) -> int:
                 break
         if list_page is None:
             for index, page in enumerate(context.pages):
-                Site(context, page, debug_dir).save_diagnostics(f"no_list_tab_{index}")
+                save_page_diagnostics(page, debug_dir, f"no_list_tab_{index}")
             ui.info(f"予約一覧のタブが見つからなかったため終了します。画面の記録: {debug_dir}")
             return 1
 
-        site = Site(context, list_page, debug_dir)
-        ledger = Ledger(out / "receipts.csv")
+        site = Site(context, list_page, debug_dir, timeout_ms=SITE_TIMEOUT_MS)
         try:
             if command == "list":
                 run_list(site, ledger, opts, ui)
@@ -213,10 +226,19 @@ def main(argv: Optional[List[str]] = None, *, open_session=browser.open_session,
                    name=getattr(args, "name", ""), title=getattr(args, "title", ""),
                    limit=getattr(args, "limit", None))
     try:
-        return _run(args.command, opts, ui, open_session, start_url)
+        # 台帳はブラウザを開く前に読む。読めなければ、何も上書きせずに止まる
+        ledger = Ledger(out / "receipts.csv")
+    except LedgerError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    try:
+        return _run(args.command, opts, ledger, ui, open_session, start_url)
     except KeyboardInterrupt:
         print("中断しました", file=sys.stderr)
         return 130
+    except EOFError:
+        print(NO_INPUT, file=sys.stderr)
+        return 1
     except browser.BrowserLaunchError as error:
         print(str(error), file=sys.stderr)
         return 1

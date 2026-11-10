@@ -7,3 +7,12 @@ data/
 .DS_Store
 .venv/
 .pytest_cache/
+
+# rakuten_receipts の出力(氏名・予約番号などの個人情報を含む。公開しない)
+receipts.csv
+receipts.csv.tmp
+領収書まとめ.pdf
+領収書まとめ.pdf.tmp
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]_*.pdf
+日付不明_*.pdf
+debug/

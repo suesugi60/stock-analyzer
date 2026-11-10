@@ -58,6 +58,7 @@ def run_cli(tmp_path, dummy_site, monkeypatch):
     pages は Enter のたびに人が開くページ。None は何もしない。関数なら session を渡して呼ぶ。
     """
     monkeypatch.setattr(runner, "INTERVAL_SECONDS", (0.0, 0.0))
+    monkeypatch.setattr(cli, "SITE_TIMEOUT_MS", 1500)
 
     def run(argv, answers=(), pages=("list_p1.html",), on_enter=None):
         session = HeadlessSession(tmp_path / "profile")
@@ -119,6 +120,25 @@ def test_out_inside_repo_is_error(capsys):
     assert code == 2 and no_browser.calls == 0
     assert not target.exists()
     assert "リポジトリ" in capsys.readouterr().err
+
+
+def test_out_guard_works_without_git(tmp_path, monkeypatch, capsys):
+    # 公開用の元フォルダ(.git なし)にツールを置いた場合も、その中には出力させない
+    fake_root = tmp_path / "source-folder"
+    (fake_root / "rakuten_receipts").mkdir(parents=True)
+    monkeypatch.setattr(cli, "REPO_ROOT", fake_root)
+    no_browser = NoBrowser()
+    code = cli.main(["list", "--out", str(fake_root / "receipts")], open_session=no_browser, ui=FakeUI())
+    assert code == 2 and no_browser.calls == 0
+    assert not (fake_root / "receipts").exists()
+
+
+def test_out_next_to_the_tool_folder_is_allowed(tmp_path, monkeypatch):
+    fake_root = tmp_path / "source-folder"
+    fake_root.mkdir()
+    monkeypatch.setattr(cli, "REPO_ROOT", fake_root)
+    problems = cli._check_args(cli.build_parser().parse_args(["list", "--out", str(tmp_path / "receipts")]))
+    assert problems == []
 
 
 def test_invalid_addressee_exits_before_browser(out, capsys):
@@ -206,7 +226,7 @@ def test_e2e_list(run_cli, out):
 
 
 def test_e2e_download(run_cli, out):
-    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True, True])
     assert code == 0
     assert sorted(p.name for p in receipts(out)) == [
         "2025-03-15_ホテルサンプル東京_RY001.pdf",
@@ -228,13 +248,13 @@ def test_e2e_download(run_cli, out):
 
 def test_e2e_download_range(run_cli, out):
     code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE,
-                          "--from", "2025-03-15", "--to", "2025-03-31"], answers=[True, True])
+                          "--from", "2025-03-15", "--to", "2025-03-31"], answers=[True, True, True])
     assert code == 0
     assert sorted(p.name[:10] for p in receipts(out)) == ["2025-03-15", "2025-03-22"]
 
 
 def test_e2e_download_limit(run_cli, out):
-    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    code, _, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True, True])
     assert code == 0
     assert [p.name[:10] for p in receipts(out)] == ["2025-03-15"]
 
@@ -296,7 +316,7 @@ def page_widths(path):
 
 
 def test_e2e_download_writes_merged_pdf(run_cli, out):
-    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True, True])
     assert code == 0
     merged = out / "領収書まとめ.pdf"
     widths = page_widths(merged)
@@ -318,9 +338,9 @@ def test_e2e_download_declined_writes_no_merged_pdf(run_cli, out):
 
 
 def test_e2e_second_download_rebuilds_merged_pdf(run_cli, out):
-    run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True, True])
     assert len(page_widths(out / "領収書まとめ.pdf")) == 1
-    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True, True])
     assert len(page_widths(out / "領収書まとめ.pdf")) == 3
 
 
@@ -330,7 +350,7 @@ def test_merge_failure_keeps_download_result(run_cli, out, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(cli, "merge_receipts", broken)
-    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True])
+    code, ui, _ = run_cli(["download", "--out", str(out), *NAME_TITLE, "--limit", "1"], answers=[True, True])
     assert code == 0
     assert read_ledger(out)["RY001"]["状態"] == "取得済み"
     assert any("まとめファイルを作れませんでした" in m for m in ui.infos)
@@ -339,7 +359,7 @@ def test_merge_failure_keeps_download_result(run_cli, out, monkeypatch):
 
 
 def test_merge_command_does_not_open_browser(run_cli, out, capsys):
-    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True, True])
     (out / "領収書まとめ.pdf").unlink()
     no_browser = NoBrowser()
     assert cli.main(["merge", "--out", str(out)], open_session=no_browser, ui=FakeUI()) == 0
@@ -348,7 +368,7 @@ def test_merge_command_does_not_open_browser(run_cli, out, capsys):
 
 
 def test_merge_command_reports_skipped(run_cli, out):
-    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True])
+    run_cli(["download", "--out", str(out), *NAME_TITLE], answers=[True, True, True])
     (out / "2025-03-22_ビジネスホテル架空大阪_RY003.pdf").unlink()
     ui = FakeUI()
     assert cli.main(["merge", "--out", str(out)], open_session=NoBrowser(), ui=ui) == 0
@@ -375,6 +395,41 @@ def test_merge_command_rejects_date_range(out):
     # merge は台帳の取得済み全件が対象。期間の指定は受け付けない
     assert cli.main(["merge", "--out", str(out), "--from", "2025-01-01"],
                     open_session=NoBrowser(), ui=FakeUI()) == 2
+
+
+# --- レビュー指摘: 読めない台帳では、ブラウザを開く前に止まる ---
+
+def test_unreadable_ledger_stops_before_browser(out, capsys):
+    out.mkdir(parents=True)
+    broken = b"\xff\xfe\x00\x00 not a csv \x81"
+    (out / "receipts.csv").write_bytes(broken)
+    no_browser = NoBrowser()
+    for argv in (["list"], ["download", *NAME_TITLE], ["merge"]):
+        assert cli.main([*argv, "--out", str(out)], open_session=no_browser, ui=FakeUI()) == 1
+    assert no_browser.calls == 0
+    assert (out / "receipts.csv").read_bytes() == broken  # 上書きしていない
+    err = capsys.readouterr().err
+    assert "台帳を読めません" in err and "Traceback" not in err
+
+
+# --- 入力を受け取れない端末(別のプログラムから実行された場合など) ---
+
+def test_no_interactive_input_is_exit_1_with_message(run_cli, out, capsys):
+    def no_stdin(count):
+        raise EOFError()
+
+    code, _, session = run_cli(["list", "--out", str(out)], on_enter=no_stdin)
+    assert code == 1 and session.closed
+    err = capsys.readouterr().err
+    assert "入力を受け取れません" in err and "Traceback" not in err
+
+
+def test_console_confirm_without_stdin_means_no(monkeypatch):
+    def no_stdin(prompt=""):
+        raise EOFError()
+
+    monkeypatch.setattr("builtins.input", no_stdin)
+    assert cli.ConsoleUI().confirm("発行しますか? [y/N]") is False  # 入力できないなら、発行しない
 
 
 # --- ConsoleUI ---
