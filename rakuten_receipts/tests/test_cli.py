@@ -4,6 +4,7 @@ import csv
 import subprocess
 import sys
 from contextlib import contextmanager
+from datetime import date
 
 import pytest
 
@@ -430,6 +431,143 @@ def test_console_confirm_without_stdin_means_no(monkeypatch):
 
     monkeypatch.setattr("builtins.input", no_stdin)
     assert cli.ConsoleUI().confirm("発行しますか? [y/N]") is False  # 入力できないなら、発行しない
+
+
+# --- 案内モード(guide): 質問に答えるだけで、一覧 → 発行 → まとめまで進む ---
+
+@pytest.fixture
+def run_guide(tmp_path, dummy_site, monkeypatch):
+    monkeypatch.setattr(runner, "INTERVAL_SECONDS", (0.0, 0.0))
+    monkeypatch.setattr(cli, "SITE_TIMEOUT_MS", 1500)
+    monkeypatch.setattr(cli, "GUIDE_STABLE_SECONDS", 0.2)
+
+    def run(out, texts, answers=(), start="goto_list_later.html"):
+        session = HeadlessSession(tmp_path / "profile")
+        ui = FakeUI(list(answers), texts=list(texts))
+        opened = []
+        code = cli.main(["guide", "--out", str(out)], open_session=session, ui=ui,
+                        start_url=dummy_site + start, open_folder=opened.append)
+        return code, ui, opened
+
+    return run
+
+
+def test_guide_runs_from_questions_to_merged_pdf(run_guide, out):
+    # 宛名・敬称(2 = 御中)・期間(空 = 全件)に答え、あとは確認に y と答えるだけ
+    code, ui, opened = run_guide(out, texts=["株式会社サンプル", "2", ""],
+                                 answers=[True, True, True, True])
+    assert code == 0
+    assert sorted(p.name[:10] for p in receipts(out)) == ["2025-03-15", "2025-03-22", "2025-04-01"]
+    assert len(page_widths(out / "領収書まとめ.pdf")) == 3
+    assert ui.enters == []  # Enter を押しに戻らなくてよい
+    assert ui.confirms[0] == runner.CONFIRM_START.format(n=5)
+    assert opened == [out]  # 終わったら出力フォルダを開く
+    assert read_ledger(out)["RY001"]["状態"] == "取得済み"
+
+
+def test_guide_period_as_a_range(run_guide, out):
+    code, _, _ = run_guide(out, texts=["株式会社サンプル", "御中", "2025-03-01 2025-03-31"],
+                           answers=[True, True, True, True])
+    assert code == 0
+    assert sorted(p.name[:10] for p in receipts(out)) == ["2025-03-15", "2025-03-22"]
+
+
+def test_guide_title_one_means_sama(run_guide, out, monkeypatch):
+    seen = {}
+
+    def fake_download(site, ledger, opts, ui, **kwargs):
+        seen["opts"] = opts
+        return Summary()
+
+    monkeypatch.setattr(cli, "run_download", fake_download)
+    code, _, opened = run_guide(out, texts=["山田太郎", "1", "2025"])
+    assert code == 0
+    opts = seen["opts"]
+    assert (opts.name, opts.title, opts.confirm_start) == ("山田太郎", "様", True)
+    assert (opts.date_from, opts.date_to) == (date(2025, 1, 1), date(2025, 12, 31))
+    assert opened == []  # 何も保存していなければ、フォルダは開かない
+
+
+def test_guide_asks_again_after_a_bad_answer(run_guide, out, monkeypatch):
+    monkeypatch.setattr(cli, "run_download", lambda *a, **k: Summary())
+    code, ui, _ = run_guide(out, texts=["㈱サンプル", "株式会社サンプル", "3", "2", "きのう", ""])
+    assert code == 0
+    shown = "\n".join(ui.infos)
+    assert "環境依存文字" in shown          # 宛名のだめな理由を見せて、聞き直す
+    assert len(ui.asks) == 6
+
+
+def test_guide_gives_up_after_repeated_bad_answers(out, capsys):
+    no_browser = NoBrowser()
+    ui = FakeUI(texts=["㈱"] * cli.GUIDE_MAX_ASKS)
+    assert cli.main(["guide", "--out", str(out)], open_session=no_browser, ui=ui) == 2
+    assert no_browser.calls == 0
+
+
+def test_guide_start_declined_issues_nothing(run_guide, out):
+    code, _, opened = run_guide(out, texts=["株式会社サンプル", "2", ""], answers=[False])
+    assert code == 0
+    assert receipts(out) == [] and opened == []
+    assert read_ledger(out)["RY001"]["状態"] == "未取得"
+
+
+def test_guide_gives_up_when_the_list_never_appears(run_guide, out, monkeypatch):
+    monkeypatch.setattr(cli, "GUIDE_WAIT_SECONDS", 1)
+    code, ui, _ = run_guide(out, texts=["株式会社サンプル", "2", ""], start="unknown.html")
+    assert code == 1
+    assert list((out / "debug").glob("*.png"))
+    assert any("予約一覧" in m for m in ui.infos)
+
+
+def test_guide_without_stdin_is_exit_1(out, capsys):
+    no_browser = NoBrowser()
+    ui = FakeUI(texts=[EOFError()])
+    assert cli.main(["guide", "--out", str(out)], open_session=no_browser, ui=ui) == 1
+    assert no_browser.calls == 0
+    assert "入力を受け取れません" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("", (None, None)),
+    ("  ", (None, None)),
+    ("2025", (date(2025, 1, 1), date(2025, 12, 31))),
+    ("2025", (date(2025, 1, 1), date(2025, 12, 31))),          # 全角の数字
+    ("2025-01-01 2025-03-31", (date(2025, 1, 1), date(2025, 3, 31))),
+    ("2025-01-01〜2025-03-31", (date(2025, 1, 1), date(2025, 3, 31))),
+    ("2025/1/1 2025/3/31", (date(2025, 1, 1), date(2025, 3, 31))),
+])
+def test_parse_period(text, expected):
+    assert cli.parse_period(text) == expected
+
+
+@pytest.mark.parametrize("text", ["きのう", "2025-13-01 2025-12-31", "2025-03-31 2025-01-01", "25", "2025-01-01"])
+def test_parse_period_rejects(text):
+    assert cli.parse_period(text) is None
+
+
+# --- 起動スクリプト start.sh ---
+
+START_SH = cli.REPO_ROOT / "rakuten_receipts" / "start.sh"
+needs_venv = pytest.mark.skipif(not (cli.REPO_ROOT / ".venv" / "bin" / "python").exists(),
+                                reason="リポジトリ直下の .venv が必要(なければ start.sh がインストールを始めてしまう)")
+
+
+@needs_venv
+def test_start_script_launches_the_guide_from_any_directory(tmp_path):
+    import os
+
+    assert os.access(START_SH, os.X_OK)
+    done = subprocess.run([str(START_SH), "--help"], cwd=str(tmp_path), capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert "guide" in done.stdout and "--out" in done.stdout
+
+
+def test_start_script_explains_when_python_is_missing(tmp_path):
+    # python3 が見つからない Mac でも、何をすればよいかを日本語で伝える
+    done = subprocess.run(["/bin/bash", str(START_SH)], cwd=str(tmp_path), capture_output=True, text=True,
+                          timeout=60, env={"PATH": str(tmp_path), "HOME": str(tmp_path)})
+    assert done.returncode == 1
+    assert "python3" in done.stderr and "インストール" in done.stderr
 
 
 # --- ConsoleUI ---

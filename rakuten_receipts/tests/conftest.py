@@ -100,8 +100,11 @@ class FakeSite:
 class FakeUI:
     """利用者の代わり。confirm には answers を先頭から順に返す。"""
 
-    def __init__(self, answers: Optional[List[bool]] = None, on_enter=None) -> None:
+    def __init__(self, answers: Optional[List[bool]] = None, on_enter=None,
+                 texts: Optional[List[str]] = None) -> None:
         self.answers = list(answers or [])
+        self.texts = list(texts or [])  # ask(文字の入力)への答え
+        self.asks: List[str] = []
         self.infos: List[str] = []
         self.confirms: List[str] = []
         self.enters: List[str] = []
@@ -115,6 +118,14 @@ class FakeUI:
         assert self.answers, f"想定していない確認が出た: {message}"
         answer = self.answers.pop(0)
         if isinstance(answer, BaseException):  # 確認の最中に Ctrl+C を押した、など
+            raise answer
+        return answer
+
+    def ask(self, message: str) -> str:
+        self.asks.append(message)
+        assert self.texts, f"想定していない質問が出た: {message}"
+        answer = self.texts.pop(0)
+        if isinstance(answer, BaseException):
             raise answer
         return answer
 

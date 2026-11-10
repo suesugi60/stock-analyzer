@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from rakuten_receipts.browser import BrowserLaunchError, find_list_page, open_session, open_start_page
+from rakuten_receipts.browser import (
+    BrowserLaunchError, find_list_page, open_session, open_start_page, wait_for_list_page)
 
 
 def test_open_session_opens_a_browser(tmp_path):
@@ -86,3 +87,22 @@ def test_open_start_page_ignores_unreachable_url(session):
 def test_open_start_page_opens_url(session, dummy_site):
     page = open_start_page(session, dummy_site + "unknown.html")
     assert page.url == dummy_site + "unknown.html"
+
+
+# --- 案内モード: 予約一覧が表示されたら自動で先へ進む ---
+
+def test_wait_for_list_page_returns_when_the_list_appears(session, dummy_site):
+    session.pages[0].goto(dummy_site + "goto_list_later.html")  # 0.8 秒後に一覧へ移る
+    page = wait_for_list_page(session, timeout_s=10, stable_s=0.3)
+    assert page is not None and page.url == dummy_site + "list_p1.html"
+
+
+def test_wait_for_list_page_gives_up(session, dummy_site):
+    session.pages[0].goto(dummy_site + "unknown.html")
+    assert wait_for_list_page(session, timeout_s=1, stable_s=0.2) is None
+
+
+def test_wait_for_list_page_ignores_a_page_passed_through(session, dummy_site):
+    # 一覧らしい画面が 0.3 秒だけ出て、別のページへ移る。落ち着くまで待つので拾わない
+    session.pages[0].goto(dummy_site + "list_then_leave.html")
+    assert wait_for_list_page(session, timeout_s=2, stable_s=1.0) is None

@@ -538,3 +538,28 @@ def test_close_flow_called_for_every_item(make_site, make_ui, ledger, opts, rese
     site = make_site(reservations_factory(3), scripts)
     download(site, ledger, opts, make_ui([True, True, True]))
     assert site.ops("close") == ["RY001", "RY002", "RY003"]
+
+
+# --- 案内モード: 発行を始める前に、一覧がこれで合っているかを聞く ---
+
+def test_confirm_start_no_means_nothing_opened(make_site, make_ui, ledger, opts, reservations_factory):
+    opts.confirm_start = True
+    site, ui = make_site(reservations_factory(2)), make_ui([False])
+    summary, _ = download(site, ledger, opts, ui)
+    assert summary == Summary(stopped=True)
+    assert site.ops("open") == []
+    assert ui.confirms == [runner.CONFIRM_START.format(n=2)]
+
+
+def test_confirm_start_yes_proceeds(make_site, make_ui, ledger, opts, reservations_factory):
+    opts.confirm_start = True
+    site, ui = make_site(reservations_factory(1)), make_ui([True, True, True])
+    summary, _ = download(site, ledger, opts, ui)
+    assert summary == Summary(done=1)
+    assert ui.confirms == [runner.CONFIRM_START.format(n=1), INPUT, FIRST]
+
+
+def test_no_start_question_by_default(make_site, make_ui, ledger, opts, reservations_factory):
+    site, ui = make_site(reservations_factory(1)), make_ui([True, True])
+    download(site, ledger, opts, ui)
+    assert ui.confirms == [INPUT, FIRST]

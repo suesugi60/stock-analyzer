@@ -19,6 +19,7 @@ from .naming import addressee_matches, confirm_excerpt, receipt_filename, unique
 MAX_CONSECUTIVE_FAILURES = 3
 INTERVAL_SECONDS = (3.0, 6.0)
 
+CONFIRM_START = "この {n} 件の領収書を発行します。一覧はこれで合っていますか? [y/N]"
 CONFIRM_INPUT = ("ブラウザの入力画面に宛名を入れました。宛名と敬称を確認してください。"
                  "この内容で次へ進みますか? [y/N]")
 CONFIRM_FIRST = "ブラウザの確認画面を見て、この内容で発行しますか? [y/N]"
@@ -54,6 +55,7 @@ class Options:
     name: str = ""
     title: str = ""
     limit: Optional[int] = None
+    confirm_start: bool = False  # 発行を始める前に、対象の一覧がこれで合っているかを聞く(案内モード)
 
 
 @dataclass
@@ -261,6 +263,9 @@ def run_download(site, ledger: Ledger, opts: Options, ui,
 
     ui.info(f"発行の対象: {len(targets)} 件 / 宛名: {opts.name} {opts.title}")
     ui.info(format_table(targets, ledger))
+    if opts.confirm_start and not ui.confirm(CONFIRM_START.format(n=len(targets))):
+        summary.stopped = True
+        return summary
 
     worker = _Downloader(site, ledger, opts, ui)
     consecutive_failures = 0

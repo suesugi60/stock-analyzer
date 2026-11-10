@@ -1,6 +1,7 @@
 """ブラウザの起動と、予約一覧タブの特定。"""
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Sequence
@@ -79,4 +80,37 @@ def find_list_page(context: BrowserContext) -> Optional[Page]:
                 return page
         except PlaywrightError:
             continue
+    return None
+
+
+def wait_for_list_page(context: BrowserContext, timeout_s: float, stable_s: float) -> Optional[Page]:
+    """予約一覧のタブが現れ、stable_s 秒そのまま表示され続けるのを待つ。現れなければ None。
+
+    ページ移動の途中で通り過ぎるだけの画面を拾わないよう、同じ URL のまま落ち着くまで待つ。
+    """
+    deadline = time.monotonic() + timeout_s
+    candidate: Optional[Page] = None
+    candidate_url = ""
+    since = 0.0
+    while time.monotonic() < deadline:
+        try:
+            page = find_list_page(context)
+            url = page.url if page is not None else ""
+        except PlaywrightError:
+            page, url = None, ""
+        now = time.monotonic()
+        if page is None:
+            candidate = None
+        elif page is candidate and url == candidate_url:
+            if now - since >= stable_s:
+                return page
+        else:
+            candidate, candidate_url, since = page, url, now
+        try:
+            pages = context.pages
+            if not pages:
+                return None  # ブラウザが閉じられた
+            pages[0].wait_for_timeout(200)
+        except PlaywrightError:
+            return None
     return None
