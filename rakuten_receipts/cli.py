@@ -34,6 +34,9 @@ NO_INPUT = "入力を受け取れません。Enter や y を入力できるタ�
 GUIDE_WAIT_SECONDS = 600  # 予約一覧が表示されるのを待つ時間
 GUIDE_STABLE_SECONDS = 2.0  # 一覧が表示されてから、読み始めるまで落ち着くのを待つ時間
 GUIDE_MAX_ASKS = 5  # 同じ質問を聞き直す回数の上限
+GUIDE_PROGRESS_SECONDS = 15  # 待っている間、いまの判定を伝える間隔
+WAITING = "予約一覧を待っています。いま開いているページ: {tab}"
+NOT_A_LIST = "開いているページ: {tab}"
 GUIDE_INTRO = ("楽天トラベルの領収書を、同じ宛名でまとめて発行して保存します。\n"
                "いくつか質問に答えてください。発行の前には必ず確認が入ります。")
 ASK_NAME = "領収書の宛名を入力してください(全件に同じ宛名を使います。例: 株式会社サンプル):"
@@ -258,7 +261,10 @@ def _run(command: str, opts: Options, ledger: Ledger, ui, open_session, start_ur
         if guided:
             # 案内モード: Enter を待たず、予約一覧が表示されたら先へ進む
             ui.info(PROMPT_AUTO.format(minutes=max(1, int(GUIDE_WAIT_SECONDS // 60))))
-            list_page = browser.wait_for_list_page(context, GUIDE_WAIT_SECONDS, GUIDE_STABLE_SECONDS)
+            list_page = browser.wait_for_list_page(
+                context, GUIDE_WAIT_SECONDS, GUIDE_STABLE_SECONDS,
+                on_progress=lambda tab: ui.info(WAITING.format(tab=tab)),
+                progress_every_s=GUIDE_PROGRESS_SECONDS)
         else:
             for attempt in range(LIST_TAB_RETRIES):
                 ui.wait_enter(PROMPT_OPEN_LIST if attempt == 0 else PROMPT_LIST_NOT_FOUND)
@@ -266,6 +272,9 @@ def _run(command: str, opts: Options, ledger: Ledger, ui, open_session, start_ur
                 if list_page is not None:
                     break
         if list_page is None:
+            # どう判定したかを伝える。この数行を見れば、なぜ一覧と認識できなかったかが分かる
+            for tab in browser.describe_tabs(context):
+                ui.info(NOT_A_LIST.format(tab=tab))
             for index, page in enumerate(context.pages):
                 save_page_diagnostics(page, debug_dir, f"no_list_tab_{index}")
             ui.info(f"予約一覧のタブが見つからなかったため終了します。画面の記録: {debug_dir}")

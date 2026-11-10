@@ -232,12 +232,9 @@ def parse_block_text(text: str) -> Dict[str, object]:
     }
 
 
-def detect_screen(page: Page) -> Screen:
-    """いまの画面の種別を、表示されている文言から判定する。"""
-    host = urlparse(page.url).hostname or ""
-    if any(login_host in host for login_host in LOGIN_HOSTS):
-        return Screen.LOGIN
-    facts = evaluate_with_retry(page, _JS_FACTS, {
+def _screen_facts(page: Page) -> dict:
+    """画面の判定に使う材料(何があるか・ないか)を、ページから取り出す。"""
+    return evaluate_with_retry(page, _JS_FACTS, {
         "submit": TEXT_SUBMIT,
         "goConfirm": TEXT_GO_CONFIRM,
         "fixAnywhere": list(FIX_MARKERS_ANYWHERE),
@@ -247,6 +244,15 @@ def detect_screen(page: Page) -> Screen:
         "receiptLink": TEXT_RECEIPT_LINK,
         "reservationId": TEXT_RESERVATION_ID,
     })
+
+
+def _classify(url: str, facts: Optional[dict]) -> Screen:
+    """材料から画面の種別を決める。facts が None なら、URL だけで決められる範囲で決める。"""
+    host = urlparse(url).hostname or ""
+    if any(login_host in host for login_host in LOGIN_HOSTS):
+        return Screen.LOGIN
+    if facts is None:
+        return Screen.UNKNOWN
     if facts["hasPassword"]:
         return Screen.LOGIN
     fix_markers = facts["fixAnywhere"] or facts["fixInControls"]
@@ -264,6 +270,52 @@ def detect_screen(page: Page) -> Screen:
     if facts["hasReservationId"]:
         return Screen.LIST
     return Screen.UNKNOWN
+
+
+def detect_screen(page: Page) -> Screen:
+    """いまの画面の種別を、表示されている文言から判定する。"""
+    host = urlparse(page.url).hostname or ""
+    if any(login_host in host for login_host in LOGIN_HOSTS):
+        return Screen.LOGIN
+    return _classify(page.url, _screen_facts(page))
+
+
+SCREEN_NAMES = {
+    Screen.LOGIN: "ログイン",
+    Screen.LIST: "予約一覧",
+    Screen.ADDRESSEE_INPUT: "宛名の入力",
+    Screen.ADDRESSEE_FIX: "修正・再発行らしい画面",
+    Screen.CONFIRM: "確認",
+    Screen.RECEIPT: "領収書",
+    Screen.UNKNOWN: "不明",
+}
+
+
+def describe_page(page: Page) -> str:
+    """ページをどう判定したかを1行で説明する。うまく動かないときに、利用者がそのまま貼れるようにする。
+
+    画面の本文や URL の ? 以降は出さない(氏名や予約番号を含みうるため)。出すのは、
+    ページの場所(ホストとパス)と、判定の材料が「あり」か「なし」かだけ。
+    """
+    try:
+        parsed = urlparse(page.url)
+        where = f"{parsed.hostname or ''}{parsed.path}" or "(空のページ)"
+        facts = _screen_facts(page)
+        screen = _classify(page.url, facts)
+    except Exception:  # noqa: BLE001 - 説明のための読み取りで、本体の処理を止めない
+        return "(このタブは読み取れません)"
+
+    def mark(key: str) -> str:
+        return "あり" if facts[key] else "なし"
+
+    return (f"{where} → 判定: {SCREEN_NAMES[screen]}("
+            f"{TEXT_RESERVATION_ID}の文字: {mark('hasReservationId')}、"
+            f"{TEXT_RECEIPT_LINK}: {mark('hasReceiptLink')}、"
+            f"入力欄: {mark('hasTextInput')}、"
+            f"パスワード欄: {mark('hasPassword')}、"
+            f"{TEXT_GO_CONFIRM}: {mark('goConfirm')}、"
+            f"{TEXT_SUBMIT}: {mark('submitExact')}、"
+            f"修正・再発行の目印: {'あり' if facts['fixAnywhere'] or facts['fixInControls'] else 'なし'})")
 
 
 def save_page_diagnostics(page: Page, debug_dir: Path, label: str) -> Optional[Path]:

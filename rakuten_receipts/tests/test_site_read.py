@@ -236,3 +236,41 @@ def test_pager_cycle_stops_without_hammering_the_site(context, page, dummy_site,
     rs = make_site(context, page, tmp_path).read_reservations()
     assert [r.reservation_id for r in rs] == ["RY301", "RY302"]
     assert len(loads) <= 2  # b へ進み、a に戻ったところで終わり
+
+
+# --- 画面をどう判定したかを、個人情報を出さずに説明する ---
+
+def test_describe_page_reports_how_the_page_is_judged(page, dummy_site):
+    from rakuten_receipts.site import describe_page
+
+    page.goto(dummy_site + "list_p1.html")
+    text = describe_page(page)
+    assert "list_p1.html" in text and "判定: 予約一覧" in text
+    assert "予約番号の文字: あり" in text and "領収書発行: あり" in text and "入力欄: なし" in text
+
+
+def test_describe_page_explains_why_a_list_is_not_recognised(page):
+    from rakuten_receipts.site import describe_page
+
+    # 予約番号はあるが、ページ内に入力欄がある。いまの判定では一覧とみなさない
+    page.set_content("<input type='text' placeholder='宿名で絞り込み'><p>予約番号 RY1</p><a href='#'>領収書発行</a>")
+    text = describe_page(page)
+    assert "判定: 不明" in text
+    assert "予約番号の文字: あり" in text and "入力欄: あり" in text
+
+
+def test_describe_page_never_shows_page_text_or_query(page, dummy_site):
+    from rakuten_receipts.site import describe_page
+
+    page.goto(dummy_site + "receipt_confirm.html?atena=株式会社サンプル&keisho=御中&id=RY001")
+    text = describe_page(page)
+    assert "判定: 確認" in text
+    # 宛名や予約番号(URL の ? 以降、画面の本文)は出さない
+    assert "株式会社サンプル" not in text and "RY001" not in text and "atena" not in text
+
+
+def test_describe_page_survives_a_closed_page(page):
+    from rakuten_receipts.site import describe_page
+
+    page.close()
+    assert "読み取れません" in describe_page(page)

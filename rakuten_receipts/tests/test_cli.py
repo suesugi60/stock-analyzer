@@ -183,6 +183,8 @@ def test_no_list_tab_reprompts_then_exit_1(run_cli, out):
     assert "予約一覧のタブが見つかりません" in ui.enters[1]
     assert list((out / "debug").glob("*.png")) and list((out / "debug").glob("*.html"))
     assert not (out / "receipts.csv").exists()
+    # 見つからなかったときは、開いているタブをどう判定したかを伝える(貼り付ければ原因が分かる)
+    assert any("unknown.html" in m and "判定: 不明" in m for m in ui.infos)
 
 
 def test_list_tab_found_on_second_try(run_cli, out):
@@ -519,6 +521,17 @@ def test_guide_gives_up_when_the_list_never_appears(run_guide, out, monkeypatch)
     assert any("予約一覧" in m for m in ui.infos)
 
 
+def test_guide_tells_what_it_sees_while_waiting(run_guide, out, monkeypatch):
+    # 一覧を認識できないまま待たせない。いまのページをどう判定しているかを伝える
+    monkeypatch.setattr(cli, "GUIDE_WAIT_SECONDS", 2)
+    monkeypatch.setattr(cli, "GUIDE_PROGRESS_SECONDS", 0.5)
+    code, ui, _ = run_guide(out, texts=["株式会社サンプル", "2", ""], start="unknown.html")
+    assert code == 1
+    waiting = [m for m in ui.infos if "判定: 不明" in m and "unknown.html" in m]
+    assert len(waiting) >= 2
+    assert any("予約一覧を待っています" in m for m in ui.infos)
+
+
 def test_guide_without_stdin_is_exit_1(out, capsys):
     no_browser = NoBrowser()
     ui = FakeUI(texts=[EOFError()])
@@ -557,7 +570,9 @@ def test_start_script_launches_the_guide_from_any_directory(tmp_path):
     import os
 
     assert os.access(START_SH, os.X_OK)
-    done = subprocess.run([str(START_SH), "--help"], cwd=str(tmp_path), capture_output=True, text=True, timeout=120)
+    env = dict(os.environ, RAKUTEN_RECEIPTS_NO_UPDATE="1")  # テスト中に作業用リポジトリを更新しない
+    done = subprocess.run([str(START_SH), "--help"], cwd=str(tmp_path), capture_output=True, text=True,
+                          timeout=120, env=env)
     assert done.returncode == 0, done.stderr
     assert "guide" in done.stdout and "--out" in done.stdout
 
@@ -568,6 +583,57 @@ def test_start_script_explains_when_python_is_missing(tmp_path):
                           timeout=60, env={"PATH": str(tmp_path), "HOME": str(tmp_path)})
     assert done.returncode == 1
     assert "python3" in done.stderr and "インストール" in done.stderr
+
+
+def test_start_script_pulls_the_latest_version_first(tmp_path):
+    # 直した版をプッシュしたら、利用者は同じ1行を実行し直すだけで最新になる
+    import os
+    import shutil
+
+    def git(*args, cwd):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+                       cwd=str(cwd), check=True, capture_output=True)
+
+    origin = tmp_path / "origin"
+    (origin / "rakuten_receipts").mkdir(parents=True)
+    shutil.copy(START_SH, origin / "rakuten_receipts" / "start.sh")
+    git("init", "-q", "-b", "main", cwd=origin)
+    git("add", "-A", cwd=origin)
+    git("commit", "-q", "-m", "first", cwd=origin)
+    clone = tmp_path / "clone"
+    git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
+    (origin / "NEW_VERSION").write_text("2")
+    git("add", "-A", cwd=origin)
+    git("commit", "-q", "-m", "second", cwd=origin)
+
+    # python3 を「古すぎる」ことにして、更新の直後で止める(インストールまで進ませない)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (fake_bin / "python3").chmod(0o755)
+    env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "HOME": str(tmp_path)}
+    done = subprocess.run(["/bin/bash", str(clone / "rakuten_receipts" / "start.sh")], cwd=str(tmp_path),
+                          capture_output=True, text=True, timeout=60, env=env)
+    assert done.returncode == 1 and "Python 3.9 以上" in done.stderr
+    assert (clone / "NEW_VERSION").read_text() == "2"
+
+
+def test_start_script_runs_when_update_is_impossible(tmp_path):
+    # 更新できなくても(ネットにつながらない、git で入れていない)、いまある版で続ける
+    import os
+    import shutil
+
+    tool = tmp_path / "tool" / "rakuten_receipts"
+    tool.mkdir(parents=True)
+    shutil.copy(START_SH, tool / "start.sh")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (fake_bin / "python3").chmod(0o755)
+    env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "HOME": str(tmp_path)}
+    done = subprocess.run(["/bin/bash", str(tool / "start.sh")], cwd=str(tmp_path),
+                          capture_output=True, text=True, timeout=60, env=env)
+    assert done.returncode == 1 and "Python 3.9 以上" in done.stderr  # 更新の段階では止まっていない
 
 
 # --- ConsoleUI ---

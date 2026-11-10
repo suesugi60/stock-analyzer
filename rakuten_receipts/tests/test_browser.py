@@ -106,3 +106,13 @@ def test_wait_for_list_page_ignores_a_page_passed_through(session, dummy_site):
     # 一覧らしい画面が 0.3 秒だけ出て、別のページへ移る。落ち着くまで待つので拾わない
     session.pages[0].goto(dummy_site + "list_then_leave.html")
     assert wait_for_list_page(session, timeout_s=2, stable_s=1.0) is None
+
+
+def test_wait_for_list_page_reports_what_it_sees(session, dummy_site):
+    # 待っている間、開いているタブをどう判定しているかを定期的に伝える
+    session.pages[0].goto(dummy_site + "unknown.html")
+    reports = []
+    assert wait_for_list_page(session, timeout_s=1.5, stable_s=0.2,
+                              on_progress=reports.append, progress_every_s=0.4) is None
+    assert len(reports) >= 2
+    assert all("unknown.html" in report and "判定: 不明" in report for report in reports)

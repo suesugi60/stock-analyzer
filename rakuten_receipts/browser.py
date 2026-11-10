@@ -4,12 +4,12 @@ from __future__ import annotations
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
+from typing import Callable, Iterator, List, Optional, Sequence
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from .models import Screen
-from .site import detect_screen
+from .site import describe_page, detect_screen
 
 # ログイン状態を持つ専用プロファイル。~/Documents は iCloud で同期されることがあるので避ける
 PROFILE_DIR = Path.home() / "Library" / "Application Support" / "rakuten-receipts" / "profile"
@@ -83,12 +83,25 @@ def find_list_page(context: BrowserContext) -> Optional[Page]:
     return None
 
 
-def wait_for_list_page(context: BrowserContext, timeout_s: float, stable_s: float) -> Optional[Page]:
+def describe_tabs(context: BrowserContext) -> List[str]:
+    """開いているタブごとに、どう判定したかの説明を返す。"""
+    try:
+        return [describe_page(page) for page in context.pages]
+    except PlaywrightError:
+        return []
+
+
+def wait_for_list_page(context: BrowserContext, timeout_s: float, stable_s: float,
+                       on_progress: Optional[Callable[[str], None]] = None,
+                       progress_every_s: float = 15.0) -> Optional[Page]:
     """予約一覧のタブが現れ、stable_s 秒そのまま表示され続けるのを待つ。現れなければ None。
 
     ページ移動の途中で通り過ぎるだけの画面を拾わないよう、同じ URL のまま落ち着くまで待つ。
+    待っている間は progress_every_s 秒ごとに、開いているタブの判定を on_progress に伝える。
     """
-    deadline = time.monotonic() + timeout_s
+    started = time.monotonic()
+    deadline = started + timeout_s
+    next_report = started + progress_every_s
     candidate: Optional[Page] = None
     candidate_url = ""
     since = 0.0
@@ -106,6 +119,10 @@ def wait_for_list_page(context: BrowserContext, timeout_s: float, stable_s: floa
                 return page
         else:
             candidate, candidate_url, since = page, url, now
+        if on_progress is not None and now >= next_report:
+            next_report = now + progress_every_s
+            for line in describe_tabs(context):
+                on_progress(line)
         try:
             pages = context.pages
             if not pages:
