@@ -90,7 +90,7 @@ def test_site_header_search_box_is_ignored(page):
 
 
 def test_login_host_is_login(page):
-    page.route("**/*", lambda route: route.fulfill(body="<p>予約番号 RY1</p>", content_type="text/html"))
+    page.route("**/*", lambda route: route.fulfill(body="<p>予約番号 RY1</p>", content_type="text/html; charset=utf-8"))
     page.goto("https://login.account.rakuten.com/sso/authorize")
     assert detect_screen(page) is Screen.LOGIN
 

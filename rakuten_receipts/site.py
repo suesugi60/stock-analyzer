@@ -5,16 +5,18 @@
 """
 from __future__ import annotations
 
+import functools
 import re
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from urllib.parse import urlparse
 
-from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page
+from playwright.sync_api import BrowserContext, Download, Error as PlaywrightError, Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .models import Reservation, Screen
+from .models import Reservation, Screen, UnexpectedScreen
 from .naming import NO_HOTEL
 
 # --- 画面の文言 ---
@@ -34,8 +36,11 @@ NEXT_PATTERN = re.compile(r"^\s*(次へ|次の\d*件|次ページ|次)\s*[>»›
 
 MAX_PAGES = 50
 PAGE_CHANGE_WAIT_MS = 3000
+ISSUE_TIMEOUT_MS = 30000  # 「発行する」を押してから領収書が出るまで待つ時間
+TEXT_ADDRESSEE_LABEL = "宛名"
 
-_ID = re.compile(TEXT_RESERVATION_ID + r"[\s::]*([A-Za-z0-9\-]+)")
+_ID_PREFIX = TEXT_RESERVATION_ID + r"[\s::]*"
+_ID = re.compile(_ID_PREFIX + r"([A-Za-z0-9\-]+)")
 _DATE = re.compile(r"(\d{4})\s*[/年.\-]\s*(\d{1,2})\s*[/月.\-]\s*(\d{1,2})")
 _RANGE_SEPARATOR = re.compile(r"\s*日?\s*(?:[((][^))]{1,3}[))])?\s*[〜~\-−–—]\s*")
 _AMOUNT = re.compile(r"([\d,]+)\s*円")
@@ -131,6 +136,49 @@ def evaluate_with_retry(page: Page, script: str, arg: object = None) -> object:
     raise AssertionError("unreachable")
 
 
+_JS_TAG_RECEIPT = "(a) => {" + _JS_HELPERS + """
+  document.querySelectorAll('[data-rr-click]').forEach((el) => el.removeAttribute('data-rr-click'));
+  const pattern = new RegExp(a.pattern);
+  for (const block of findBlocks(a.idLabel)) {
+    if (!pattern.test(block.innerText || '')) continue;
+    const control = Array.from(block.querySelectorAll(CONTROLS))
+      .find((c) => visible(c) && textOf(c).includes(a.receiptLink));
+    if (!control) continue;
+    control.setAttribute('data-rr-click', '1');
+    return true;
+  }
+  return false;
+}"""
+
+_JS_TAG_CONTROL = "(a) => {" + _JS_HELPERS + """
+  document.querySelectorAll('[data-rr-click]').forEach((el) => el.removeAttribute('data-rr-click'));
+  const control = Array.from(document.querySelectorAll(CONTROLS)).find((c) => {
+    if (!visible(c) || c.disabled) return false;
+    return a.exact ? textOf(c) === a.text : textOf(c).includes(a.text);
+  });
+  if (!control) return false;
+  control.setAttribute('data-rr-click', '1');
+  return true;
+}"""
+
+_JS_SELECTED_OPTION = "(el) => (el.selectedOptions[0] ? el.selectedOptions[0].textContent.trim() : '')"
+
+_UNSAFE_LABEL = re.compile(r"[^\w\-]+")
+
+
+def _as_unexpected(method):
+    """要素が時間内に見つからない Playwright の TimeoutError を UnexpectedScreen に変える。"""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except PlaywrightTimeoutError as error:
+            raise UnexpectedScreen(method.__name__, detail=str(error).splitlines()[0]) from error
+
+    return wrapper
+
+
 def _to_date(match: Optional[re.Match]) -> Optional[date]:
     if match is None:
         return None
@@ -223,6 +271,7 @@ class Site:
         self.debug_dir = Path(debug_dir)
         self.timeout_ms = timeout_ms
         self._flow: Optional[Page] = None  # 発行操作中のページ(一覧と同じタブのこともある)
+        self._download: Optional[Download] = None  # 「発行する」などで始まったダウンロード
 
     def _current(self) -> Page:
         return self._flow if self._flow is not None else self.list_page
@@ -276,3 +325,175 @@ class Site:
             if not self._go_next(page, {block["reservation_id"] for block in blocks}):
                 break
         return list(found.values())
+
+    # --- 領収書の発行操作 ---
+
+    def _find_control(self, page: Page, text: str, exact: bool, step: str) -> Locator:
+        """文言でボタンやリンクを探す。時間内に現れなければ UnexpectedScreen。"""
+        deadline = time.monotonic() + self.timeout_ms / 1000
+        while True:
+            if evaluate_with_retry(page, _JS_TAG_CONTROL, {"text": text, "exact": exact}):
+                return page.locator("[data-rr-click]").first
+            if time.monotonic() >= deadline:
+                raise UnexpectedScreen(step, detect_screen(page), f"「{text}」が見つからない")
+            page.wait_for_timeout(100)
+
+    def _click_and_settle(self, target: Locator, timeout_ms: int, step: str) -> None:
+        """クリックし、ダウンロード開始・新しいタブ・画面の変化のどれかが起きるまで待つ。"""
+        page = self._current()
+        before = (page.url, detect_screen(page))
+        downloads: List[Download] = []
+        popups: List[Page] = []
+
+        def on_download(download: Download) -> None:
+            downloads.append(download)
+
+        def on_page(new_page: Page) -> None:
+            popups.append(new_page)
+
+        page.on("download", on_download)
+        self.context.on("page", on_page)
+        try:
+            target.click(timeout=timeout_ms)
+            deadline = time.monotonic() + timeout_ms / 1000
+            while True:
+                if downloads:
+                    self._download = downloads[0]
+                    self._flow = page
+                    return
+                if popups:
+                    popup = popups[0]
+                    popup.wait_for_load_state("load", timeout=timeout_ms)
+                    self._flow = popup
+                    return
+                if (page.url, detect_screen(page)) != before:
+                    page.wait_for_load_state("load", timeout=timeout_ms)
+                    self._flow = page
+                    return
+                if time.monotonic() >= deadline:
+                    raise UnexpectedScreen(step, before[1], "クリックしても画面が変わらない")
+                page.wait_for_timeout(100)
+        finally:
+            page.remove_listener("download", on_download)
+            self.context.remove_listener("page", on_page)
+
+    @_as_unexpected
+    def open_receipt(self, reservation: Reservation) -> Screen:
+        """一覧に戻り、その予約の「領収書発行」を押す。移った先の画面種別を返す。"""
+        self.close_flow()
+        page = self.list_page
+        page.goto(self.list_url, wait_until="load", timeout=self.timeout_ms)
+        screen = detect_screen(page)
+        if screen is Screen.LOGIN:
+            return screen
+        for _ in range(reservation.page_index):
+            ids = {block["reservation_id"] for block in self._read_blocks(page)}
+            if not self._go_next(page, ids):
+                raise UnexpectedScreen("open_receipt", screen, "一覧の次ページへ進めない")
+        tagged = evaluate_with_retry(page, _JS_TAG_RECEIPT, {
+            "idLabel": TEXT_RESERVATION_ID,
+            "receiptLink": TEXT_RECEIPT_LINK,
+            # この予約番号ちょうどに一致させる(RY00 が RY001 に当たらないように)
+            "pattern": _ID_PREFIX + re.escape(reservation.reservation_id) + r"(?![A-Za-z0-9\-])",
+        })
+        if not tagged:
+            raise UnexpectedScreen(
+                "open_receipt", screen, f"予約番号 {reservation.reservation_id} の「{TEXT_RECEIPT_LINK}」が見つからない")
+        self._click_and_settle(page.locator("[data-rr-click]").first, self.timeout_ms, "open_receipt")
+        if self._download is not None:
+            return Screen.RECEIPT
+        return detect_screen(self._current())
+
+    def _addressee_field(self, page: Page) -> Locator:
+        candidates = (
+            page.get_by_label(re.compile(TEXT_ADDRESSEE_LABEL)),
+            page.locator("input[type=text], input:not([type]), textarea"),
+        )
+        for candidate in candidates:
+            shown = [candidate.nth(i) for i in range(candidate.count()) if candidate.nth(i).is_visible()]
+            if len(shown) == 1:
+                return shown[0]
+        raise UnexpectedScreen("fill_addressee", detect_screen(page), "宛名の入力欄を1つに決められない")
+
+    @_as_unexpected
+    def fill_addressee(self, name: str, title: str) -> None:
+        """宛名を入力し、敬称を選ぶ。入力後に画面の値を読み直して確かめる。"""
+        page = self._current()
+        field = self._addressee_field(page)
+        field.fill(name, timeout=self.timeout_ms)
+
+        radio = page.get_by_role("radio", name=title, exact=True)
+        select = page.locator("select").filter(
+            has=page.locator("option", has_text=re.compile(rf"^\s*{re.escape(title)}\s*$")))
+        if radio.count() >= 1:
+            radio.first.check(timeout=self.timeout_ms)
+            title_ok = radio.first.is_checked()
+        elif select.count() == 1:
+            select.first.select_option(label=title, timeout=self.timeout_ms)
+            title_ok = select.first.evaluate(_JS_SELECTED_OPTION) == title
+        else:
+            raise UnexpectedScreen("fill_addressee", detect_screen(page), f"敬称「{title}」の選択肢が見つからない")
+
+        if field.input_value() != name or not title_ok:
+            raise UnexpectedScreen("fill_addressee", detect_screen(page), "入力した宛名・敬称が画面に反映されていない")
+
+    @_as_unexpected
+    def go_to_confirm(self) -> Screen:
+        """「領収書の発行」を押し、移った先の画面種別を返す。"""
+        page = self._current()
+        button = self._find_control(page, TEXT_GO_CONFIRM, False, "go_to_confirm")
+        self._click_and_settle(button, self.timeout_ms, "go_to_confirm")
+        return detect_screen(self._current())
+
+    @_as_unexpected
+    def read_confirm_text(self) -> str:
+        return self._current().inner_text("body", timeout=self.timeout_ms)
+
+    @_as_unexpected
+    def submit_issue(self) -> None:
+        """「発行する」を押す。ここから先は取り消せない。"""
+        page = self._current()
+        button = self._find_control(page, TEXT_SUBMIT, True, "submit_issue")
+        self._click_and_settle(button, ISSUE_TIMEOUT_MS, "submit_issue")
+
+    @_as_unexpected
+    def save_receipt(self, path: Path) -> None:
+        """領収書を PDF として保存する。ダウンロードされたファイルか、表示中のページを使う。"""
+        path = Path(path)
+        if self._download is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._download.save_as(str(path))
+            return
+        page = self._current()
+        screen = detect_screen(page)
+        if screen is not Screen.RECEIPT:
+            raise UnexpectedScreen("save_receipt", screen, "領収書の画面ではない")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        page.emulate_media(media="print")
+        try:
+            page.pdf(path=str(path), format="A4", print_background=True)
+        finally:
+            page.emulate_media(media="null")
+
+    def save_diagnostics(self, label: str) -> Optional[Path]:
+        """いまの画面のスクリーンショットと HTML を残す。失敗しても例外にしない。"""
+        try:
+            page = self._current()
+            self.debug_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            base = self.debug_dir / f"{stamp}_{_UNSAFE_LABEL.sub('_', label)}"
+            png = Path(str(base) + ".png")
+            Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
+            page.screenshot(path=str(png), full_page=True)
+            return png
+        except Exception:  # noqa: BLE001 - 診断の保存に失敗しても本体の処理は止めない
+            return None
+
+    def close_flow(self) -> None:
+        """発行操作を終える。別タブで進んでいたら閉じ、操作対象を一覧に戻す。"""
+        flow, self._flow, self._download = self._flow, None, None
+        if flow is not None and flow is not self.list_page:
+            try:
+                flow.close()
+            except PlaywrightError:
+                pass

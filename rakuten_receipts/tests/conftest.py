@@ -195,3 +195,9 @@ def context(browser):
 @pytest.fixture
 def page(context):
     return context.new_page()
+
+
+@pytest.fixture(scope="session")
+def sample_pdf() -> bytes:
+    """ダミーサイトが「発行する」で落としてくる PDF の中身。"""
+    return SAMPLE_PDF
