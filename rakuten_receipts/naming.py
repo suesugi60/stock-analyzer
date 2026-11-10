@@ -15,8 +15,8 @@ MAX_ADDRESSEE_LEN = 50
 NO_DATE = "日付不明"
 NO_HOTEL = "施設名不明"
 
-# 敬称「様」と紛らわしい、画面の決まり文句
-TITLE_NOISE = ("お客様", "皆様", "様式")
+# 敬称の直後に続いていたら、敬称ではなく別の語とみなす文字(「様式」「様々」など)
+TITLE_CONTINUATIONS = "式々子"
 
 _FORBIDDEN = re.compile(r'[/\\:*?"<>|\x00-\x1f\x7f\s]+')
 _UNDERSCORES = re.compile(r"_+")
@@ -87,13 +87,36 @@ def _squash(text: str) -> str:
 
 
 def addressee_matches(confirm_text: str, name: str, title: str) -> bool:
-    """確認画面の本文に、指定した宛名と敬称が出ているか(空白の違いは無視)。"""
-    text = _squash(confirm_text)
+    """確認画面の本文に「宛名 + 敬称」がひと続きで出ているか。
+
+    - 空白の違いは無視する。宛名と敬称の間は、空白と「敬称」という見出し、コロンだけを許す
+      (別の行にある「様」「御中」を敬称とみなさないため)。
+    - 宛名の前後に別の文字が続いていたら不一致(「東京〇〇」「〇〇ホールディングス」のような、
+      指定した宛名を含むだけの長い宛名を通さないため)。
+    """
     name = _squash(name)
     title = _squash(title)
-    if not name or not title or name not in text:
+    if not name or not title:
         return False
-    rest = text.replace(name, "")
-    for noise in TITLE_NOISE:
-        rest = rest.replace(noise, "")
-    return title in rest
+    name_pattern = r"\s*".join(re.escape(char) for char in name)
+    pattern = re.compile(
+        r"(?:^|[\s::]|宛名)" + name_pattern
+        + r"\s*(?:敬称)?\s*[::]?\s*" + re.escape(title)
+        + "(?![" + TITLE_CONTINUATIONS + "])",
+        re.MULTILINE)
+    return pattern.search(confirm_text) is not None
+
+
+EXCERPT_LABELS = ("宛名", "敬称")
+EXCERPT_MAX_LINES = 6
+
+
+def confirm_excerpt(confirm_text: str, name: str) -> str:
+    """確認画面の本文から、宛名まわりの行を抜き出す。人に見せるためのもの(画面に出ている文字そのまま)。"""
+    target = _squash(name)
+    lines = [line.strip() for line in confirm_text.splitlines() if line.strip()]
+    picked = [line for line in lines
+              if (target and target in _squash(line)) or any(label in line for label in EXCERPT_LABELS)]
+    if not picked:
+        picked = lines
+    return " / ".join(picked[:EXCERPT_MAX_LINES])

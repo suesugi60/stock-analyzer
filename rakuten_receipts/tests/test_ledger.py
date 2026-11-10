@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 import pytest
 
-from rakuten_receipts.ledger import COLUMNS, Ledger
+from rakuten_receipts.ledger import COLUMNS, Ledger, LedgerError
 from rakuten_receipts.models import Reservation, Status
 
 FIXED_NOW = datetime(2026, 11, 10, 9, 30, 5)
@@ -181,10 +181,85 @@ def test_load_tolerates_excel_resave(path):
     assert ledger.rows["RY2"].filename == "b.pdf"
     assert ledger.rows["RY3"].checkin is None
     assert ledger.rows["RY3"].amount is None
-    assert ledger.rows["RY3"].status is Status.PENDING
+    assert ledger.rows["RY3"].custom_status == "なぞの状態"  # 知らない状態は書かれたまま残す
 
 
 def test_load_skips_rows_without_id(path):
     path.parent.mkdir(parents=True)
     path.write_text(",".join(COLUMNS) + "\n,空行,,,,,,,\nRY1,ホテルA,2025-03-15,,,未取得,,,\n", encoding="utf-8-sig")
     assert list(Ledger(path).rows) == ["RY1"]
+
+
+# --- レビュー指摘: 読めない台帳は上書きしない。手で書いた状態は尊重する ---
+
+def write_rows(path, rows, encoding="utf-8-sig"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding=encoding, newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(COLUMNS)
+        writer.writerows(rows)
+
+
+def test_load_shift_jis_resave(path):
+    # 日本語版 Excel の「CSV」形式で保存し直すと Shift_JIS になる
+    write_rows(path, [["RY1", "ホテルA", "2025/3/15", "", "12000", "取得済み", "a.pdf", "", ""]], encoding="cp932")
+    ledger = Ledger(path)
+    assert ledger.rows["RY1"].status is Status.DONE
+    assert ledger.rows["RY1"].hotel_name == "ホテルA"
+
+
+def test_unreadable_encoding_is_refused_and_file_untouched(path):
+    path.parent.mkdir(parents=True)
+    original = b"\xff\xfe\x00\x00 not a csv \x81"
+    path.write_bytes(original)
+    with pytest.raises(LedgerError) as error:
+        Ledger(path)
+    assert str(path) in str(error.value)
+    assert path.read_bytes() == original
+
+
+def test_missing_columns_is_refused_and_file_untouched(path):
+    # 1行目が壊れていると全行を失う。読めたふりをして上書きしない
+    path.parent.mkdir(parents=True)
+    path.write_text("番号,宿,状態メモ\nRY1,ホテルA,取得済み\n", encoding="utf-8-sig")
+    original = path.read_bytes()
+    with pytest.raises(LedgerError):
+        Ledger(path)
+    assert path.read_bytes() == original
+
+
+def test_empty_file_is_an_empty_ledger(path):
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")
+    assert Ledger(path).rows == {}
+
+
+def test_custom_status_is_kept_and_never_a_target(path):
+    # 利用者が手で「手動で保存済み」などと書いた行は、発行の対象にしない
+    write_rows(path, [["RY1", "ホテルA", "2025-03-15", "", "12000", "手動で保存済み", "", "", "自分で保存"]])
+    ledger = Ledger(path, now=lambda: FIXED_NOW)
+    fresh = [res("RY1"), res("RY2")]
+    ledger.sync(fresh)
+    assert [r.reservation_id for r in ledger.targets(fresh, None, None)] == ["RY2"]
+    reloaded = Ledger(path)
+    assert reloaded.rows["RY1"].custom_status == "手動で保存済み"
+    assert reloaded.rows["RY1"].memo == "自分で保存"
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        assert next(row for row in csv.DictReader(f) if row["予約番号"] == "RY1")["状態"] == "手動で保存済み"
+
+
+def test_mark_replaces_custom_status(path):
+    write_rows(path, [["RY1", "ホテルA", "2025-03-15", "", "12000", "あとで", "", "", ""]])
+    ledger = Ledger(path)
+    ledger.mark("RY1", Status.DONE, "a.pdf")
+    assert Ledger(path).rows["RY1"].status is Status.DONE
+    assert Ledger(path).rows["RY1"].custom_status == ""
+
+
+def test_fullwidth_parentheses_status_is_still_failed_after_issue(path):
+    # 「失敗(発行後)」のかっこを全角で書き直しても、「発行済みかもしれない」という記録を失わない
+    write_rows(path, [["RY1", "ホテルA", "2025-03-15", "", "12000", "失敗\uff08発行後\uff09", "", "", ""]])
+    ledger = Ledger(path)
+    ledger.sync([res("RY1")])
+    assert ledger.rows["RY1"].status is Status.FAILED_AFTER_ISSUE
+    assert ledger.rows["RY1"].custom_status == ""
