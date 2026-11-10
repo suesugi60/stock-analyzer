@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>ダミーページ(テスト用。実在のサイトではありません)</title></head>
+<body>
+<h1>領収書</h1>
+<p><span id="atena"></span> <span id="keisho"></span></p>
+<p>金額 12,000円(税込)</p>
+<p>但し 宿泊代として</p>
+<p>予約番号 <span id="rid"></span></p>
+<p>楽天グループ株式会社</p>
+<p>登録番号 T1234567890123</p>
+<script>
+  const params = new URLSearchParams(location.search);
+  document.getElementById("atena").textContent = params.get("atena") || "発行済みの宛名";
+  document.getElementById("keisho").textContent = params.get("keisho") || "御中";
+  document.getElementById("rid").textContent = params.get("id") || "";
+</script>
+</body>
+</html>

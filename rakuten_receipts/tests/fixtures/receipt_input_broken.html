@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>ダミーページ(テスト用。実在のサイトではありません)</title></head>
+<body>
+<h1>領収書発行</h1>
+<p>宛名を入力してください。宛名の修正は1回限りです。</p>
+<form action="receipt_confirm.html" method="get">
+  <input type="hidden" name="id" value="">
+  <input type="hidden" name="mode" value="">
+  <p><label for="atena">宛名</label> <input type="text" id="atena" name="atena"></p>
+  <fieldset>
+    <legend>敬称</legend>
+    <label><input type="radio" name="keisho" value="様" checked> 様</label>
+    <label><input type="radio" name="keisho" value="御中" disabled> 御中</label>
+  </fieldset>
+  <button type="submit">領収書の発行</button>
+</form>
+<script>
+  const params = new URLSearchParams(location.search);
+  document.querySelector("[name=id]").value = params.get("id") || "";
+  document.querySelector("[name=mode]").value = params.get("mode") || "";
+</script>
+</body>
+</html>

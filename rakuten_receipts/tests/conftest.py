@@ -141,3 +141,57 @@ def ledger(out_dir) -> Ledger:
 @pytest.fixture
 def opts(out_dir) -> Options:
     return Options(out_dir=out_dir, name="株式会社サンプル", title="御中")
+
+
+# --- ダミーサイトとブラウザ(画面のテスト用) ---
+
+import functools
+import http.server
+import shutil
+import threading
+
+FIXTURES = Path(__file__).parent / "fixtures"
+SAMPLE_PDF = b"%PDF-1.4\n%dummy\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args) -> None:  # テスト出力を汚さない
+        pass
+
+
+@pytest.fixture(scope="session")
+def dummy_site(tmp_path_factory) -> str:
+    """楽天の画面を模したダミーページを配るローカルサーバ。ベース URL(末尾 /)を返す。"""
+    root = tmp_path_factory.mktemp("dummy_site")
+    for source in FIXTURES.glob("*.html"):
+        shutil.copy(source, root / source.name)
+    (root / "sample.pdf").write_bytes(SAMPLE_PDF)
+    handler = functools.partial(_QuietHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture(scope="session")
+def browser():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        instance = playwright.chromium.launch()
+        yield instance
+        instance.close()
+
+
+@pytest.fixture
+def context(browser):
+    ctx = browser.new_context(accept_downloads=True, locale="ja-JP")
+    yield ctx
+    ctx.close()
+
+
+@pytest.fixture
+def page(context):
+    return context.new_page()

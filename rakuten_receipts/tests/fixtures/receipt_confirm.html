@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>ダミーページ(テスト用。実在のサイトではありません)</title></head>
+<body>
+<h1>宛名の確認</h1>
+<table>
+  <tr><th>宛名</th><td id="atena"></td></tr>
+  <tr><th>敬称</th><td id="keisho"></td></tr>
+</table>
+<form id="issue-form" action="receipt.html" method="get">
+  <input type="hidden" name="id" value="">
+  <input type="hidden" name="atena" value="">
+  <input type="hidden" name="keisho" value="">
+  <button type="submit">発行する</button>
+</form>
+<p id="issue-download" hidden><a href="sample.pdf" download="receipt.pdf">発行する</a></p>
+<script>
+  const params = new URLSearchParams(location.search);
+  for (const key of ["atena", "keisho"]) {
+    document.getElementById(key).textContent = params.get(key) || "";
+  }
+  for (const key of ["id", "atena", "keisho"]) {
+    document.querySelector("#issue-form [name=" + key + "]").value = params.get(key) || "";
+  }
+  if (params.get("mode") === "download") {
+    document.getElementById("issue-form").hidden = true;
+    document.getElementById("issue-download").hidden = false;
+  }
+</script>
+</body>
+</html>
