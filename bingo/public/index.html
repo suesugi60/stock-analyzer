@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>ビンゴ</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/player.mjs"></script>
+</head>
+<body class="player">
+  <header class="top">
+    <div class="top-row">
+      <h1 class="logo" aria-label="ビンゴ"><span class="col-B">B</span><span class="col-I">I</span><span class="col-N">N</span><span class="col-G">G</span><span class="col-O">O</span></h1>
+      <span id="conn" class="conn off">接続しています…</span>
+    </div>
+    <div class="now">
+      <span id="current" class="ball big empty">–</span>
+      <div class="now-text">
+        <div class="now-label">いまの番号</div>
+        <div id="drawn-count" class="now-count">まだ番号は出ていません</div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="entry" class="panel">
+      <p id="status" class="status">接続しています…</p>
+      <form id="form" novalidate hidden>
+        <label id="name-row" class="field">
+          <span class="field-label">名前</span>
+          <input id="name" type="text" maxlength="20" autocomplete="nickname" placeholder="配信で呼ばれたい名前">
+        </label>
+        <div class="field">
+          <label class="field-label" for="count">ほしい枚数(1〜50)</label>
+          <div class="stepper">
+            <button type="button" id="count-minus" class="step" aria-label="1枚へらす">−</button>
+            <input id="count" type="number" inputmode="numeric" min="1" max="50" value="1">
+            <button type="button" id="count-plus" class="step" aria-label="1枚ふやす">＋</button>
+          </div>
+        </div>
+        <div class="form-buttons">
+          <button id="request-btn" type="submit" class="btn primary" disabled>申請する</button>
+          <button id="more-close" type="button" class="btn ghost" hidden>やめる</button>
+        </div>
+      </form>
+      <button id="cancel-btn" type="button" class="btn ghost" hidden>申請を取り消す</button>
+      <button id="more-btn" type="button" class="btn" hidden>追加で申請する</button>
+      <p id="storage-note" class="note warn" hidden>このブラウザではカードを保存できません。ページを閉じるとカードが消えます。</p>
+    </section>
+
+    <section id="mine" hidden>
+      <h2 id="summary" class="summary"></h2>
+      <div id="cards" class="cards"></div>
+    </section>
+
+    <section id="winners-box" class="panel" hidden>
+      <h2 class="panel-title">ビンゴした人</h2>
+      <ol id="winners" class="winners"></ol>
+      <p id="winners-note" class="note" hidden>先着100枚までを表示しています。</p>
+    </section>
+
+    <section id="history-box" class="panel" hidden>
+      <h2 class="panel-title">これまでの番号</h2>
+      <div id="history" class="history"></div>
+    </section>
+
+    <section class="panel handover">
+      <h2 class="panel-title">別のブラウザで開くとき</h2>
+      <p class="note">このカードは、いま開いているブラウザに保存されています。別のブラウザやスマホで続けるときは、下のリンクを開いてください。リンクを人に渡すと、その人も同じカードを見られます。</p>
+      <button id="copy-link" type="button" class="btn ghost">引き継ぎリンクをコピー</button>
+      <input id="link-text" class="link-text" type="text" readonly hidden aria-label="引き継ぎリンク">
+    </section>
+  </main>
+
+  <div id="celebrate" class="celebrate" hidden aria-hidden="true"><span class="celebrate-text">BINGO!</span></div>
+  <p id="toast" class="toast" role="status" hidden></p>
+  <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-message" hidden>
+    <div class="dialog-box">
+      <p id="dialog-message"></p>
+      <div class="dialog-buttons">
+        <button id="dialog-cancel" type="button" class="btn ghost">やめる</button>
+        <button id="dialog-ok" type="button" class="btn primary">はい</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
