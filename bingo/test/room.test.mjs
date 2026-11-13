@@ -1,8 +1,9 @@
 // サーバーのテスト。node --test test/room.test.mjs で実行(ローカルの wrangler dev を起動する)。
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { analyzeCard } from '../public/logic.mjs';
 import {
-  HOST_PASSWORD, startServer, Client, closeAll, joinPlayer, joinHost, fresh, grant,
+  HOST_PASSWORD, startServer, Client, closeAll, joinPlayer, joinHost, fresh, grant, lineNumbers, findTie,
 } from './helpers.mjs';
 
 let server;
@@ -372,4 +373,213 @@ test('delay の設定は全員に届く', async () => {
     assert.equal((await host.next('error')).code, 'bad_delay', String(sec));
   }
   assert.equal((await joinPlayer(server)).state.delay, 5);
+});
+
+// ---- 番号の発表とビンゴ ----
+
+// 主催者が番号を発表し、リスナー c に届いた draw を返す。主催者に届く host も受け取っておく。
+async function call(host, c, n) {
+  host.send({ t: 'call', n });
+  const d = await c.next('draw');
+  await host.next('host');
+  return d;
+}
+
+test('call が全員に届く', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  host.send({ t: 'call', n: 7 });
+  assert.deepEqual(await a.c.next('draw'), { t: 'draw', n: 7, seq: 1, winners: [] });
+  assert.deepEqual(await b.c.next('draw'), { t: 'draw', n: 7, seq: 1, winners: [] });
+  assert.deepEqual((await host.next('host')).draws, [7]);
+  host.send({ t: 'call', n: 70 });
+  assert.deepEqual(await a.c.next('draw'), { t: 'draw', n: 70, seq: 2, winners: [] });
+  assert.deepEqual((await joinPlayer(server)).state.draws, [7, 70]);
+});
+
+test('同じ番号は二重に出ない', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  await call(host, a.c, 7);
+  host.send({ t: 'call', n: 7 });
+  assert.equal((await host.next('error')).code, 'already_called');
+  await a.c.none('draw');
+});
+
+test('番号の検証', async () => {
+  const { c: host } = await fresh(server);
+  for (const n of [0, 76, 1.5, 'x', null, undefined, -3]) {
+    host.send({ t: 'call', n });
+    assert.equal((await host.next('error')).code, 'bad_number', String(n));
+  }
+  assert.deepEqual((await joinPlayer(server)).state.draws, []);
+});
+
+test('draw はまだ出ていない番号を選び、75個出たら all_called', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const seen = new Set();
+  for (let i = 1; i <= 75; i++) {
+    host.send({ t: 'draw' });
+    const d = await a.c.next('draw');
+    assert.equal(d.seq, i);
+    assert.ok(Number.isInteger(d.n) && d.n >= 1 && d.n <= 75 && !seen.has(d.n));
+    seen.add(d.n);
+  }
+  host.send({ t: 'draw' });
+  assert.equal((await host.next('error')).code, 'all_called');
+});
+
+test('ビンゴの検出と順位', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 1);
+  const yb = await grant(host, b.c, 'B', 1);
+  const rowA = lineNumbers(ya.cards[0].numbers, 0);
+  assert.equal(rowA.length, 5);
+  for (const n of rowA.slice(0, 4)) assert.deepEqual((await call(host, a.c, n)).winners, []);
+  const d = await call(host, a.c, rowA[4]);
+  assert.deepEqual(d.winners, [{ rank: 1, name: 'A', no: 1, at: 5 }]);
+  // B にも同じ5通が届いている(最後の1通に A のビンゴが入っている)
+  for (let i = 0; i < 4; i++) assert.deepEqual((await b.c.next('draw')).winners, []);
+  assert.deepEqual((await b.c.next('draw')).winners, [{ rank: 1, name: 'A', no: 1, at: 5 }]);
+
+  const called = new Set(rowA);
+  let last;
+  for (const n of lineNumbers(yb.cards[0].numbers, 0)) {
+    if (called.has(n)) continue;
+    last = await call(host, b.c, n);
+  }
+  assert.deepEqual(last.winners, [{ rank: 2, name: 'B', no: 1, at: last.seq }]);
+  const again = await joinPlayer(server);
+  assert.deepEqual(again.state.winners, [
+    { rank: 1, name: 'A', no: 1, at: 5 }, { rank: 2, name: 'B', no: 1, at: last.seq },
+  ]);
+});
+
+test('同じ番号で同時にそろったカードは同順位', async () => {
+  let host; let a; let c3; let tie; let yc;
+  for (let i = 0; i < 20 && !tie; i++) {
+    closeAll();
+    ({ c: host } = await fresh(server));
+    a = await joinPlayer(server);
+    const b = await joinPlayer(server);
+    c3 = await joinPlayer(server);
+    const ya = await grant(host, a.c, 'A', 1);
+    const yb = await grant(host, b.c, 'B', 1);
+    yc = await grant(host, c3.c, 'C', 1);
+    const t = findTie(ya.cards[0].numbers, yb.cards[0].numbers);
+    // 3人目のカードが途中でそろってしまう組は使わない
+    if (t && analyzeCard(yc.cards[0].numbers, new Set([...t.pre, t.last])).lines === 0) tie = t;
+  }
+  assert.ok(tie, '同時にそろう組が作れませんでした');
+  for (const n of tie.pre) assert.deepEqual((await call(host, a.c, n)).winners, []);
+  const d = await call(host, a.c, tie.last);
+  assert.deepEqual(d.winners.map((w) => [w.rank, w.name, w.at]), [[1, 'A', d.seq], [1, 'B', d.seq]]);
+
+  const called = new Set([...tie.pre, tie.last]);
+  let third;
+  for (const n of lineNumbers(yc.cards[0].numbers, 0)) {
+    if (called.has(n)) continue;
+    const dd = await call(host, a.c, n);
+    third = dd.winners.find((w) => w.name === 'C') ?? third;
+  }
+  assert.equal(third.rank, 3);
+});
+
+test('主催者の集計: リーチとビンゴの枚数', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 2);
+  const row = lineNumbers(ya.cards[0].numbers, 0);
+  host.drain();
+  let snap;
+  for (const n of row.slice(0, 4)) { host.send({ t: 'call', n }); snap = await host.next('host'); }
+  const reachCards = ya.cards.filter((c) => {
+    const an = analyzeCard(c.numbers, new Set(row.slice(0, 4)));
+    return an.lines === 0 && an.reach > 0;
+  }).length;
+  assert.ok(reachCards >= 1);
+  assert.deepEqual(snap.players, [{ pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: reachCards }]);
+  host.send({ t: 'call', n: row[4] });
+  snap = await host.next('host');
+  assert.equal(snap.players[0].bingo >= 1, true);
+  assert.deepEqual(snap.winners[0], { rank: 1, name: 'A', no: 1, at: 5 });
+});
+
+test('undo: 最後の番号から順に戻り、その番号のビンゴも消える', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  host.send({ t: 'undo' });
+  assert.equal((await host.next('error')).code, 'nothing_to_undo');
+  const ya = await grant(host, a.c, 'A', 1);
+  const row = lineNumbers(ya.cards[0].numbers, 0);
+  for (const n of row) await call(host, a.c, n);
+  host.drain();
+  host.send({ t: 'undo' });
+  assert.deepEqual(await a.c.next('undo'), { t: 'undo', seq: 5 });
+  let snap = await host.next('host');
+  assert.deepEqual(snap.draws, row.slice(0, 4));
+  assert.deepEqual(snap.winners, []);
+  host.send({ t: 'undo' });
+  assert.deepEqual(await a.c.next('undo'), { t: 'undo', seq: 4 });
+  snap = await host.next('host');
+  assert.deepEqual(snap.draws, row.slice(0, 3));
+  assert.deepEqual((await joinPlayer(server)).state.winners, []);
+});
+
+test('undo のあと同じ番号を出せる', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  await call(host, a.c, 10);
+  await call(host, a.c, 20);
+  host.send({ t: 'undo' });
+  await a.c.next('undo');
+  assert.deepEqual(await call(host, a.c, 20), { t: 'draw', n: 20, seq: 2, winners: [] });
+});
+
+test('途中で配ったカードには発表済みの番号が効き、配った時点でそろっていればビンゴ', async () => {
+  const { c: host } = await fresh(server);
+  const watcher = await joinPlayer(server);
+  for (let i = 0; i < 75; i++) host.send({ t: 'draw' });
+  for (let i = 0; i < 75; i++) await watcher.c.next('draw');
+  for (let i = 0; i < 75; i++) await host.next('host');
+  const late = await joinPlayer(server);
+  assert.equal(late.state.draws.length, 75);
+  const you = await grant(host, late.c, 'おそい', 1);
+  assert.equal(you.cards.length, 1);
+  assert.deepEqual(await watcher.c.next('winners'), { t: 'winners', winners: [{ rank: 1, name: 'おそい', no: 1, at: 75 }] });
+  assert.deepEqual((await host.next('host')).winners, [{ rank: 1, name: 'おそい', no: 1, at: 75 }]);
+});
+
+test('lastAge: 最後の番号が発表されてからの経過ミリ秒', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  assert.equal(a.state.lastAge, null);
+  await call(host, a.c, 33);
+  const { state } = await joinPlayer(server);
+  assert.ok(typeof state.lastAge === 'number' && state.lastAge >= 0 && state.lastAge < 2000, String(state.lastAge));
+  await new Promise((r) => setTimeout(r, 600));
+  const later = (await joinPlayer(server)).state.lastAge;
+  assert.ok(later >= 500 && later < 3000, String(later));
+});
+
+test('hello を送り直しても同じ状態が返る', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  await grant(host, a.c, 'A', 2);
+  await call(host, a.c, 5);
+  a.c.send({ t: 'hello', token: a.token });
+  const s1 = await a.c.next('state');
+  a.c.send({ t: 'hello', token: a.token });
+  const s2 = await a.c.next('state');
+  assert.deepEqual({ ...s1, lastAge: 0 }, { ...s2, lastAge: 0 });
+  assert.deepEqual(s1.draws, [5]);
+  assert.equal(s1.you.cards.length, 2);
+  // 送り直しても、発表は1回ずつしか届かない
+  const d = await call(host, a.c, 6);
+  assert.equal(d.seq, 2);
+  await a.c.none('draw');
 });

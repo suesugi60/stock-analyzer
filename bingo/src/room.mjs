@@ -3,7 +3,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Store } from './store.mjs';
 import {
-  LIMITS, DELAYS, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard, cryptoRng,
+  LIMITS, DELAYS, MAX_NUMBER, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard,
+  pickUncalled, rankWinners, cryptoRng,
 } from '../public/logic.mjs';
 
 const AUTH_MAX_FAILS = 5;        // 合言葉をこの回数続けて間違えると
@@ -42,6 +43,9 @@ export class BingoRoom extends DurableObject {
     this.store = new Store(ctx.storage);
     this.cardsMax = Number(env.CARDS_MAX) || LIMITS.CARDS_MAX;
     this.pendingMax = Number(env.PENDING_MAX) || LIMITS.PENDING_MAX;
+    // SQLite から読んだものの控え。休止すると消えるので、なければ読み直す。
+    // 書き込むたびに、古くなった分を捨てる。
+    this.cache = {};
 
     // 誰がどの接続か。休止から戻ったときは、接続に付けておいた情報から作り直す。
     this.hosts = new Set();
@@ -78,6 +82,9 @@ export class BingoRoom extends DurableObject {
         case 'approve': return this.#approve(ws, msg);
         case 'approve_all': return this.#approveAll();
         case 'reject': return this.#reject(ws, msg);
+        case 'draw': return this.#draw(ws);
+        case 'call': return this.#call(ws, msg);
+        case 'undo': return this.#undo(ws);
         case 'reset_all': return this.#resetAll();
         default: return undefined;
       }
@@ -132,17 +139,25 @@ export class BingoRoom extends DurableObject {
     for (const ws of set) send(ws, text);
   }
 
+  // ---- 控え ----
+
+  #draws() { return (this.cache.draws ??= this.store.draws()); }
+  #called() { return new Set(this.#draws().map((d) => d.n)); }
+  #winners() { return (this.cache.winners ??= rankWinners(this.store.winnerRows())); }
+  #cards() { return (this.cache.cards ??= this.store.allCards()); }
+  #cardTotal() { return (this.cache.total ??= this.store.cardCount()); }
+
   // ---- 状態の組み立て ----
 
   #publicState() {
-    const draws = this.store.draws();
+    const draws = this.#draws();
     const last = draws[draws.length - 1];
     return {
       accepting: this.store.accepting(),
       delay: this.store.delay(),
       draws: draws.map((d) => d.n),
       lastAge: last ? Math.max(0, Date.now() - last.at_ms) : null,
-      winners: [],
+      winners: this.#winners(),
     };
   }
 
@@ -159,10 +174,9 @@ export class BingoRoom extends DurableObject {
   }
 
   // カードを持つ人ごとの集計。bingo: ビンゴしたカードの枚数 / reach: ビンゴしておらずリーチのカードの枚数。
-  #playerSummaries() {
-    const called = new Set(this.store.draws().map((d) => d.n));
+  #summarize(cards, called) {
     const byPid = new Map();
-    for (const card of this.store.allCards()) {
+    for (const card of cards) {
       let p = byPid.get(card.pid);
       if (!p) { p = { pid: card.pid, name: card.name, cards: 0, bingo: 0, reach: 0 }; byPid.set(card.pid, p); }
       const a = analyzeCard(card.numbers, called);
@@ -171,6 +185,14 @@ export class BingoRoom extends DurableObject {
       else if (a.reach > 0) p.reach++;
     }
     return [...byPid.values()];
+  }
+
+  #playerSummaries() { return this.#summarize(this.#cards(), this.#called()); }
+
+  // 1人分だけ。全員のカードを読み直さずに済ませる。
+  #summaryOf(player) {
+    const cards = this.store.cardsOf(player.id).map((c) => ({ ...c, pid: player.id, name: player.name }));
+    return this.#summarize(cards, this.#called())[0];
   }
 
   #hostState() {
@@ -268,39 +290,56 @@ export class BingoRoom extends DurableObject {
   }
 
   // 申請を許可して count 枚のカードを作る。呼ぶ側が上限を確かめておく。
+  // 配った時点ですでにそろっているカードがあれば true を返す。
   #issue(req, count) {
+    const called = this.#called();
+    const seq = this.#draws().length;
     const cards = [];
-    for (let i = 0; i < count; i++) cards.push(makeCard(cryptoRng));
+    for (let i = 0; i < count; i++) {
+      const numbers = makeCard(cryptoRng);
+      const done = seq > 0 && analyzeCard(numbers, called).lines > 0;
+      cards.push({ numbers, bingoAt: done ? seq : null });
+    }
+    const total = this.#cardTotal();
     this.store.atomic(() => {
       this.store.setRequestStatus(req.id, 'approved');
       this.store.addCards(req.pid, cards);
     });
+    this.cache.total = total + count;
+    this.cache.cards = undefined;
+    this.cache.winners = undefined;
+    return cards.some((c) => c.bingoAt !== null);
   }
 
   #approve(ws, msg) {
     if (!isValidCount(msg.count)) return fail(ws, 'bad_count');
     const req = Number.isInteger(msg.id) ? this.store.pendingRequest(msg.id) : null;
     if (!req) return fail(ws, 'not_found');
-    if (this.store.cardCount() + msg.count > this.cardsMax) return fail(ws, 'cards_full');
+    if (this.#cardTotal() + msg.count > this.cardsMax) return fail(ws, 'cards_full');
 
-    this.#issue(req, msg.count);
+    const won = this.#issue(req, msg.count);
+    const player = this.store.playerById(req.pid);
     this.#toHosts({ t: 'req_del', id: req.id });
-    this.#toHosts({ t: 'player', player: this.#playerSummaries().find((p) => p.pid === req.pid) });
-    this.#sendYou(this.store.playerById(req.pid).token_hash);
+    this.#toHosts({ t: 'player', player: this.#summaryOf(player) });
+    this.#sendYou(player.token_hash);
+    if (won) {
+      this.#toPlayers({ t: 'winners', winners: this.#winners() });
+      this.#toHosts(this.#hostState());
+    }
     return undefined;
   }
 
   // 届いた順に許可し、部屋全体の上限に達したら止まる。
   #approveAll() {
-    let total = this.store.cardCount();
     const done = [];
+    let won = false;
     for (const req of this.store.pendingRequests()) {
-      if (total + req.count > this.cardsMax) break;
-      this.#issue(req, req.count);
-      total += req.count;
+      if (this.#cardTotal() + req.count > this.cardsMax) break;
+      if (this.#issue(req, req.count)) won = true;
       done.push(req.pid);
     }
     for (const pid of done) this.#sendYou(this.store.playerById(pid).token_hash);
+    if (won) this.#toPlayers({ t: 'winners', winners: this.#winners() });
     this.#toHosts(this.#hostState());
   }
 
@@ -313,8 +352,66 @@ export class BingoRoom extends DurableObject {
     return undefined;
   }
 
+  // ---- 番号 ----
+
+  #draw(ws) {
+    const n = pickUncalled(this.#called(), cryptoRng);
+    if (n === null) return fail(ws, 'all_called');
+    return this.#announce(n);
+  }
+
+  #call(ws, msg) {
+    if (!Number.isInteger(msg.n) || msg.n < 1 || msg.n > MAX_NUMBER) return fail(ws, 'bad_number');
+    if (this.#called().has(msg.n)) return fail(ws, 'already_called');
+    return this.#announce(msg.n);
+  }
+
+  // 番号を発表する。まだビンゴしていないカードのうち、この番号でそろったものを記録する。
+  #announce(n) {
+    const draws = this.#draws();
+    const seq = draws.length + 1;
+    const atMs = Date.now();
+    const called = this.#called();
+    called.add(n);
+    const hits = this.#cards().filter((card) =>
+      card.bingo_at === null && card.numbers.includes(n) && analyzeCard(card.numbers, called).lines > 0);
+
+    this.store.atomic(() => {
+      this.store.addDraw(seq, n, atMs);
+      for (const card of hits) this.store.setBingo(card.id, seq);
+    });
+    draws.push({ seq, n, at_ms: atMs });
+    for (const card of hits) card.bingo_at = seq;
+    this.cache.winners = undefined;
+
+    this.#toPlayers({ t: 'draw', n, seq, winners: this.#winners().filter((w) => w.at === seq) });
+    this.#toHosts(this.#hostState());
+    return undefined;
+  }
+
+  // 最後の番号を取り消す。その番号で成立したビンゴも取り消す。
+  #undo(ws) {
+    const draws = this.#draws();
+    if (draws.length === 0) return fail(ws, 'nothing_to_undo');
+    const { seq } = draws[draws.length - 1];
+    this.store.atomic(() => {
+      this.store.removeDraw(seq);
+      this.store.clearBingoAt(seq);
+    });
+    draws.pop();
+    if (this.cache.cards) for (const card of this.cache.cards) if (card.bingo_at === seq) card.bingo_at = null;
+    this.cache.winners = undefined;
+
+    this.#toPlayers({ t: 'undo', seq });
+    this.#toHosts(this.#hostState());
+    return undefined;
+  }
+
+  // ---- リセット ----
+
   #resetAll() {
     this.store.resetAll();
+    this.cache = {};
     this.#toPlayers({ t: 'reset' });
     this.#toHosts(this.#hostState());
   }

@@ -13,10 +13,12 @@ export class Store {
         id INTEGER PRIMARY KEY AUTOINCREMENT, player_id INTEGER NOT NULL,
         count INTEGER NOT NULL, status TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS requests_player ON requests (player_id);
+      CREATE INDEX IF NOT EXISTS requests_pending ON requests (status) WHERE status = 'pending';
       CREATE TABLE IF NOT EXISTS cards (
         id INTEGER PRIMARY KEY AUTOINCREMENT, player_id INTEGER NOT NULL,
         no INTEGER NOT NULL, numbers TEXT NOT NULL, bingo_at INTEGER);
       CREATE INDEX IF NOT EXISTS cards_player ON cards (player_id);
+      CREATE INDEX IF NOT EXISTS cards_bingo ON cards (bingo_at) WHERE bingo_at IS NOT NULL;
       CREATE TABLE IF NOT EXISTS draws (seq INTEGER PRIMARY KEY, n INTEGER NOT NULL UNIQUE, at_ms INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_fail (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, until_ms INTEGER NOT NULL);
     `);
@@ -92,16 +94,28 @@ export class Store {
        ORDER BY c.player_id, c.no`)
       .map((row) => ({ ...row, numbers: JSON.parse(row.numbers) }));
   }
+  // cards: { numbers, bingoAt }[]。bingoAt は配った時点でそろっていれば、その時点の番号の個数。
   addCards(playerId, cards) {
     let no = this.one('SELECT COALESCE(MAX(no), 0) AS m FROM cards WHERE player_id = ?', playerId).m;
-    for (const numbers of cards) {
+    for (const card of cards) {
       no++;
-      this.run('INSERT INTO cards (player_id, no, numbers) VALUES (?, ?, ?)', playerId, no, JSON.stringify(numbers));
+      this.run('INSERT INTO cards (player_id, no, numbers, bingo_at) VALUES (?, ?, ?, ?)',
+        playerId, no, JSON.stringify(card.numbers), card.bingoAt);
     }
+  }
+  setBingo(cardId, seq) { this.run('UPDATE cards SET bingo_at = ? WHERE id = ?', seq, cardId); }
+  clearBingoAt(seq) { this.run('UPDATE cards SET bingo_at = NULL WHERE bingo_at = ?', seq); }
+  // ビンゴしたカード。at は何個目の番号で達成したか。
+  winnerRows() {
+    return this.all(
+      `SELECT c.id, p.name, c.no, c.bingo_at AS at FROM cards c JOIN players p ON p.id = c.player_id
+       WHERE c.bingo_at IS NOT NULL`);
   }
 
   // ---- 番号 ----
   draws() { return this.all('SELECT seq, n, at_ms FROM draws ORDER BY seq'); }
+  addDraw(seq, n, atMs) { this.run('INSERT INTO draws (seq, n, at_ms) VALUES (?, ?, ?)', seq, n, atMs); }
+  removeDraw(seq) { this.run('DELETE FROM draws WHERE seq = ?', seq); }
 
   // ---- リセット ----
   resetAll() {
