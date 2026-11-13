@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bingo",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-01",
+  // リスナー画面と主催者画面。一致するファイルがある要求は Worker を通らずに配られる。
+  "assets": { "directory": "./public" },
+  // 部屋は1つだけ。状態は Durable Object 内蔵の SQLite に保存する(無料プランで使えるのはこの方式のみ)。
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "BingoRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BingoRoom"] }],
+  "observability": { "enabled": true }
+}
