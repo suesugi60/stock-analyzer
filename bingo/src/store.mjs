@@ -1,9 +1,10 @@
 // 部屋の状態を SQLite に読み書きする。Durable Object が休止してもここにあるものは残る。
 
 export class Store {
-  constructor(sql) {
-    this.sql = sql;
-    sql.exec(`
+  constructor(storage) {
+    this.storage = storage;
+    this.sql = storage.sql;
+    this.sql.exec(`
       CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS players (
         id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE,
@@ -24,6 +25,8 @@ export class Store {
   all(query, ...args) { return this.sql.exec(query, ...args).toArray(); }
   one(query, ...args) { return this.all(query, ...args)[0] ?? null; }
   run(query, ...args) { this.sql.exec(query, ...args); }
+  // 途中で失敗したら、まとめて取り消す。
+  atomic(fn) { return this.storage.transactionSync(fn); }
 
   // ---- 設定 ----
   meta(key, fallback) {
@@ -46,8 +49,67 @@ export class Store {
   clearAuthState(ip) { this.run('DELETE FROM auth_fail WHERE ip = ?', ip); }
 
   // ---- 参加者 ----
-  playerByHash(tokenHash) { return this.one('SELECT id, name, blocked FROM players WHERE token_hash = ?', tokenHash); }
+  playerByHash(tokenHash) {
+    return this.one('SELECT id, token_hash, name, blocked FROM players WHERE token_hash = ?', tokenHash);
+  }
+  playerById(id) { return this.one('SELECT id, token_hash, name, blocked FROM players WHERE id = ?', id); }
+  createPlayer(tokenHash, name) {
+    return this.one('INSERT INTO players (token_hash, name) VALUES (?, ?) RETURNING id', tokenHash, name).id;
+  }
+  renamePlayer(id, name) { this.run('UPDATE players SET name = ? WHERE id = ?', name, id); }
+
+  // ---- 申請 ----
+  latestRequest(playerId) {
+    return this.one('SELECT id, count, status FROM requests WHERE player_id = ? ORDER BY id DESC LIMIT 1', playerId);
+  }
+  pendingRequest(id) {
+    return this.one(
+      `SELECT r.id, r.player_id AS pid, p.name, r.count FROM requests r JOIN players p ON p.id = r.player_id
+       WHERE r.id = ? AND r.status = 'pending'`, id);
+  }
+  pendingRequests() {
+    return this.all(
+      `SELECT r.id, r.player_id AS pid, p.name, r.count FROM requests r JOIN players p ON p.id = r.player_id
+       WHERE r.status = 'pending' ORDER BY r.id`);
+  }
+  pendingCount() { return this.one("SELECT COUNT(*) AS c FROM requests WHERE status = 'pending'").c; }
+  createRequest(playerId, count) {
+    return this.one("INSERT INTO requests (player_id, count, status) VALUES (?, ?, 'pending') RETURNING id", playerId, count).id;
+  }
+  setRequestStatus(id, status) { this.run('UPDATE requests SET status = ? WHERE id = ?', status, id); }
+
+  // ---- カード ----
+  cardsOf(playerId) {
+    return this.all('SELECT id, no, numbers, bingo_at FROM cards WHERE player_id = ? ORDER BY no', playerId)
+      .map((row) => ({ ...row, numbers: JSON.parse(row.numbers) }));
+  }
+  cardCount() { return this.one('SELECT COUNT(*) AS c FROM cards').c; }
+  cardCountOf(playerId) { return this.one('SELECT COUNT(*) AS c FROM cards WHERE player_id = ?', playerId).c; }
+  // ブロックされていない人の全カード。名前付き。
+  allCards() {
+    return this.all(
+      `SELECT c.id, c.player_id AS pid, p.name, c.no, c.numbers, c.bingo_at FROM cards c JOIN players p ON p.id = c.player_id
+       ORDER BY c.player_id, c.no`)
+      .map((row) => ({ ...row, numbers: JSON.parse(row.numbers) }));
+  }
+  addCards(playerId, cards) {
+    let no = this.one('SELECT COALESCE(MAX(no), 0) AS m FROM cards WHERE player_id = ?', playerId).m;
+    for (const numbers of cards) {
+      no++;
+      this.run('INSERT INTO cards (player_id, no, numbers) VALUES (?, ?, ?)', playerId, no, JSON.stringify(numbers));
+    }
+  }
 
   // ---- 番号 ----
   draws() { return this.all('SELECT seq, n, at_ms FROM draws ORDER BY seq'); }
+
+  // ---- リセット ----
+  resetAll() {
+    this.atomic(() => {
+      this.run('DELETE FROM draws');
+      this.run('DELETE FROM cards');
+      this.run('DELETE FROM requests');
+      this.run('DELETE FROM players');
+    });
+  }
 }
