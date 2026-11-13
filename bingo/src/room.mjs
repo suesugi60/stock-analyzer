@@ -10,6 +10,8 @@ import {
 const MAX_MESSAGE = 2048;        // これより長いメッセージを送る接続は閉じる
 const RATE_WINDOW_MS = 10_000;   // この間に
 const RATE_MAX = 30;             // これより多く送る接続は閉じる(主催者は対象外)
+const PASSWORD_MIN = 8;          // 画面から決める合言葉の長さ
+const PASSWORD_MAX = 100;
 const AUTH_MAX_FAILS = 5;        // 合言葉をこの回数続けて間違えると
 const AUTH_LOCK_MS = 5 * 60_000; // この時間、その接続元からは入れない
 
@@ -26,12 +28,22 @@ async function sha256(text) {
 }
 
 async function sha256Hex(text) {
-  return [...(await sha256(text))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return toHex(await sha256(text));
 }
 
 // 長さや内容で処理時間が変わらないよう、ハッシュ同士を比べる。
 async function sameSecret(a, b) {
   return crypto.subtle.timingSafeEqual(await sha256(a), await sha256(b));
+}
+
+function toHex(bytes) {
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function fromHex(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
 }
 
 function send(ws, message) {
@@ -82,6 +94,8 @@ export class BingoRoom extends DurableObject {
 
     if (msg.t === 'hello') return this.#hello(ws, att, msg);
     if (msg.t === 'auth') return this.#auth(ws, att, msg);
+    if (msg.t === 'host_status') return send(ws, { t: 'host_status', setup: !this.#hasPassword() });
+    if (msg.t === 'setup') return this.#setup(ws, msg);
 
     if (HOST_TYPES.has(msg.t)) {
       if (att.role !== 'host') return fail(ws, 'forbidden');
@@ -277,29 +291,69 @@ export class BingoRoom extends DurableObject {
 
   // ---- 主催者 ----
 
+  // 合言葉は2か所のどちらかにある。
+  // - Cloudflare のシークレット HOST_PASSWORD(設定されていれば、こちらだけが通る。忘れたときの上書き用)
+  // - 主催者画面で最初に決めたもの(塩を付けたハッシュを SQLite に保存)
+  #storedPassword() { return this.store.meta('host_pw', null); }
+  #hasPassword() { return !!this.env.HOST_PASSWORD || this.#storedPassword() !== null; }
+
+  async #passwordMatches(candidate) {
+    if (this.env.HOST_PASSWORD) return sameSecret(candidate, this.env.HOST_PASSWORD);
+    const stored = this.#storedPassword();
+    if (stored === null) return false;
+    const [salt, hash] = stored.split(':');
+    return crypto.subtle.timingSafeEqual(await sha256(salt + candidate), fromHex(hash));
+  }
+
+  #becomeHost(ws) {
+    const att = ws.deserializeAttachment() ?? { ip: 'unknown' };
+    this.#forget(ws);
+    ws.serializeAttachment({ role: 'host', ip: att.ip });
+    this.hosts.add(ws);
+    send(ws, this.#hostState());
+  }
+
+  // 合言葉がまだどこにもないときだけ、最初に送ってきた人が決められる。
+  async #setup(ws, msg) {
+    if (this.#hasPassword()) return fail(ws, 'already_set');
+    const password = msg.password;
+    const length = typeof password === 'string' ? Array.from(password).length : 0;
+    if (length < PASSWORD_MIN || length > PASSWORD_MAX) return fail(ws, 'bad_password');
+
+    const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    const hash = toHex(await sha256(salt + password));
+    // ハッシュの計算を待つ間に、別の人が先に決めたかもしれない。保存の直前にもう一度確かめる。
+    if (this.#hasPassword()) return fail(ws, 'already_set');
+    this.store.setMeta('host_pw', `${salt}:${hash}`);
+    return this.#becomeHost(ws);
+  }
+
   async #auth(ws, att, msg) {
-    const password = this.env.HOST_PASSWORD;
-    if (!password) return send(ws, { t: 'auth_fail', reason: 'unset' });
+    if (!this.#hasPassword()) return send(ws, { t: 'auth_fail', reason: 'unset' });
 
-    const now = Date.now();
-    const state = this.store.authState(att.ip);
+    const locked = (state) => !!state && state.until_ms > Date.now();
     // すでに入っている主催者は締め出さない(同じ接続元の他人の間違いで、配信中に操作できなくなるのを防ぐ)
-    if (state && state.until_ms > now && att.role !== 'host') return send(ws, { t: 'auth_fail', reason: 'locked' });
+    if (locked(this.store.authState(att.ip)) && att.role !== 'host') return send(ws, { t: 'auth_fail', reason: 'locked' });
 
-    const ok = typeof msg.password === 'string' && (await sameSecret(msg.password, password));
+    const ok = typeof msg.password === 'string' && (await this.#passwordMatches(msg.password));
+
+    // 照合を待つ間に、同じ接続元の別の試行が記録を進めたかもしれないので読み直す
+    const role = (ws.deserializeAttachment() ?? att).role;
+    const state = this.store.authState(att.ip);
+    if (locked(state) && role !== 'host') return send(ws, { t: 'auth_fail', reason: 'locked' });
     if (!ok) {
-      const fails = (state ? state.fails : 0) + 1;
-      if (fails >= AUTH_MAX_FAILS) this.store.setAuthState(att.ip, 0, now + AUTH_LOCK_MS);
-      else this.store.setAuthState(att.ip, fails, 0);
+      // 締め出し中の記録は動かさない(入っている主催者の打ち間違いで、締め出しが解けないように)
+      if (!locked(state)) {
+        const fails = (state ? state.fails : 0) + 1;
+        if (fails >= AUTH_MAX_FAILS) this.store.setAuthState(att.ip, 0, Date.now() + AUTH_LOCK_MS);
+        else this.store.setAuthState(att.ip, fails, 0);
+      }
       return send(ws, { t: 'auth_fail', reason: 'wrong' });
     }
 
     // 締め出し中は記録を消さない(入っている主催者の名乗り直しで、他人の締め出しが解けないように)
-    if (!(state && state.until_ms > now)) this.store.clearAuthState(att.ip);
-    this.#forget(ws);
-    ws.serializeAttachment({ role: 'host', ip: att.ip });
-    this.hosts.add(ws);
-    return send(ws, this.#hostState());
+    if (!locked(state)) this.store.clearAuthState(att.ip);
+    return this.#becomeHost(ws);
   }
 
   #setAccepting(ws, msg) {

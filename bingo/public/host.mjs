@@ -8,6 +8,8 @@ const PASSWORD_KEY = 'bingo.v1.hostpw';
 const $ = (id) => document.getElementById(id);
 const dom = {
   conn: $('host-conn'), login: $('login'), loginForm: $('login-form'), password: $('password'),
+  setup: $('setup'), setupForm: $('setup-form'), newPassword: $('new-password'), newPassword2: $('new-password2'),
+  setupBtn: $('setup-btn'), setupError: $('setup-error'),
   loginBtn: $('login-btn'), loginError: $('login-error'), panel: $('panel'),
   toggle: $('accepting-toggle'), totals: $('totals'), delay: $('delay-select'),
   requests: $('requests'), requestsEmpty: $('requests-empty'), approveAll: $('approve-all'),
@@ -22,6 +24,7 @@ function savePassword(value) { try { localStorage.setItem(PASSWORD_KEY, value); 
 function forgetPassword() { try { localStorage.removeItem(PASSWORD_KEY); } catch { /* 同上 */ } }
 
 let password = readPassword();
+let needSetup = null;            // 合言葉をこれから決める必要があるか(null は未確認)
 let online = false;
 let authed = false;
 let snap = null;                 // サーバーから届いた最新の全体
@@ -32,13 +35,13 @@ let rowLockUntil = 0;            // 申請の行が消えた直後は、許可�
 let rowLockTimer = null;
 let retryTimer = null;           // 締め出し中の入り直し
 
+const PASSWORD_MIN = 8;          // 画面から決める合言葉の長さ(サーバーと同じ値)
 const ROW_LOCK_MS = 600;         // 行が消えて次の行が指の下に来たときの、二度押しを防ぐ時間
 const LOCKED_RETRY_MS = 30000;   // 締め出されている間、この間隔で入り直しを試す
 
 const AUTH_TEXT = {
   wrong: '合言葉が違います',
   locked: 'まちがいが続いたため、しばらく入れません。5分ほど待ってからお試しください',
-  unset: '合言葉がまだ設定されていません。Cloudflare の設定で HOST_PASSWORD を登録してください',
 };
 
 const ERROR_TEXT = {
@@ -52,8 +55,9 @@ const ERROR_TEXT = {
 
 const net = connect({
   onOpen(send) {
-    if (!password) return false;
-    send({ t: 'auth', password });
+    // 合言葉を覚えていれば名乗る。なければ、これから決める必要があるかを尋ねる。
+    if (password) send({ t: 'auth', password });
+    else send({ t: 'host_status' });
     return true;
   },
   onMessage,
@@ -85,10 +89,22 @@ function onMessage(msg) {
       snap.players.sort((a, b) => a.pid - b.pid);
       break;
     }
+    case 'host_status':
+      needSetup = msg.setup;
+      break;
     case 'auth_fail':
       authed = false;
       snap = null;
       clearTimeout(retryTimer);
+      if (msg.reason === 'unset') {
+        // まだ誰も合言葉を決めていない。決める画面へ。
+        password = null;
+        forgetPassword();
+        needSetup = true;
+        dom.loginError.hidden = true;
+        break;
+      }
+      needSetup = false;
       if (msg.reason === 'locked' && password) {
         // 合言葉は合っているかもしれない(同じ接続元の他人の間違いでも締め出される)。
         // 消さずに持っておき、締め出しが解けたら自動で入り直す。
@@ -102,6 +118,20 @@ function onMessage(msg) {
       break;
     case 'error':
       busyDraw = false;
+      dom.setupBtn.disabled = false;
+      if (msg.code === 'already_set') {
+        // ほかの人が先に決めた(または Cloudflare の設定で決まっている)
+        if (!authed) password = null;
+        needSetup = false;
+        dom.loginError.textContent = 'すでに合言葉が決まっています。合言葉を入れてください';
+        dom.loginError.hidden = false;
+        break;
+      }
+      if (msg.code === 'bad_password') {
+        dom.setupError.textContent = `合言葉は${PASSWORD_MIN}文字以上にしてください`;
+        dom.setupError.hidden = false;
+        break;
+      }
       // 許可・却下が通らなかった行を、また押せるようにする
       for (const row of requestRows.values()) setRowBusy(row, false);
       // 接続し直したあとなど、主催者として扱われていなければ名乗り直す
@@ -121,8 +151,13 @@ function render() {
   dom.conn.classList.toggle('off', !online);
 
   const showPanel = authed && snap !== null;
+  const showSetup = !showPanel && needSetup === true;
+  // 合言葉の入力を出すのは、決める必要がないと分かっていて、まだ入っていないとき。
+  // 名乗っている最中(合言葉を覚えていて、エラーも出ていない)は出さない。
+  const waiting = password !== null && dom.loginError.hidden;
   dom.panel.hidden = !showPanel;
-  dom.login.hidden = showPanel || (password !== null && dom.loginError.hidden);
+  dom.setup.hidden = !showSetup;
+  dom.login.hidden = showPanel || showSetup || waiting || (needSetup === null && dom.loginError.hidden);
   dom.loginBtn.disabled = false;
   if (!showPanel) return;
 
@@ -266,6 +301,23 @@ dom.loginForm.addEventListener('submit', (event) => {
   dom.loginError.hidden = true;
   dom.loginBtn.disabled = true;
   net.send({ t: 'auth', password });
+});
+
+dom.setupForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const value = dom.newPassword.value;
+  let problem = null;
+  if (Array.from(value).length < PASSWORD_MIN) problem = `合言葉は${PASSWORD_MIN}文字以上にしてください`;
+  else if (value !== dom.newPassword2.value) problem = '2つの入力が同じではありません。もう一度入れてください';
+  if (problem) {
+    dom.setupError.textContent = problem;
+    dom.setupError.hidden = false;
+    return;
+  }
+  dom.setupError.hidden = true;
+  dom.setupBtn.disabled = true;
+  password = value;
+  net.send({ t: 'setup', password });
 });
 
 $('logout').addEventListener('click', () => {

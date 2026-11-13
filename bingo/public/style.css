@@ -407,6 +407,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 
 .login { max-width: 420px; margin: 24px auto; width: 100%; }
 .login .btn { width: 100%; }
+.login .note { margin-bottom: 12px; }
+.login .note.warn { margin-bottom: 0; }
 
 .host-grid { display: flex; flex-direction: column; gap: 16px; }
 /* スマホでは列の枠を外し、使う順(受付 → 申請 → 番号 → ビンゴ → 参加者 → 切り替え)に並べる */

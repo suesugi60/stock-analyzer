@@ -79,49 +79,53 @@ TikTokなどのライブ配信で、主催者(配信者)とリスナーが遊ぶ
 
 ## 公開のしかた(Cloudflare)
 
-Cloudflare Workers の無料プランで動きます。
+Cloudflare Workers の無料プランで動きます。やることは3つです。
 画面の文言は変わることがあります。迷ったら公式の説明([Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/))を見てください。
 
 ### 1. アカウントを作る
 
 1. <https://dash.cloudflare.com/sign-up> でアカウントを作る。
 2. 左のメニューから **Workers & Pages** を開く。初回に `○○.workers.dev` の `○○` を決める画面が出る。
-   これがビンゴのURLの一部になるので、短く覚えやすいものにする。あとから **Your subdomain** の **Change** で変えられる。
+   これがビンゴのURLの一部になるので、短く覚えやすいものにする。
 
 ### 2. GitHubのリポジトリをつなぐ
 
 1. **Workers & Pages** で **Create application** を押す。
-2. **GitHub** を選び、GitHubにログインしてCloudflareに `suesugi60/stock-analyzer` へのアクセスを許可する。
+2. **GitHub** を選び、GitHubにログインして、Cloudflareに `stock-analyzer` へのアクセスを許可する。
 3. リポジトリ `stock-analyzer` を選ぶ。
-4. 設定を次のとおりにする。
+4. 次の2つを入れる。ほかの項目は触らなくてよい。
 
    | 項目 | 値 |
    |---|---|
-   | Project name(Workerの名前) | `bingo` (`wrangler.jsonc` の `name` と同じにする。違うとビルドが失敗する) |
-   | Production branch | `main` |
-   | Root directory(詳細設定の中) | `bingo` |
-   | Build command | 空のまま |
-   | Deploy command | `npx wrangler deploy` (初期値のまま) |
+   | Project name(名前) | `bingo` |
+   | Root directory(詳細設定の中にある) | `bingo` |
 
 5. **Save and Deploy** を押す。数分で公開される。以後は `main` を更新するたびに自動で公開される。
-6. 本番以外のブランチのビルド(**Enable Preview Builds**)はオフにしておく。このアプリでは使わない。
 
-### 3. 合言葉を設定する
+### 3. 主催者の合言葉を決める
 
-合言葉を設定するまで、主催者画面には誰も入れません。
+1. `https://bingo.○○.workers.dev/host` を開く。
+2. 「主催者の合言葉を決める」の画面で、合言葉を2回入れて「この合言葉に決める」を押す。
+
+**公開したら、すぐに自分でこの画面を開いて合言葉を決めてください。** 合言葉は、最初にこの画面を開いた人が決められます。
+合言葉は8文字以上です。12文字以上の、推測されにくいものをおすすめします。
+
+これで公開は終わりです。`https://bingo.○○.workers.dev/` がリスナーに案内するURLです。
+
+### 合言葉を忘れたとき・変えたいとき
+
+Cloudflareの設定で上書きできます。
 
 1. **Workers & Pages** → `bingo` → **Settings** → **Variables and Secrets** → **Add**。
-2. **Type** は **Secret**、**Variable name** は `HOST_PASSWORD`、**Value** に合言葉を入れる。
+2. **Type** は **Secret**、**Variable name** は `HOST_PASSWORD`、**Value** に新しい合言葉を入れる。
 3. **Deploy** を押す。
 
-合言葉は12文字以上の、推測されにくいものにしてください。合言葉を5回続けて間違えると、その接続元(同じWi-Fiなど)からは5分間、新しく入れなくなります。
+`HOST_PASSWORD` を設定すると、画面で決めた合言葉は使われなくなり、こちらだけが通ります。
+
+### 合言葉の間違いが続いたとき
+
+合言葉を5回続けて間違えると、その接続元(同じWi-Fiなど)からは5分間、新しく入れなくなります。
 すでに入っている主催者画面は、そのまま使えます。
-設定した合言葉は、次の自動公開でも消えません。
-
-### 4. 確かめる
-
-1. `https://bingo.○○.workers.dev/host` を開き、合言葉で入れること。
-2. `https://bingo.○○.workers.dev/` をスマホで開き、申請 → 許可 → 番号の発表まで通ること。
 
 ## 上限と無料枠
 
@@ -182,11 +186,11 @@ Node.js 22以上が必要です。
 ```bash
 cd bingo
 npm install
-echo 'HOST_PASSWORD=てすと用の合言葉' > .dev.vars
 npm run dev
 ```
 
-`http://localhost:8787/` がリスナー画面、`http://localhost:8787/host` が主催者画面です。`.dev.vars` はリポジトリに入りません。
+`http://localhost:8787/` がリスナー画面、`http://localhost:8787/host` が主催者画面です。
+主催者画面を最初に開いたときに、手元用の合言葉を決めます。
 
 ## テスト
 
