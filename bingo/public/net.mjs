@@ -1,6 +1,7 @@
 // 切れても自動でつなぎ直す WebSocket。リスナー画面と主催者画面で共用する。
 //
 // onOpen(send): つながるたび、または「状態を取り直したい」ときに呼ばれる。ここで hello / auth を送る。
+//   何も送らなかったときは false を返す(返事を待たないようにするため)。
 // onMessage(msg): サーバーからのメッセージ。
 // onStatus(online): つながった・切れたの通知。
 
@@ -36,6 +37,12 @@ export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
     }, REPLY_TIMEOUT_MS);
   }
 
+  // 状態を問い合わせ、返事を待つ。
+  function ask() {
+    if (onOpen(send) === false) disarm();
+    else arm();
+  }
+
   function open() {
     if (stopped) return;
     clearTimeout(retryTimer);
@@ -46,8 +53,7 @@ export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
       if (ws !== sock) return;
       retry = RETRY_MIN_MS;
       onStatus(true);
-      arm();
-      onOpen(send);
+      ask();
     };
     sock.onmessage = (event) => {
       if (ws !== sock) return;
@@ -80,8 +86,7 @@ export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
       retry = RETRY_MIN_MS;
       open();
     } else if (ws.readyState === WebSocket.OPEN) {
-      arm();
-      onOpen(send);
+      ask();
     }
   }
 

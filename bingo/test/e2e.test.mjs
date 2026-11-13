@@ -2,7 +2,7 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { startServer, closeAll, fresh } from './helpers.mjs';
+import { startServer, closeAll, fresh, HOST_PASSWORD } from './helpers.mjs';
 // 環境にプリインストールされた playwright は require でしか解決できない
 const { chromium } = createRequire(import.meta.url)('playwright');
 
@@ -368,7 +368,7 @@ test('リスナー: カードが多くても横にはみ出さない', async () 
 });
 
 test('ページに Content-Security-Policy が付いている', async () => {
-  for (const path of ['/']) {
+  for (const path of ['/', '/host']) {
     const res = await fetch(server.http + path);
     assert.equal(res.status, 200, path);
     const csp = res.headers.get('content-security-policy') ?? '';
@@ -376,4 +376,333 @@ test('ページに Content-Security-Policy が付いている', async () => {
     assert.match(csp, /default-src 'self'/, path);
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff', path);
   }
+});
+
+// ---- 主催者画面 ----
+
+const DESKTOP = { width: 1280, height: 800 };
+
+async function openHost(viewport = DESKTOP) {
+  const h = await openPage('/host', { viewport });
+  await h.page.fill('#password', HOST_PASSWORD);
+  await h.page.click('#login-btn');
+  await h.page.locator('#panel').waitFor();
+  return h;
+}
+
+async function ask(page, name, count) {
+  await page.fill('#name', name);
+  await page.fill('#count', String(count));
+  await page.click('#request-btn');
+  await page.locator('#status', { hasText: '許可を待っています' }).waitFor();
+}
+
+async function yes(page) {
+  await page.locator('#dialog').waitFor();
+  await page.click('#dialog-ok');
+  await page.locator('#dialog').waitFor({ state: 'hidden' });
+}
+
+const reqRow = (page, name) => page.locator('#requests .req').filter({ has: page.locator('.req-name', { hasText: name }) });
+
+test('主催者: 合言葉で入る。違えば入れず、入ったあとは再読み込みしても入ったまま', async () => {
+  await fresh(server);
+  const { page, errors } = await openPage('/host', { viewport: DESKTOP });
+  await page.locator('#login').waitFor();
+  assert.equal(await page.locator('#panel').isVisible(), false);
+  await page.fill('#password', 'chigau');
+  await page.click('#login-btn');
+  await page.locator('#login-error', { hasText: '合言葉が違います' }).waitFor();
+  assert.equal(await page.locator('#panel').isVisible(), false);
+
+  await page.fill('#password', HOST_PASSWORD);
+  await page.click('#login-btn');
+  await page.locator('#panel').waitFor();
+  assert.equal(await page.locator('#login').isVisible(), false);
+  await page.reload();
+  await page.locator('#panel').waitFor();
+
+  await page.click('#logout');
+  await page.locator('#login').waitFor();
+  await page.reload();
+  await page.locator('#login').waitFor();
+  assert.equal(await page.locator('#panel').isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
+for (const [label, viewport] of [['PC幅', DESKTOP], ['スマホ幅', PHONE]]) {
+  test(`主催者(${label}): 受付から許可、番号の発表、ビンゴ、取り消しまで通しで遊ぶ`, async () => {
+    const { c: ws } = await fresh(server);
+    ws.send({ t: 'accepting', on: false });
+    await ws.next('host');
+    const host = await openHost(viewport);
+    const taro = await openPage();
+    const hanako = await openPage();
+    await taro.page.locator('#status', { hasText: 'いまは受付していません' }).waitFor();
+
+    // 受付開始
+    const toggle = host.page.locator('#accepting-toggle');
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+    await toggle.click();
+    await host.page.locator('#accepting-toggle[aria-pressed="true"]').waitFor();
+
+    // 申請は届いた順に並ぶ
+    await ask(taro.page, 'たろう', 3);
+    await ask(hanako.page, 'はなこ', 1);
+    await host.page.locator('#requests .req').nth(1).waitFor();
+    assert.deepEqual(await host.page.locator('#requests .req .req-name').allTextContents(), ['たろう', 'はなこ']);
+    assert.equal(await reqRow(host.page, 'たろう').locator('.req-count').textContent(), '3');
+    assert.match(await host.page.locator('#totals').textContent(), /申請 2件/);
+
+    // 枚数を変えて許可
+    await reqRow(host.page, 'たろう').locator('.req-minus').click();
+    assert.equal(await reqRow(host.page, 'たろう').locator('.req-count').textContent(), '2');
+    await reqRow(host.page, 'たろう').locator('.approve').click();
+    await taro.page.locator('#cards .card').nth(1).waitFor();
+    assert.equal(await taro.page.locator('#cards .card').count(), 2);
+    await reqRow(host.page, 'はなこ').locator('.approve').click();
+    await hanako.page.locator('#cards .card').first().waitFor();
+    await host.page.locator('#requests .req').first().waitFor({ state: 'detached' });
+    await host.page.locator('#totals', { hasText: '参加 2人' }).waitFor();
+    assert.match(await host.page.locator('#totals').textContent(), /カード 3枚/);
+    assert.deepEqual(await host.page.locator('#participants .p-name').allTextContents(), ['たろう', 'はなこ']);
+
+    // 盤面から番号を発表
+    const row = (await readCard(taro.page, 1)).slice(0, 5);
+    for (const n of row) await host.page.click(`#board .num[data-n="${n}"]`);
+    await taro.page.locator('#cards .card[data-no="1"].bingo').waitFor();
+    assert.deepEqual(await markedIndexes(taro.page, 1), [0, 1, 2, 3, 4, 12]);
+    await host.page.locator('#host-winners li', { hasText: 'たろう' }).waitFor();
+    assert.match(await host.page.locator('#host-drawn-count').textContent(), /5個目/);
+    assert.equal(await host.page.locator('#board .num.called').count(), 5);
+    assert.equal((await host.page.locator('#host-current').textContent()).trim(), String(row[4]));
+    assert.match(await host.page.locator('#participants .participant').first().locator('.p-status').textContent(), /ビンゴ/);
+    await hanako.page.locator('#winners li', { hasText: 'たろう' }).waitFor();
+
+    // 直前の番号を取り消す
+    await host.page.click('#undo-btn');
+    await yes(host.page);
+    await host.page.locator('#host-winners li').first().waitFor({ state: 'detached' });
+    await taro.page.locator('#cards .card[data-no="1"].reach').waitFor();
+    assert.equal(await host.page.locator('#board .num.called').count(), 4);
+    assert.equal(await taro.page.locator('#winners li').count(), 0);
+
+    // 横にはみ出さない
+    const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert.equal(overflow, 0);
+    assert.deepEqual([...host.errors, ...taro.errors, ...hanako.errors], []);
+  });
+}
+
+test('主催者: ランダムに引くと、主催者とリスナーに同じ番号が出る', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await listener.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.doesNotMatch(await host.page.locator('#host-current').textContent(), /\d/);
+  await host.page.click('#draw-btn');
+  await host.page.locator('#board .num.called').waitFor();
+  const n = Number((await host.page.locator('#host-current').textContent()).trim());
+  assert.ok(Number.isInteger(n) && n >= 1 && n <= 75, String(n));
+  assert.equal(await host.page.locator('#board .num.called').getAttribute('data-n'), String(n));
+  await listener.page.locator('#drawn-count', { hasText: '1個目' }).waitFor();
+  assert.equal((await listener.page.locator('#current').textContent()).trim(), String(n));
+  // 出た番号はもう押せない
+  assert.equal(await host.page.locator(`#board .num[data-n="${n}"]`).isDisabled(), true);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: すべてリセットは確認を挟む', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await seat(ws, listener.page, 'たろう', 2);
+
+  await host.page.click('#reset-all');
+  await host.page.locator('#dialog').waitFor();
+  await host.page.click('#dialog-cancel');
+  await sleep(400);
+  assert.equal(await listener.page.locator('#cards .card').count(), 2);
+  assert.equal(await host.page.locator('#participants .participant').count(), 1);
+
+  await host.page.click('#reset-all');
+  await yes(host.page);
+  await listener.page.locator('#form').waitFor({ state: 'visible' });
+  assert.equal(await listener.page.locator('#cards .card').count(), 0);
+  await host.page.locator('#participants .participant').first().waitFor({ state: 'detached' });
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 次のゲームで番号だけ消え、カードは残る', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await seat(ws, listener.page, 'たろう', 1);
+  const before = await readCard(listener.page);
+  await host.page.click(`#board .num[data-n="${before[0]}"]`);
+  await listener.page.locator('#cards .card .cell.marked').nth(1).waitFor();
+
+  await host.page.click('#new-round');
+  await yes(host.page);
+  await listener.page.locator('#drawn-count', { hasText: 'まだ番号は出ていません' }).waitFor();
+  assert.deepEqual(await readCard(listener.page), before);
+  assert.deepEqual(await markedIndexes(listener.page), [12]);
+  assert.equal(await host.page.locator('#board .num.called').count(), 0);
+  assert.doesNotMatch(await host.page.locator('#host-current').textContent(), /\d/);
+  assert.equal(await host.page.locator('#participants .participant').count(), 1);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 参加者のブロックと解除', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await seat(ws, listener.page, 'あらし', 1);
+  await host.page.locator('#participants .participant .block').click();
+  await yes(host.page);
+  await listener.page.locator('#status', { hasText: '申請できません' }).waitFor();
+  assert.equal(await listener.page.locator('#cards .card').count(), 0);
+  assert.equal(await listener.page.locator('#form').isVisible(), false);
+  await host.page.locator('#blocked .blocked-row', { hasText: 'あらし' }).waitFor();
+  assert.equal(await host.page.locator('#participants .participant').count(), 0);
+
+  await host.page.locator('#blocked .blocked-row .unblock').click();
+  await listener.page.locator('#form').waitFor({ state: 'visible' });
+  await host.page.locator('#blocked .blocked-row').first().waitFor({ state: 'detached' });
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 申請の行から却下・ブロックできる', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const a = await openPage();
+  const b = await openPage();
+  await ask(a.page, 'みおくり', 2);
+  await ask(b.page, 'あらし', 50);
+  await host.page.locator('#requests .req').nth(1).waitFor();
+
+  await reqRow(host.page, 'みおくり').locator('.reject').click();
+  await a.page.locator('#status', { hasText: '今回は見送られました' }).waitFor();
+  await reqRow(host.page, 'あらし').locator('.req-block').click();
+  await yes(host.page);
+  await b.page.locator('#status', { hasText: '申請できません' }).waitFor();
+  await host.page.locator('#requests .req').first().waitFor({ state: 'detached' });
+  await host.page.locator('#blocked .blocked-row', { hasText: 'あらし' }).waitFor();
+  assert.deepEqual([...host.errors, ...a.errors, ...b.errors], []);
+});
+
+test('主催者: すべて許可', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const a = await openPage();
+  const b = await openPage();
+  assert.equal(await host.page.locator('#approve-all').isDisabled(), true);
+  await ask(a.page, 'A', 2);
+  await ask(b.page, 'B', 3);
+  await host.page.locator('#requests .req').nth(1).waitFor();
+  await host.page.click('#approve-all');
+  await yes(host.page);
+  await a.page.locator('#cards .card').nth(1).waitFor();
+  await b.page.locator('#cards .card').nth(2).waitFor();
+  assert.equal(await a.page.locator('#cards .card').count(), 2);
+  assert.equal(await b.page.locator('#cards .card').count(), 3);
+  await host.page.locator('#requests .req').first().waitFor({ state: 'detached' });
+  assert.deepEqual([...host.errors, ...a.errors, ...b.errors], []);
+});
+
+test('名前に入れたHTMLは、どの画面でも文字として表示される', async () => {
+  await fresh(server);
+  const NAME = '<svg onload=a()>';
+  const host = await openHost();
+  const listener = await openPage();
+  const dialogs = [];
+  host.page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  listener.page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+
+  await ask(listener.page, NAME, 1);
+  await host.page.locator('#requests .req').waitFor();
+  assert.equal(await host.page.locator('#requests .req .req-name').textContent(), NAME);
+  await host.page.locator('#requests .req .approve').click();
+  await listener.page.locator('#cards .card').waitFor();
+  assert.match(await listener.page.locator('#summary').textContent(), /<svg onload=a\(\)>/);
+  assert.equal(await host.page.locator('#participants .p-name').textContent(), NAME);
+
+  // ビンゴ一覧にも出す
+  for (const n of (await readCard(listener.page)).slice(0, 5)) await host.page.click(`#board .num[data-n="${n}"]`);
+  await host.page.locator('#host-winners li').waitFor();
+  await listener.page.locator('#winners li').waitFor();
+  assert.match(await host.page.locator('#host-winners li').textContent(), /<svg onload=a\(\)>/);
+  assert.match(await listener.page.locator('#winners li').textContent(), /<svg onload=a\(\)>/);
+
+  // ブロックした人の一覧にも出す
+  await host.page.locator('#participants .participant .block').click();
+  await yes(host.page);
+  await host.page.locator('#blocked .blocked-row').waitFor();
+  assert.match(await host.page.locator('#blocked .blocked-row').textContent(), /<svg onload=a\(\)>/);
+
+  assert.equal(await host.page.locator('main svg').count(), 0);
+  assert.equal(await listener.page.locator('main svg').count(), 0);
+  assert.deepEqual(dialogs, []);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 反映の遅れを選べる。主催者画面にはすぐ出る', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await listener.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.equal(await host.page.inputValue('#delay-select'), '0');
+  await host.page.selectOption('#delay-select', '5');
+  await sleep(300);
+  await host.page.reload();
+  await host.page.locator('#panel').waitFor();
+  assert.equal(await host.page.inputValue('#delay-select'), '5');
+
+  await host.page.click('#board .num[data-n="8"]');
+  await host.page.locator('#board .num.called').waitFor();
+  assert.equal((await host.page.locator('#host-current').textContent()).trim(), '8');
+  await sleep(1000);
+  assert.doesNotMatch(await listener.page.locator('#current').textContent(), /\d/);
+  await listener.page.locator('#drawn-count', { hasText: '1個目' }).waitFor({ timeout: 8000 });
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 2つの端末で開いても、片方の操作がもう片方に出る', async () => {
+  await fresh(server);
+  const one = await openHost();
+  const two = await openHost(PHONE);
+  const listener = await openPage();
+  await one.page.click('#board .num[data-n="20"]');
+  await two.page.locator('#board .num[data-n="20"].called').waitFor();
+  await two.page.click('#accepting-toggle');
+  await one.page.locator('#accepting-toggle[aria-pressed="false"]').waitFor();
+  await two.page.click('#accepting-toggle');
+  await one.page.locator('#accepting-toggle[aria-pressed="true"]').waitFor();
+  await ask(listener.page, 'たろう', 1);
+  await one.page.locator('#requests .req').waitFor();
+  await two.page.locator('#requests .req').waitFor();
+  await one.page.locator('#requests .req .approve').click();
+  await two.page.locator('#requests .req').waitFor({ state: 'detached' });
+  await two.page.locator('#participants .participant', { hasText: 'たろう' }).waitFor();
+  assert.deepEqual([...one.errors, ...two.errors, ...listener.errors], []);
+});
+
+test('主催者: 接続が切れても、合言葉を入れ直さずに戻る', async () => {
+  await fresh(server);
+  const ctx = await browser.newContext({ viewport: DESKTOP });
+  contexts.push(ctx);
+  ctx.setDefaultTimeout(TIMEOUT);
+  const page = await ctx.newPage();
+  const open = new Set();
+  await page.routeWebSocket(/\/ws$/, (ws) => { open.add({ ws, upstream: ws.connectToServer() }); });
+  await page.goto(server.http + '/host');
+  await page.fill('#password', HOST_PASSWORD);
+  await page.click('#login-btn');
+  await page.locator('#panel').waitFor();
+  for (const c of open) { c.ws.close(); c.upstream.close(); }
+  await page.locator('#host-conn', { hasText: '再接続中' }).waitFor();
+  await page.locator('#host-conn', { hasText: '接続中' }).filter({ hasNotText: '再接続中' }).waitFor({ timeout: 12000 });
+  await page.click('#board .num[data-n="3"]');
+  await page.locator('#board .num[data-n="3"].called').waitFor();
+  assert.equal(await page.locator('#login').isVisible(), false);
 });

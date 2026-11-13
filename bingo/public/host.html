@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>ビンゴ 主催者画面</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/host.mjs"></script>
+</head>
+<body class="host">
+  <header class="top">
+    <div class="top-row">
+      <div class="brand">
+        <h1 class="logo" aria-label="ビンゴ"><span class="col-B">B</span><span class="col-I">I</span><span class="col-N">N</span><span class="col-G">G</span><span class="col-O">O</span></h1>
+        <span class="host-tag">主催者画面</span>
+      </div>
+      <span id="host-conn" class="conn off">接続しています…</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="login" class="panel login" hidden>
+      <h2 class="panel-title">主催者の合言葉</h2>
+      <form id="login-form" novalidate>
+        <label class="field">
+          <span class="field-label">合言葉</span>
+          <input id="password" type="password" autocomplete="current-password">
+        </label>
+        <button id="login-btn" type="submit" class="btn primary">入る</button>
+      </form>
+      <p id="login-error" class="note warn" hidden></p>
+    </section>
+
+    <div id="panel" class="host-grid" hidden>
+      <div class="host-col">
+        <section class="panel area-numbers">
+          <h2 class="panel-title">番号</h2>
+          <div class="now">
+            <span id="host-current" class="ball big empty">–</span>
+            <div class="now-text">
+              <div class="now-label">いまの番号</div>
+              <div id="host-drawn-count" class="now-count">まだ番号は出ていません</div>
+            </div>
+          </div>
+          <div class="draw-buttons">
+            <button id="draw-btn" type="button" class="btn primary big">ランダムに引く</button>
+            <button id="undo-btn" type="button" class="btn ghost" disabled>直前の番号を取り消す</button>
+          </div>
+          <p class="note">自分で引いた番号は、下の盤面を押して発表します。</p>
+          <div id="board" class="board"></div>
+        </section>
+
+        <section class="panel area-winners">
+          <h2 class="panel-title">ビンゴ</h2>
+          <p id="winner-stats" class="totals"></p>
+          <ol id="host-winners" class="winners"></ol>
+        </section>
+      </div>
+      <div class="host-col">
+        <section class="panel area-accept">
+          <h2 class="panel-title">受付</h2>
+          <button id="accepting-toggle" type="button" class="btn toggle" aria-pressed="false">締め切り中(押すと受付を始める)</button>
+          <p id="totals" class="totals"></p>
+          <label class="field delay-field">
+            <span class="field-label">リスナーへの反映</span>
+            <select id="delay-select"></select>
+          </label>
+          <p class="note">配信の映像は数秒遅れて届きます。リスナーの画面が配信より先に動くときは、ここで遅らせてください。この画面にはすぐ出ます。</p>
+        </section>
+
+        <section class="panel area-requests">
+          <div class="panel-head">
+            <h2 class="panel-title">申請</h2>
+            <button id="approve-all" type="button" class="btn small" disabled>すべて許可</button>
+          </div>
+          <div id="requests" class="requests"></div>
+          <p id="requests-empty" class="note">いま届いている申請はありません</p>
+        </section>
+
+        <section class="panel area-people">
+          <h2 class="panel-title">参加者</h2>
+          <div id="participants" class="people"></div>
+          <p id="participants-empty" class="note">カードを持っている人はまだいません</p>
+          <div id="blocked-box" hidden>
+            <h3 class="sub-title">ブロック中</h3>
+            <div id="blocked" class="people"></div>
+          </div>
+        </section>
+
+        <section class="panel area-reset">
+          <h2 class="panel-title">ゲームの切り替え</h2>
+          <div class="reset-buttons">
+            <button id="new-round" type="button" class="btn">次のゲーム(カードはそのまま)</button>
+            <button id="reset-all" type="button" class="btn danger">すべてリセット</button>
+          </div>
+          <p class="note">「次のゲーム」は番号とビンゴの記録だけを消します。「すべてリセット」はカード・申請・参加者も消します。</p>
+          <button id="logout" type="button" class="btn ghost small">ログアウト</button>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <p id="toast" class="toast" role="status" hidden></p>
+  <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-message" hidden>
+    <div class="dialog-box">
+      <p id="dialog-message"></p>
+      <div class="dialog-buttons">
+        <button id="dialog-cancel" type="button" class="btn ghost">やめる</button>
+        <button id="dialog-ok" type="button" class="btn primary">はい</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
