@@ -7,6 +7,9 @@ import {
   pickUncalled, rankWinners, cryptoRng,
 } from '../public/logic.mjs';
 
+const MAX_MESSAGE = 2048;        // これより長いメッセージを送る接続は閉じる
+const RATE_WINDOW_MS = 10_000;   // この間に
+const RATE_MAX = 30;             // これより多く送る接続は閉じる(主催者は対象外)
 const AUTH_MAX_FAILS = 5;        // 合言葉をこの回数続けて間違えると
 const AUTH_LOCK_MS = 5 * 60_000; // この時間、その接続元からは入れない
 
@@ -46,6 +49,7 @@ export class BingoRoom extends DurableObject {
     // SQLite から読んだものの控え。休止すると消えるので、なければ読み直す。
     // 書き込むたびに、古くなった分を捨てる。
     this.cache = {};
+    this.rate = new WeakMap(); // 接続ごとの送信回数。消えてよい。
 
     // 誰がどの接続か。休止から戻ったときは、接続に付けておいた情報から作り直す。
     this.hosts = new Set();
@@ -66,11 +70,14 @@ export class BingoRoom extends DurableObject {
   }
 
   async webSocketMessage(ws, raw) {
+    const att = ws.deserializeAttachment() ?? { role: 'new', ip: 'unknown' };
+    if (typeof raw !== 'string' || raw.length > MAX_MESSAGE) return this.#drop(ws, 1009, 'message too big');
+    if (att.role !== 'host' && this.#tooFast(ws)) return this.#drop(ws, 1008, 'too many messages');
+
     let msg;
     try { msg = JSON.parse(raw); } catch { msg = null; }
     if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.t !== 'string') return fail(ws, 'bad_message');
 
-    const att = ws.deserializeAttachment() ?? { role: 'new', ip: 'unknown' };
     if (msg.t === 'hello') return this.#hello(ws, att, msg);
     if (msg.t === 'auth') return this.#auth(ws, att, msg);
 
@@ -85,6 +92,9 @@ export class BingoRoom extends DurableObject {
         case 'draw': return this.#draw(ws);
         case 'call': return this.#call(ws, msg);
         case 'undo': return this.#undo(ws);
+        case 'block': return this.#block(ws, msg);
+        case 'unblock': return this.#unblock(ws, msg);
+        case 'new_round': return this.#newRound();
         case 'reset_all': return this.#resetAll();
         default: return undefined;
       }
@@ -119,6 +129,19 @@ export class BingoRoom extends DurableObject {
       const set = this.byToken.get(att.th);
       if (set) { set.delete(ws); if (set.size === 0) this.byToken.delete(att.th); }
     }
+  }
+
+  #drop(ws, code, reason) {
+    this.#forget(ws);
+    try { ws.close(code, reason); } catch { /* すでに閉じている */ }
+  }
+
+  #tooFast(ws) {
+    const now = Date.now();
+    let r = this.rate.get(ws);
+    if (!r || now - r.start > RATE_WINDOW_MS) { r = { start: now, count: 0 }; this.rate.set(ws, r); }
+    r.count++;
+    return r.count > RATE_MAX;
   }
 
   #toHosts(message) {
@@ -199,7 +222,7 @@ export class BingoRoom extends DurableObject {
     const pub = this.#publicState();
     return {
       t: 'host', accepting: pub.accepting, delay: pub.delay, draws: pub.draws, winners: pub.winners,
-      requests: this.store.pendingRequests(), players: this.#playerSummaries(), blocked: [],
+      requests: this.store.pendingRequests(), players: this.#playerSummaries(), blocked: this.store.blockedPlayers(),
     };
   }
 
@@ -407,7 +430,40 @@ export class BingoRoom extends DurableObject {
     return undefined;
   }
 
+  // ---- ブロック ----
+
+  #block(ws, msg) {
+    const player = Number.isInteger(msg.pid) ? this.store.playerById(msg.pid) : null;
+    if (!player) return fail(ws, 'not_found');
+    const hadBingo = this.store.cardsOf(player.id).some((card) => card.bingo_at !== null);
+    this.store.block(player.id);
+    this.cache.cards = undefined;
+    this.cache.winners = undefined;
+    this.cache.total = undefined;
+
+    this.#sendYou(player.token_hash);
+    if (hadBingo) this.#toPlayers({ t: 'winners', winners: this.#winners() });
+    this.#toHosts(this.#hostState());
+    return undefined;
+  }
+
+  #unblock(ws, msg) {
+    const player = Number.isInteger(msg.pid) ? this.store.playerById(msg.pid) : null;
+    if (!player || !player.blocked) return fail(ws, 'not_found');
+    this.store.unblock(player.id);
+    this.#sendYou(player.token_hash);
+    this.#toHosts(this.#hostState());
+    return undefined;
+  }
+
   // ---- リセット ----
+
+  #newRound() {
+    this.store.newRound();
+    this.cache = {};
+    this.#toPlayers({ t: 'round' });
+    this.#toHosts(this.#hostState());
+  }
 
   #resetAll() {
     this.store.resetAll();

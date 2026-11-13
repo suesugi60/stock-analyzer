@@ -59,6 +59,16 @@ export class Store {
     return this.one('INSERT INTO players (token_hash, name) VALUES (?, ?) RETURNING id', tokenHash, name).id;
   }
   renamePlayer(id, name) { this.run('UPDATE players SET name = ? WHERE id = ?', name, id); }
+  blockedPlayers() { return this.all('SELECT id AS pid, name FROM players WHERE blocked = 1 ORDER BY id'); }
+  // ブロック: 申請中の申請は却下、カードは削除、以後の申請は受け付けない。
+  block(playerId) {
+    this.atomic(() => {
+      this.run('UPDATE players SET blocked = 1 WHERE id = ?', playerId);
+      this.run("UPDATE requests SET status = 'rejected' WHERE player_id = ? AND status = 'pending'", playerId);
+      this.run('DELETE FROM cards WHERE player_id = ?', playerId);
+    });
+  }
+  unblock(playerId) { this.run('UPDATE players SET blocked = 0 WHERE id = ?', playerId); }
 
   // ---- 申請 ----
   latestRequest(playerId) {
@@ -118,6 +128,13 @@ export class Store {
   removeDraw(seq) { this.run('DELETE FROM draws WHERE seq = ?', seq); }
 
   // ---- リセット ----
+  // 次のゲーム: 番号とビンゴの記録だけ消す。
+  newRound() {
+    this.atomic(() => {
+      this.run('DELETE FROM draws');
+      this.run('UPDATE cards SET bingo_at = NULL WHERE bingo_at IS NOT NULL');
+    });
+  }
   resetAll() {
     this.atomic(() => {
       this.run('DELETE FROM draws');

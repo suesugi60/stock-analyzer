@@ -8,7 +8,12 @@ import {
 
 let server;
 before(async () => { server = await startServer(); });
-after(async () => { closeAll(); await server?.stop(); });
+after(async () => {
+  closeAll();
+  await server?.stop();
+  // サーバー側で捕まえられなかった例外が出ていないこと
+  assert.doesNotMatch(server.log(), /Uncaught|\[ERROR\]/);
+});
 afterEach(() => closeAll());
 
 const EMPTY_YOU = { name: null, blocked: false, pending: null, rejected: false, cards: [] };
@@ -582,4 +587,192 @@ test('hello を送り直しても同じ状態が返る', async () => {
   const d = await call(host, a.c, 6);
   assert.equal(d.seq, 2);
   await a.c.none('draw');
+});
+
+// ---- ブロック・リセット ----
+
+test('ブロック: カードが消え、ビンゴ一覧からも外れ、以後は申請できない', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 1);
+  await grant(host, b.c, 'B', 1);
+  for (const n of lineNumbers(ya.cards[0].numbers, 0)) await call(host, a.c, n);
+  a.c.drain(); b.c.drain(); host.drain();
+
+  host.send({ t: 'block', pid: ya.pid });
+  const { you } = await a.c.next('you');
+  assert.deepEqual({ blocked: you.blocked, cards: you.cards, pending: you.pending }, { blocked: true, cards: [], pending: null });
+  assert.deepEqual(await b.c.next('winners'), { t: 'winners', winners: [] });
+  const snap = await host.next('host');
+  assert.deepEqual(snap.players.map((p) => p.name), ['B']);
+  assert.deepEqual(snap.blocked, [{ pid: ya.pid, name: 'A' }]);
+  assert.deepEqual(snap.winners, []);
+
+  a.c.send({ t: 'request', name: 'A', count: 1 });
+  assert.equal((await a.c.next('error')).code, 'blocked');
+  assert.equal((await joinPlayer(server, a.token)).state.you.blocked, true);
+});
+
+test('申請中だけの人もブロックできる', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  a.c.send({ t: 'request', name: 'あらし', count: 50 });
+  const { req } = await host.next('req_add');
+  await a.c.next('you');
+  host.send({ t: 'block', pid: req.pid });
+  const snap = await host.next('host');
+  assert.deepEqual(snap.requests, []);
+  assert.deepEqual(snap.blocked, [{ pid: req.pid, name: 'あらし' }]);
+  const { you } = await a.c.next('you');
+  assert.deepEqual({ blocked: you.blocked, pending: you.pending }, { blocked: true, pending: null });
+});
+
+test('ブロック解除: カードは戻らないが、再申請できる', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 2);
+  host.send({ t: 'block', pid: ya.pid });
+  await a.c.next('you');
+  await host.next('host');
+  host.send({ t: 'unblock', pid: ya.pid });
+  const { you } = await a.c.next('you');
+  assert.deepEqual({ blocked: you.blocked, cards: you.cards }, { blocked: false, cards: [] });
+  assert.deepEqual((await host.next('host')).blocked, []);
+  a.c.send({ t: 'request', name: 'A', count: 1 });
+  assert.equal((await host.next('req_add')).req.count, 1);
+});
+
+test('存在しない人のブロック・解除は not_found', async () => {
+  const { c: host } = await fresh(server);
+  for (const m of [{ t: 'block', pid: 99999 }, { t: 'block', pid: 'x' }, { t: 'block' }, { t: 'unblock', pid: 99999 }]) {
+    host.send(m);
+    assert.equal((await host.next('error')).code, 'not_found', JSON.stringify(m));
+  }
+});
+
+test('次のゲーム: 番号とビンゴだけ消え、カードと申請は残る', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 2);
+  for (const n of lineNumbers(ya.cards[0].numbers, 0)) await call(host, a.c, n);
+  b.c.send({ t: 'request', name: 'B', count: 1 });
+  await host.next('req_add');
+  a.c.drain(); host.drain();
+
+  host.send({ t: 'new_round' });
+  assert.deepEqual(await a.c.next('round'), { t: 'round' });
+  const snap = await host.next('host');
+  assert.deepEqual([snap.draws, snap.winners], [[], []]);
+  assert.deepEqual(snap.players, [{ pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: 0 }]);
+  assert.deepEqual(snap.requests.map((r) => r.name), ['B']);
+
+  const again = await joinPlayer(server, a.token);
+  assert.deepEqual(again.state.you.cards, ya.cards);
+  assert.deepEqual([again.state.draws, again.state.winners, again.state.lastAge], [[], [], null]);
+  assert.equal((await call(host, a.c, 1)).seq, 1);
+});
+
+test('すべてリセット: 全員が未申請に戻り、同じ接続のまま申請し直せる', async () => {
+  const { c: host } = await fresh(server);
+  host.send({ t: 'delay', sec: 3 });
+  await host.next('host');
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 2);
+  await call(host, a.c, 9);
+  b.c.send({ t: 'request', name: 'B', count: 1 });
+  await host.next('req_add');
+  host.send({ t: 'block', pid: ya.pid });
+  await host.next('host');
+  a.c.drain(); b.c.drain(); host.drain();
+
+  host.send({ t: 'reset_all' });
+  assert.deepEqual(await a.c.next('reset'), { t: 'reset' });
+  assert.deepEqual(await b.c.next('reset'), { t: 'reset' });
+  assert.deepEqual(await host.next('host'), { t: 'host', accepting: true, delay: 3, ...EMPTY_HOST });
+  assert.deepEqual((await joinPlayer(server, a.token)).state, {
+    t: 'state', accepting: true, delay: 3, draws: [], lastAge: null, winners: [], you: EMPTY_YOU,
+  });
+  a.c.send({ t: 'request', name: 'A2', count: 1 });
+  assert.equal((await host.next('req_add')).req.name, 'A2');
+  assert.equal((await a.c.next('you')).you.pending, 1);
+});
+
+// ---- 壊れた入力・負荷・再起動 ----
+
+test('壊れた入力でもサーバーは動き続ける', async () => {
+  const { c: host } = await fresh(server);
+  const bad = await joinPlayer(server);
+  const good = await joinPlayer(server);
+  for (const raw of ['not json', '[]', '{"t":5}', '"hello"', 'null', '{"t":"unknown"}', '{}']) {
+    bad.c.sendRaw(raw);
+    assert.equal((await bad.c.next('error')).code, 'bad_message', raw);
+  }
+  assert.equal((await call(host, good.c, 12)).n, 12);
+  assert.equal((await bad.c.next('draw')).n, 12);
+});
+
+test('大きすぎるメッセージを送る接続は閉じられ、他の接続は生きている', async () => {
+  const { c: host } = await fresh(server);
+  const bad = await joinPlayer(server);
+  const good = await joinPlayer(server);
+  bad.c.send({ t: 'request', name: 'x'.repeat(3000), count: 1 });
+  await bad.c.closed();
+  assert.equal((await call(host, good.c, 12)).n, 12);
+});
+
+test('短時間に送りすぎる接続は閉じられる(主催者は対象外)', async () => {
+  const { c: host } = await fresh(server);
+  const bad = await joinPlayer(server);
+  const good = await joinPlayer(server);
+  for (let i = 0; i < 40; i++) bad.c.send({ t: 'cancel' });
+  await bad.c.closed();
+  // 主催者は75個続けて引ける
+  for (let i = 0; i < 75; i++) host.send({ t: 'draw' });
+  for (let i = 0; i < 75; i++) await good.c.next('draw');
+});
+
+test('サーバーを起動し直しても、カード・番号・申請が残っている', async () => {
+  const s1 = await startServer();
+  let s2;
+  try {
+    const { c: host } = await fresh(s1);
+    const a = await joinPlayer(s1);
+    const b = await joinPlayer(s1);
+    const ya = await grant(host, a.c, 'A', 3);
+    const row = lineNumbers(ya.cards[0].numbers, 0);
+    for (const n of row) await call(host, a.c, n);
+    b.c.send({ t: 'request', name: 'B', count: 2 });
+    await host.next('req_add');
+    closeAll();
+    await s1.stop();
+
+    s2 = await startServer({ persistTo: s1.persistTo });
+    const a2 = await joinPlayer(s2, a.token);
+    assert.deepEqual(a2.state.you.cards, ya.cards);
+    assert.deepEqual(a2.state.draws, row);
+    assert.deepEqual(a2.state.winners, [{ rank: 1, name: 'A', no: 1, at: 5 }]);
+    assert.equal((await joinPlayer(s2, b.token)).state.you.pending, 2);
+    const h2 = await joinHost(s2);
+    assert.equal(h2.snap.accepting, true);
+    assert.deepEqual(h2.snap.requests.map((r) => [r.name, r.count]), [['B', 2]]);
+    assert.deepEqual(h2.snap.players.map((p) => [p.name, p.cards]), [['A', 3]]);
+    h2.c.send({ t: 'draw' });
+    assert.equal((await a2.c.next('draw')).seq, 6);
+  } finally {
+    closeAll();
+    await s1.stop();
+    await s2?.stop();
+  }
+});
+
+test('200人がつながっていても、発表が全員に3秒以内に届く', async () => {
+  const { c: host } = await fresh(server);
+  const players = await Promise.all(Array.from({ length: 200 }, () => joinPlayer(server)));
+  host.send({ t: 'call', n: 42 });
+  const draws = await Promise.all(players.map((p) => p.c.next('draw', 3000)));
+  assert.equal(draws.length, 200);
+  for (const d of draws) assert.deepEqual(d, { t: 'draw', n: 42, seq: 1, winners: [] });
 });
