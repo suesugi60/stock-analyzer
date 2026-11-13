@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Store } from './store.mjs';
 import {
-  LIMITS, DELAYS, MAX_NUMBER, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard,
+  LIMITS, DELAYS, MAX_NUMBER, WINNERS_SHOWN, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard,
   pickUncalled, rankWinners, cryptoRng,
 } from '../public/logic.mjs';
 
@@ -50,6 +50,8 @@ export class BingoRoom extends DurableObject {
     // 書き込むたびに、古くなった分を捨てる。
     this.cache = {};
     this.rate = new WeakMap(); // 接続ごとの送信回数。消えてよい。
+    // 接続が生きているかの確認。部屋を起こさずに返事をする。
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
 
     // 誰がどの接続か。休止から戻ったときは、接続に付けておいた情報から作り直す。
     this.hosts = new Set();
@@ -87,7 +89,7 @@ export class BingoRoom extends DurableObject {
         case 'accepting': return this.#setAccepting(ws, msg);
         case 'delay': return this.#setDelay(ws, msg);
         case 'approve': return this.#approve(ws, msg);
-        case 'approve_all': return this.#approveAll();
+        case 'approve_all': return this.#approveAll(ws);
         case 'reject': return this.#reject(ws, msg);
         case 'draw': return this.#draw(ws);
         case 'call': return this.#call(ws, msg);
@@ -167,6 +169,8 @@ export class BingoRoom extends DurableObject {
   #draws() { return (this.cache.draws ??= this.store.draws()); }
   #called() { return new Set(this.#draws().map((d) => d.n)); }
   #winners() { return (this.cache.winners ??= rankWinners(this.store.winnerRows())); }
+  // 画面に送る分(先着 WINNERS_SHOWN 枚)
+  #shownWinners() { return this.#winners().slice(0, WINNERS_SHOWN); }
   #cards() { return (this.cache.cards ??= this.store.allCards()); }
   #cardTotal() { return (this.cache.total ??= this.store.cardCount()); }
 
@@ -180,7 +184,7 @@ export class BingoRoom extends DurableObject {
       delay: this.store.delay(),
       draws: draws.map((d) => d.n),
       lastAge: last ? Math.max(0, Date.now() - last.at_ms) : null,
-      winners: this.#winners(),
+      winners: this.#shownWinners(),
     };
   }
 
@@ -279,7 +283,8 @@ export class BingoRoom extends DurableObject {
 
     const now = Date.now();
     const state = this.store.authState(att.ip);
-    if (state && state.until_ms > now) return send(ws, { t: 'auth_fail', reason: 'locked' });
+    // すでに入っている主催者は締め出さない(同じ接続元の他人の間違いで、配信中に操作できなくなるのを防ぐ)
+    if (state && state.until_ms > now && att.role !== 'host') return send(ws, { t: 'auth_fail', reason: 'locked' });
 
     const ok = typeof msg.password === 'string' && (await sameSecret(msg.password, password));
     if (!ok) {
@@ -289,7 +294,8 @@ export class BingoRoom extends DurableObject {
       return send(ws, { t: 'auth_fail', reason: 'wrong' });
     }
 
-    this.store.clearAuthState(att.ip);
+    // 締め出し中は記録を消さない(入っている主催者の名乗り直しで、他人の締め出しが解けないように)
+    if (!(state && state.until_ms > now)) this.store.clearAuthState(att.ip);
     this.#forget(ws);
     ws.serializeAttachment({ role: 'host', ip: att.ip });
     this.hosts.add(ws);
@@ -346,24 +352,26 @@ export class BingoRoom extends DurableObject {
     this.#toHosts({ t: 'player', player: this.#summaryOf(player) });
     this.#sendYou(player.token_hash);
     if (won) {
-      this.#toPlayers({ t: 'winners', winners: this.#winners() });
+      this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
       this.#toHosts(this.#hostState());
     }
     return undefined;
   }
 
-  // 届いた順に許可し、部屋全体の上限に達したら止まる。
-  #approveAll() {
+  // 届いた順に許可し、部屋全体の上限に達したら止まる。止まったら、押した主催者に知らせる。
+  #approveAll(ws) {
     const done = [];
     let won = false;
+    let full = false;
     for (const req of this.store.pendingRequests()) {
-      if (this.#cardTotal() + req.count > this.cardsMax) break;
+      if (this.#cardTotal() + req.count > this.cardsMax) { full = true; break; }
       if (this.#issue(req, req.count)) won = true;
       done.push(req.pid);
     }
     for (const pid of done) this.#sendYou(this.store.playerById(pid).token_hash);
-    if (won) this.#toPlayers({ t: 'winners', winners: this.#winners() });
+    if (won) this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
     this.#toHosts(this.#hostState());
+    if (full) fail(ws, 'cards_full');
   }
 
   #reject(ws, msg) {
@@ -407,7 +415,7 @@ export class BingoRoom extends DurableObject {
     for (const card of hits) card.bingo_at = seq;
     this.cache.winners = undefined;
 
-    this.#toPlayers({ t: 'draw', n, seq, winners: this.#winners().filter((w) => w.at === seq) });
+    this.#toPlayers({ t: 'draw', n, seq, winners: this.#shownWinners().filter((w) => w.at === seq) });
     this.#toHosts(this.#hostState());
     return undefined;
   }
@@ -416,16 +424,25 @@ export class BingoRoom extends DurableObject {
   #undo(ws) {
     const draws = this.#draws();
     if (draws.length === 0) return fail(ws, 'nothing_to_undo');
-    const { seq } = draws[draws.length - 1];
+    const { seq, n } = draws[draws.length - 1];
+    // この番号の時点でビンゴと記録されたカードのうち、残りの番号だけでもそろっているもの
+    // (途中で配られ、配った時点でそろっていたカード)は、ビンゴのまま1つ前の番号に付け替える。
+    const remaining = this.#called();
+    remaining.delete(n);
+    const affected = this.#cards().filter((card) => card.bingo_at === seq);
+    const kept = new Set(affected.filter((card) => analyzeCard(card.numbers, remaining).lines > 0));
     this.store.atomic(() => {
       this.store.removeDraw(seq);
       this.store.clearBingoAt(seq);
+      for (const card of kept) this.store.setBingo(card.id, seq - 1);
     });
     draws.pop();
-    if (this.cache.cards) for (const card of this.cache.cards) if (card.bingo_at === seq) card.bingo_at = null;
+    for (const card of affected) card.bingo_at = kept.has(card) ? seq - 1 : null;
     this.cache.winners = undefined;
 
     this.#toPlayers({ t: 'undo', seq });
+    // 一覧の入れ替わり(付け替えや、100枚より後ろからの繰り上がり)があるので、全体を送り直す
+    this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
     this.#toHosts(this.#hostState());
     return undefined;
   }
@@ -442,7 +459,7 @@ export class BingoRoom extends DurableObject {
     this.cache.total = undefined;
 
     this.#sendYou(player.token_hash);
-    if (hadBingo) this.#toPlayers({ t: 'winners', winners: this.#winners() });
+    if (hadBingo) this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
     this.#toHosts(this.#hostState());
     return undefined;
   }

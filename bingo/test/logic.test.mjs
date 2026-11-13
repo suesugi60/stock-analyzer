@@ -3,13 +3,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FREE, LINES, makeCard, analyzeCard, pickUncalled, normalizeName,
-  isValidCount, isValidToken, rankWinners, seededRng, cryptoRng, LIMITS, DELAYS, MAX_NUMBER,
+  isValidCount, isValidToken, rankWinners, seededRng, cryptoRng, LIMITS, DELAYS, MAX_NUMBER, WINNERS_SHOWN,
 } from '../public/logic.mjs';
 
 test('定数: 上限と遅れの選択肢', () => {
   assert.equal(MAX_NUMBER, 75);
   assert.deepEqual(LIMITS, { NAME_MAX: 20, COUNT_MAX: 50, CARDS_MAX: 5000, PENDING_MAX: 1000 });
   assert.deepEqual(DELAYS, [0, 3, 5, 8, 10, 15, 20, 30]);
+  assert.equal(WINNERS_SHOWN, 100);
 });
 
 test('makeCard: 25マス・中央FREE・列ごとの範囲・重複なし', () => {
@@ -90,7 +91,7 @@ test('pickUncalled: 出ていない番号だけ、全部出たら null', () => {
 
 test('normalizeName', () => {
   assert.equal(normalizeName('  たろう  '), 'たろう');
-  assert.equal(normalizeName('a\u0000b‮c'), 'abc');
+  assert.equal(normalizeName('a\u0000b\u202Ec'), 'abc');
   assert.equal(normalizeName('   '), null);
   assert.equal(normalizeName(''), null);
   assert.equal(normalizeName('あ'.repeat(20)), 'あ'.repeat(20));

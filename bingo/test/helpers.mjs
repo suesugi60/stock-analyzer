@@ -83,7 +83,12 @@ export class Client {
     this.waiters = [];
     this.isClosed = false;
     this.closeWaiters = [];
-    ws.addEventListener('message', (e) => this.#push(JSON.parse(e.data)));
+    ws.addEventListener('message', (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { msg = null; }
+      // JSON でない返事(生存確認の pong)は { t: 'raw', data } として渡す
+      this.#push(msg && typeof msg === 'object' ? msg : { t: 'raw', data: e.data });
+    });
     ws.addEventListener('close', () => {
       this.isClosed = true;
       openClients.delete(this);

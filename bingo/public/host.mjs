@@ -1,6 +1,6 @@
 // 主催者画面。
 import { connect } from './net.mjs';
-import { DELAYS, LIMITS, MAX_NUMBER } from './logic.mjs';
+import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderWinners, toast, confirmDialog, letterOf } from './view.mjs';
 
 const PASSWORD_KEY = 'bingo.v1.hostpw';
@@ -12,7 +12,7 @@ const dom = {
   toggle: $('accepting-toggle'), totals: $('totals'), delay: $('delay-select'),
   requests: $('requests'), requestsEmpty: $('requests-empty'), approveAll: $('approve-all'),
   current: $('host-current'), drawnCount: $('host-drawn-count'), drawBtn: $('draw-btn'), undoBtn: $('undo-btn'),
-  board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'),
+  board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
   participants: $('participants'), participantsEmpty: $('participants-empty'),
   blockedBox: $('blocked-box'), blocked: $('blocked'),
 };
@@ -28,6 +28,12 @@ let snap = null;                 // サーバーから届いた最新の全体
 const editedCounts = new Map();  // 申請ID → 主催者が変えた枚数
 const requestRows = new Map();   // 申請ID → 行の要素
 let busyDraw = false;            // 二度押しで2つ引かないため
+let rowLockUntil = 0;            // 申請の行が消えた直後は、許可・却下の押下を受け付けない
+let rowLockTimer = null;
+let retryTimer = null;           // 締め出し中の入り直し
+
+const ROW_LOCK_MS = 600;         // 行が消えて次の行が指の下に来たときの、二度押しを防ぐ時間
+const LOCKED_RETRY_MS = 30000;   // 締め出されている間、この間隔で入り直しを試す
 
 const AUTH_TEXT = {
   wrong: '合言葉が違います',
@@ -82,13 +88,22 @@ function onMessage(msg) {
     case 'auth_fail':
       authed = false;
       snap = null;
-      password = null;
-      forgetPassword();
+      clearTimeout(retryTimer);
+      if (msg.reason === 'locked' && password) {
+        // 合言葉は合っているかもしれない(同じ接続元の他人の間違いでも締め出される)。
+        // 消さずに持っておき、締め出しが解けたら自動で入り直す。
+        retryTimer = setTimeout(() => { if (!authed && password) net.send({ t: 'auth', password }); }, LOCKED_RETRY_MS);
+      } else {
+        password = null;
+        forgetPassword();
+      }
       dom.loginError.textContent = AUTH_TEXT[msg.reason] || '入れませんでした';
       dom.loginError.hidden = false;
       break;
     case 'error':
       busyDraw = false;
+      // 許可・却下が通らなかった行を、また押せるようにする
+      for (const row of requestRows.values()) setRowBusy(row, false);
       // 接続し直したあとなど、主催者として扱われていなければ名乗り直す
       if (msg.code === 'forbidden' && password) { net.send({ t: 'auth', password }); return; }
       toast(ERROR_TEXT[msg.code] || 'うまくいきませんでした。もう一度お試しください');
@@ -140,9 +155,35 @@ function requestRow(req) {
   return row;
 }
 
+function rowsLocked() { return performance.now() < rowLockUntil; }
+
+// 行ごとの「返事待ち」。許可・却下を押した行は、返事が来るまで押せない。
+function setRowBusy(row, busy) {
+  row.classList.toggle('busy', busy);
+  syncRowButtons(row);
+}
+
+function syncRowButtons(row) {
+  const disabled = row.classList.contains('busy') || rowsLocked();
+  for (const button of row.querySelectorAll('.approve, .reject')) button.disabled = disabled;
+}
+
+// 行が消えると、下の行が同じ場所に上がってくる(許可・却下のほか、リスナーの取り消しや
+// 別の端末の操作でも起きる)。続けて押された分が別の人に効かないよう、少しの間すべての行を押せなくする。
+function lockRows() {
+  rowLockUntil = performance.now() + ROW_LOCK_MS;
+  clearTimeout(rowLockTimer);
+  rowLockTimer = setTimeout(() => { for (const row of requestRows.values()) syncRowButtons(row); }, ROW_LOCK_MS + 20);
+}
+
 function renderRequests() {
   const ids = new Set(snap.requests.map((r) => r.id));
-  for (const [id, row] of requestRows) if (!ids.has(id)) { row.remove(); requestRows.delete(id); }
+  for (const [id, row] of requestRows) {
+    if (ids.has(id)) continue;
+    row.remove();
+    requestRows.delete(id);
+    lockRows();
+  }
   let previous = null;
   for (const req of snap.requests) {
     let row = requestRows.get(req.id);
@@ -151,6 +192,7 @@ function renderRequests() {
     // 届いた順に並べる(すでに正しい位置なら動かさない)
     const expected = previous ? previous.nextSibling : dom.requests.firstChild;
     if (expected !== row) dom.requests.insertBefore(row, expected);
+    syncRowButtons(row);
     previous = row;
   }
   dom.requestsEmpty.hidden = snap.requests.length > 0;
@@ -188,6 +230,7 @@ function renderWinnersBox() {
   const reach = snap.players.reduce((sum, p) => sum + p.reach, 0);
   dom.winnerStats.textContent = `ビンゴ ${bingo}枚 / リーチ ${reach}枚`;
   renderWinners(dom.winners, snap.winners);
+  dom.winnersNote.hidden = snap.winners.length < WINNERS_SHOWN;
 }
 
 function renderPeople() {
@@ -245,10 +288,11 @@ dom.requests.addEventListener('click', async (event) => {
     const next = Math.min(LIMITS.COUNT_MAX, Math.max(1, count + (button.classList.contains('req-plus') ? 1 : -1)));
     editedCounts.set(id, next);
     row.querySelector('.req-count').textContent = String(next);
-  } else if (button.classList.contains('approve')) {
-    net.send({ t: 'approve', id, count });
-  } else if (button.classList.contains('reject')) {
-    net.send({ t: 'reject', id });
+  } else if (button.classList.contains('approve') || button.classList.contains('reject')) {
+    if (rowsLocked()) return;
+    setRowBusy(row, true);
+    if (button.classList.contains('approve')) net.send({ t: 'approve', id, count });
+    else net.send({ t: 'reject', id });
   } else if (button.classList.contains('req-block')) {
     if (await confirmDialog(`${req.name} さんをブロックしますか?この申請は却下され、以後の申請も受け付けません。`, { ok: 'ブロックする' })) {
       net.send({ t: 'block', pid: req.pid });

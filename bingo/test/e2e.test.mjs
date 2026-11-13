@@ -2,7 +2,7 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { startServer, closeAll, fresh, HOST_PASSWORD } from './helpers.mjs';
+import { startServer, closeAll, fresh, joinPlayer, grant, Client, HOST_PASSWORD } from './helpers.mjs';
 // 環境にプリインストールされた playwright は require でしか解決できない
 const { chromium } = createRequire(import.meta.url)('playwright');
 
@@ -547,6 +547,7 @@ test('主催者: 次のゲームで番号だけ消え、カードは残る', asy
   await listener.page.locator('#drawn-count', { hasText: 'まだ番号は出ていません' }).waitFor();
   assert.deepEqual(await readCard(listener.page), before);
   assert.deepEqual(await markedIndexes(listener.page), [12]);
+  await host.page.locator('#host-drawn-count', { hasText: 'まだ番号は出ていません' }).waitFor();
   assert.equal(await host.page.locator('#board .num.called').count(), 0);
   assert.doesNotMatch(await host.page.locator('#host-current').textContent(), /\d/);
   assert.equal(await host.page.locator('#participants .participant').count(), 1);
@@ -705,4 +706,158 @@ test('主催者: 接続が切れても、合言葉を入れ直さずに戻る', 
   await page.click('#board .num[data-n="3"]');
   await page.locator('#board .num[data-n="3"].called').waitFor();
   assert.equal(await page.locator('#login').isVisible(), false);
+});
+
+// ---- 見直しで見つかった点 ----
+
+test('リスナー: 画面を開いたまま接続が黙って止まっても、気づいてつなぎ直す', async () => {
+  const { c: host } = await fresh(server);
+  const ctx = await browser.newContext({ viewport: PHONE });
+  contexts.push(ctx);
+  ctx.setDefaultTimeout(TIMEOUT);
+  const page = await ctx.newPage();
+  // 切断の合図もなく、サーバーからの通知だけが届かなくなった接続を真似る
+  const conns = [];
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const conn = { dead: false };
+    conns.push(conn);
+    const upstream = ws.connectToServer();
+    upstream.onMessage((m) => { if (!conn.dead) ws.send(m); });
+  });
+  await page.goto(server.http + '/');
+  await seat(host, page, 'たろう', 1);
+  const row = (await readCard(page)).slice(0, 5);
+
+  for (const conn of conns) conn.dead = true;
+  await call(host, row[0]);
+  // 画面の切り替えも再読み込みもしない。定期的な確認で気づき、取り直す。
+  await page.locator('#cards .card[data-no="1"] .cell.marked').nth(1).waitFor({ timeout: 45000 });
+  assert.deepEqual(await markedIndexes(page), [0, 12]);
+  assert.ok(conns.length >= 2, 'つなぎ直しているはず');
+});
+
+test('主催者: 許可を二度押ししても、次の人まで許可しない', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const a = await openPage();
+  const b = await openPage();
+  await ask(a.page, 'A', 1);
+  await ask(b.page, 'B', 50);
+  await host.page.locator('#requests .req').nth(1).waitFor();
+
+  const box = await reqRow(host.page, 'A').locator('.approve').boundingBox();
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await host.page.mouse.click(x, y);
+  await host.page.locator('#requests .req').nth(1).waitFor({ state: 'detached' });
+  // A の行が消え、B の行が同じ場所に上がってきた直後の2回目
+  await host.page.mouse.click(x, y);
+  await sleep(500);
+  assert.equal(await a.page.locator('#cards .card').count(), 1);
+  assert.equal(await b.page.locator('#cards .card').count(), 0);
+  assert.equal(await host.page.locator('#requests .req').count(), 1);
+
+  // 少し待てば、ふつうに許可できる
+  await sleep(500);
+  await reqRow(host.page, 'B').locator('.approve').click();
+  await b.page.locator('#cards .card').nth(49).waitFor();
+  assert.deepEqual([...host.errors, ...a.errors, ...b.errors], []);
+});
+
+test('主催者: 却下の二度押しでも、次の人まで却下しない', async () => {
+  await fresh(server);
+  const host = await openHost();
+  const a = await openPage();
+  const b = await openPage();
+  await ask(a.page, 'A', 1);
+  await ask(b.page, 'B', 1);
+  await host.page.locator('#requests .req').nth(1).waitFor();
+  const box = await reqRow(host.page, 'A').locator('.reject').boundingBox();
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await host.page.mouse.click(x, y);
+  await host.page.locator('#requests .req').nth(1).waitFor({ state: 'detached' });
+  await host.page.mouse.click(x, y);
+  await sleep(500);
+  await b.page.locator('#status', { hasText: '許可を待っています' }).waitFor();
+  assert.equal(await host.page.locator('#requests .req').count(), 1);
+});
+
+test('リスナー: カードを持っていないブラウザでは、引き継ぎリンクは確認なしで開く', async () => {
+  const { c: host } = await fresh(server);
+  const ctx = await browser.newContext({ viewport: PHONE });
+  contexts.push(ctx);
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const { page } = await openPage('/', { context: ctx });
+  await seat(host, page, 'たろう', 2);
+  const cards = [await readCard(page, 1), await readCard(page, 2)];
+  await page.click('#copy-link');
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+
+  // いちど開いただけで何も申請していないブラウザ(Safari で開き直した人など)
+  const other = await openPage('/');
+  await other.page.locator('#request-btn:not([disabled])').waitFor();
+  await other.page.goto(link);
+  await other.page.locator('#cards .card').nth(1).waitFor();
+  assert.equal(await other.page.locator('#dialog').isVisible(), false);
+  assert.deepEqual([await readCard(other.page, 1), await readCard(other.page, 2)], cards);
+  assert.doesNotMatch(other.page.url(), /#k=/);
+  // 開き直しても同じカード
+  await other.page.goto(server.http + '/');
+  await other.page.locator('#cards .card').nth(1).waitFor();
+  assert.deepEqual(other.errors, []);
+});
+
+test('ビンゴの一覧は100枚までを表示し、その旨を添える', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const listener = await openPage();
+  await listener.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  for (let i = 0; i < 75; i++) ws.send({ t: 'draw' });
+  for (let i = 0; i < 75; i++) await ws.next('host');
+  // 75個すべて出たあとのカードは、配った時点でビンゴ
+  for (const name of ['A', 'B', 'C']) {
+    const p = await joinPlayer(server);
+    await grant(ws, p.c, name, 50);
+  }
+  await listener.page.locator('#winners li').nth(99).waitFor();
+  assert.equal(await listener.page.locator('#winners li').count(), 100);
+  await listener.page.locator('#winners-note', { hasText: '100' }).waitFor();
+  await host.page.locator('#host-winners li').nth(99).waitFor();
+  assert.equal(await host.page.locator('#host-winners li').count(), 100);
+  await host.page.locator('#host-winners-note', { hasText: '100' }).waitFor();
+  assert.match(await host.page.locator('#winner-stats').textContent(), /ビンゴ 150枚/);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+test('主催者: 締め出されても、保存した合言葉は消さず、理由を表示する', async () => {
+  const s2 = await startServer();
+  try {
+    const ctx = await browser.newContext({ viewport: DESKTOP });
+    contexts.push(ctx);
+    ctx.setDefaultTimeout(TIMEOUT);
+    const page = await ctx.newPage();
+    const open = new Set();
+    await page.routeWebSocket(/\/ws$/, (ws) => { open.add({ ws, upstream: ws.connectToServer() }); });
+    await page.goto(s2.http + '/host');
+    await page.fill('#password', HOST_PASSWORD);
+    await page.click('#login-btn');
+    await page.locator('#panel').waitFor();
+
+    // 同じ接続元の別の人が、合言葉を5回まちがえる
+    const other = await Client.open(s2.ws);
+    for (let i = 0; i < 5; i++) {
+      other.send({ t: 'auth', password: 'x' + i });
+      await other.next('auth_fail');
+    }
+    // 主催者の接続が切れてつなぎ直すと、締め出しに当たる
+    for (const c of open) { c.ws.close(); c.upstream.close(); }
+    await page.locator('#login-error', { hasText: 'しばらく入れません' }).waitFor({ timeout: 12000 });
+    assert.equal(await page.evaluate(() => localStorage.getItem('bingo.v1.hostpw')), HOST_PASSWORD);
+    // 合言葉が違うときとは別の文言
+    assert.doesNotMatch(await page.locator('#login-error').textContent(), /合言葉が違います/);
+  } finally {
+    closeAll();
+    await s2.stop();
+  }
 });

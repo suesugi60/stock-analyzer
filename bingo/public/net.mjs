@@ -8,6 +8,7 @@
 const RETRY_MIN_MS = 500;
 const RETRY_MAX_MS = 5000;
 const REPLY_TIMEOUT_MS = 4000; // 取り直しの返事がこの時間来なければ、切ってつなぎ直す
+const PING_MS = 20000;         // 画面が表示されている間、この間隔で接続が生きているか確かめる
 
 export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
   let ws = null;
@@ -58,6 +59,7 @@ export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
     sock.onmessage = (event) => {
       if (ws !== sock) return;
       disarm();
+      if (event.data === 'pong') return; // 生存確認の返事
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
       onMessage(msg);
@@ -94,12 +96,22 @@ export function connect({ path = '/ws', onOpen, onMessage, onStatus }) {
   window.addEventListener('online', refresh);
   window.addEventListener('pageshow', (event) => { if (event.persisted) refresh(); });
 
+  // 切断の合図がないまま通信が止まることがある(Wi-Fi とモバイル回線の切り替えなど)。
+  // 画面が見えている間は定期的に確かめ、返事がなければ arm() の仕組みでつなぎ直す。
+  const pinger = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || watchdog !== null) return;
+    try { ws.send('ping'); } catch { /* 送れなければ、次の close で気づく */ }
+    arm();
+  }, PING_MS);
+
   open();
 
   return {
     send,
     close() {
       stopped = true;
+      clearInterval(pinger);
       clearTimeout(retryTimer);
       disarm();
       const sock = ws;

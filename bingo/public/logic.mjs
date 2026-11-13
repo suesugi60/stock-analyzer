@@ -5,6 +5,8 @@ export const FREE = 0;
 export const MAX_NUMBER = 75;
 export const LIMITS = Object.freeze({ NAME_MAX: 20, COUNT_MAX: 50, CARDS_MAX: 5000, PENDING_MAX: 1000 });
 export const DELAYS = Object.freeze([0, 3, 5, 8, 10, 15, 20, 30]);
+// ビンゴの一覧に出すのは先着この枚数まで(長いゲームでは一覧が数千件になるため)
+export const WINNERS_SHOWN = 100;
 
 const SIZE = 5;
 const CENTER = 12;
@@ -59,7 +61,7 @@ export function pickUncalled(called, rng) {
 }
 
 // 制御文字と、表示の向きを変える制御文字を除く。
-const STRIP = /[\p{Cc}‪-‮⁦-⁩]/gu;
+const STRIP = /[\p{Cc}\u202A-\u202E\u2066-\u2069]/gu;
 
 export function normalizeName(raw) {
   if (typeof raw !== 'string') return null;

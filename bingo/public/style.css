@@ -486,3 +486,6 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
   .board { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 4px; }
   .num { font-size: 15px; border-radius: 8px; }
 }
+
+/* 返事待ちの行と、押せない間のボタン */
+.req.busy { opacity: 0.6; }

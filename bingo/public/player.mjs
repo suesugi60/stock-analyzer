@@ -1,6 +1,6 @@
 // リスナー画面。
 import { connect } from './net.mjs';
-import { analyzeCard, normalizeName, isValidCount, isValidToken, LIMITS } from './logic.mjs';
+import { analyzeCard, normalizeName, isValidCount, isValidToken, LIMITS, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderCard, renderWinners, toast, confirmDialog } from './view.mjs';
 
 const TOKEN_KEY = 'bingo.v1.token';
@@ -12,7 +12,8 @@ const dom = {
   status: $('status'), form: $('form'), nameRow: $('name-row'), name: $('name'), count: $('count'),
   requestBtn: $('request-btn'), moreClose: $('more-close'), cancelBtn: $('cancel-btn'), moreBtn: $('more-btn'),
   storageNote: $('storage-note'), mine: $('mine'), summary: $('summary'), cards: $('cards'),
-  winnersBox: $('winners-box'), winners: $('winners'), historyBox: $('history-box'), history: $('history'),
+  winnersBox: $('winners-box'), winners: $('winners'), winnersNote: $('winners-note'),
+  historyBox: $('history-box'), history: $('history'),
   copyLink: $('copy-link'), linkText: $('link-text'), celebrate: $('celebrate'),
 };
 
@@ -31,6 +32,7 @@ const state = {
 
 let token = null;
 let net = null;
+let linkToken = null;           // 引き継ぎリンクで渡された合い札(まだ切り替えていない)
 const revealTimers = new Map(); // 何個目の番号か → タイマー
 const cardNodes = new Map();    // カード番号 → 要素
 let knownBingo = null;          // 前回の描画でビンゴしていたカード番号(初回は null)
@@ -53,22 +55,36 @@ function newToken() {
 }
 
 // 引き継ぎリンク(#k=合い札)で開かれたら、その合い札を使う。アドレス欄からはすぐ消す。
-async function resolveToken() {
+// このブラウザにすでに別の合い札があるときは、まずそちらでつなぎ、
+// カードや申請を持っているかを見てから切り替える(considerHandover)。
+function resolveToken() {
   const match = /^#k=([0-9a-f]{64})$/.exec(location.hash);
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   const saved = readStored();
   const stored = isValidToken(saved) ? saved : null;
 
   let chosen = stored;
-  if (match && match[1] !== stored) {
-    const replace = !stored || await confirmDialog(
-      'このブラウザには別のカードが保存されています。引き継ぎリンクのカードに切り替えますか?(いまのカードは、このブラウザでは見られなくなります)',
-      { ok: '切り替える', cancel: 'いまのまま' });
-    if (replace) chosen = match[1];
-  }
+  if (match && !stored) chosen = match[1];
+  else if (match && match[1] !== stored) linkToken = match[1];
   if (!chosen) chosen = newToken();
   if (!store(chosen)) dom.storageNote.hidden = false;
   return chosen;
+}
+
+// いまの合い札でカードも申請も持っていなければ、黙って切り替える。持っていれば確かめる。
+async function considerHandover(candidate, you) {
+  if (you.cards.length > 0 || you.pending !== null) {
+    const have = you.cards.length > 0 ? `${you.name} さんのカード ${you.cards.length}枚` : `${you.name} さんの申請`;
+    const ok = await confirmDialog(
+      `このブラウザには ${have} が保存されています。引き継ぎリンクのカードに切り替えますか?(いまのカードは、このブラウザでは見られなくなります)`,
+      { ok: '切り替える', cancel: 'いまのまま' });
+    if (!ok) return;
+  }
+  token = candidate;
+  if (!store(token)) dom.storageNote.hidden = false;
+  knownBingo = null; // 切り替えた直後は祝わない
+  state.moreOpen = false;
+  net.send({ t: 'hello', token });
 }
 
 // ---- 反映の遅れ ----
@@ -122,6 +138,11 @@ function onMessage(msg) {
         scheduleReveal(total, wait);
       } else {
         state.shown = total;
+      }
+      if (linkToken) {
+        const candidate = linkToken;
+        linkToken = null;
+        considerHandover(candidate, msg.you);
       }
       break;
     }
@@ -290,6 +311,7 @@ function render() {
   const visibleWinners = state.winners.filter((w) => w.at <= state.shown);
   renderWinners(dom.winners, visibleWinners);
   dom.winnersBox.hidden = visibleWinners.length === 0;
+  dom.winnersNote.hidden = visibleWinners.length < WINNERS_SHOWN;
 }
 
 let celebrateTimer = null;
@@ -357,8 +379,8 @@ dom.copyLink.addEventListener('click', async () => {
 
 // ---- 開始 ----
 
-async function start() {
-  token = await resolveToken();
+function start() {
+  token = resolveToken();
   net = connect({
     onOpen: (send) => send({ t: 'hello', token }),
     onMessage,
