@@ -861,3 +861,72 @@ test('主催者: 締め出されても、保存した合言葉は消さず、理
     await s2.stop();
   }
 });
+
+// ---- 合言葉の初回設定 ----
+
+test('主催者: 合言葉が決まっていなければ、最初に開いた人がその場で決める', async () => {
+  const s2 = await startServer({ vars: { HOST_PASSWORD: null } });
+  try {
+    const open = async () => {
+      const ctx = await browser.newContext({ viewport: PHONE });
+      contexts.push(ctx);
+      ctx.setDefaultTimeout(TIMEOUT);
+      const page = await ctx.newPage();
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(String(e)));
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+      await page.goto(s2.http + '/host');
+      return { page, errors };
+    };
+    const first = await open();
+    await first.page.locator('#setup').waitFor();
+    assert.equal(await first.page.locator('#login').isVisible(), false);
+    assert.equal(await first.page.locator('#panel').isVisible(), false);
+
+    // 確認用と違う
+    await first.page.fill('#new-password', 'watashi-no-aikotoba');
+    await first.page.fill('#new-password2', 'chigau-aikotoba');
+    await first.page.click('#setup-btn');
+    await first.page.locator('#setup-error', { hasText: '同じ' }).waitFor();
+    // 短すぎる
+    await first.page.fill('#new-password', 'short');
+    await first.page.fill('#new-password2', 'short');
+    await first.page.click('#setup-btn');
+    await first.page.locator('#setup-error', { hasText: '8文字' }).waitFor();
+    assert.equal(await first.page.locator('#panel').isVisible(), false);
+
+    await first.page.fill('#new-password', 'watashi-no-aikotoba');
+    await first.page.fill('#new-password2', 'watashi-no-aikotoba');
+    await first.page.click('#setup-btn');
+    await first.page.locator('#panel').waitFor();
+    assert.equal(await first.page.locator('#setup').isVisible(), false);
+    // そのまま操作でき、開き直しても入ったまま
+    await first.page.click('#accepting-toggle');
+    await first.page.locator('#accepting-toggle[aria-pressed="true"]').waitFor();
+    await first.page.reload();
+    await first.page.locator('#panel').waitFor();
+
+    // 別のブラウザでは、決める画面ではなく合言葉の入力になる
+    const second = await open();
+    await second.page.locator('#login').waitFor();
+    assert.equal(await second.page.locator('#setup').isVisible(), false);
+    await second.page.fill('#password', 'yokodori-no-aikotoba');
+    await second.page.click('#login-btn');
+    await second.page.locator('#login-error', { hasText: '合言葉が違います' }).waitFor();
+    await second.page.fill('#password', 'watashi-no-aikotoba');
+    await second.page.click('#login-btn');
+    await second.page.locator('#panel').waitFor();
+    assert.deepEqual([...first.errors, ...second.errors], []);
+  } finally {
+    closeAll();
+    await s2.stop();
+  }
+});
+
+test('主催者: 合言葉が決まっているサーバーでは、決める画面は出ない', async () => {
+  await fresh(server);
+  const { page, errors } = await openPage('/host', { viewport: DESKTOP });
+  await page.locator('#login').waitFor();
+  assert.equal(await page.locator('#setup').isVisible(), false);
+  assert.deepEqual(errors, []);
+});

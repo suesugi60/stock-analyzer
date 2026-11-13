@@ -855,3 +855,150 @@ test('auth: すでに入っている主催者は、ほかの人の間違いが�
     await s2.stop();
   }
 });
+
+// ---- 合言葉の初回設定 ----
+
+const FIRST_PASSWORD = 'watashi-no-aikotoba';
+const OTHER_PASSWORD = 'yokodori-no-aikotoba';
+
+test('setup: 合言葉が決まっていなければ、最初の人が決められる', async () => {
+  const s2 = await startServer({ vars: { HOST_PASSWORD: null } });
+  try {
+    const first = await Client.open(s2.ws);
+    first.send({ t: 'host_status' });
+    assert.deepEqual(await first.next('host_status'), { t: 'host_status', setup: true });
+    // 決まる前は、どんな合言葉でも入れない
+    first.send({ t: 'auth', password: 'anything-at-all' });
+    assert.equal((await first.next('auth_fail')).reason, 'unset');
+    // 短すぎる・長すぎる・文字列でない合言葉は決められない
+    for (const password of ['short', '', '1234567', 1234567890, null, undefined, 'x'.repeat(101)]) {
+      first.send({ t: 'setup', password });
+      assert.equal((await first.next('error')).code, 'bad_password', String(password).slice(0, 12));
+    }
+    first.send({ t: 'host_status' });
+    assert.equal((await first.next('host_status')).setup, true);
+
+    first.send({ t: 'setup', password: FIRST_PASSWORD });
+    assert.deepEqual(await first.next('host'), {
+      t: 'host', accepting: false, delay: 0, draws: [], winners: [], requests: [], players: [], blocked: [],
+    });
+    // 決めた接続は、そのまま主催者として操作できる
+    first.send({ t: 'accepting', on: true });
+    assert.equal((await first.next('host')).accepting, true);
+
+    // 以後は決め直せない。合言葉で入る。
+    const second = await Client.open(s2.ws);
+    second.send({ t: 'host_status' });
+    assert.deepEqual(await second.next('host_status'), { t: 'host_status', setup: false });
+    second.send({ t: 'setup', password: OTHER_PASSWORD });
+    assert.equal((await second.next('error')).code, 'already_set');
+    second.send({ t: 'draw' });
+    assert.equal((await second.next('error')).code, 'forbidden');
+    second.send({ t: 'auth', password: OTHER_PASSWORD });
+    assert.equal((await second.next('auth_fail')).reason, 'wrong');
+    second.send({ t: 'auth', password: FIRST_PASSWORD });
+    assert.equal((await second.next('host')).accepting, true);
+
+    // すべてリセットしても、合言葉は消えない
+    second.send({ t: 'reset_all' });
+    await second.next('host');
+    const third = await Client.open(s2.ws);
+    third.send({ t: 'setup', password: OTHER_PASSWORD });
+    assert.equal((await third.next('error')).code, 'already_set');
+    third.send({ t: 'auth', password: FIRST_PASSWORD });
+    assert.equal((await third.next('host')).t, 'host');
+  } finally {
+    closeAll();
+    await s2.stop();
+  }
+});
+
+test('setup: 同時に2人が決めようとしても、通るのは1人だけ', async () => {
+  const s2 = await startServer({ vars: { HOST_PASSWORD: null } });
+  try {
+    const a = await Client.open(s2.ws);
+    const b = await Client.open(s2.ws);
+    a.send({ t: 'setup', password: FIRST_PASSWORD });
+    b.send({ t: 'setup', password: OTHER_PASSWORD });
+    const results = await Promise.all([a, b].map((c) => Promise.race([
+      c.next('host').then(() => 'host'), c.next('error').then((m) => m.code),
+    ])));
+    assert.deepEqual([...results].sort(), ['already_set', 'host']);
+    const winner = results[0] === 'host' ? FIRST_PASSWORD : OTHER_PASSWORD;
+    const loser = results[0] === 'host' ? OTHER_PASSWORD : FIRST_PASSWORD;
+    const c = await Client.open(s2.ws);
+    c.send({ t: 'auth', password: loser });
+    assert.equal((await c.next('auth_fail')).reason, 'wrong');
+    c.send({ t: 'auth', password: winner });
+    assert.equal((await c.next('host')).t, 'host');
+  } finally {
+    closeAll();
+    await s2.stop();
+  }
+});
+
+test('setup: 決めた合言葉は起動し直しても残り、HOST_PASSWORD を設定すればそちらが優先される', async () => {
+  const s1 = await startServer({ vars: { HOST_PASSWORD: null } });
+  let s2;
+  let s3;
+  try {
+    const first = await Client.open(s1.ws);
+    first.send({ t: 'setup', password: FIRST_PASSWORD });
+    await first.next('host');
+    closeAll();
+    await s1.stop();
+
+    // 起動し直しても、決めた合言葉で入れる
+    s2 = await startServer({ persistTo: s1.persistTo, vars: { HOST_PASSWORD: null } });
+    const again = await Client.open(s2.ws);
+    again.send({ t: 'host_status' });
+    assert.equal((await again.next('host_status')).setup, false);
+    again.send({ t: 'auth', password: FIRST_PASSWORD });
+    assert.equal((await again.next('host')).t, 'host');
+    closeAll();
+    await s2.stop();
+
+    // 忘れたとき: Cloudflare の設定で HOST_PASSWORD を入れると、そちらだけが通る
+    s3 = await startServer({ persistTo: s1.persistTo });
+    const c = await Client.open(s3.ws);
+    c.send({ t: 'auth', password: FIRST_PASSWORD });
+    assert.equal((await c.next('auth_fail')).reason, 'wrong');
+    c.send({ t: 'auth', password: HOST_PASSWORD });
+    assert.equal((await c.next('host')).t, 'host');
+  } finally {
+    closeAll();
+    await s1.stop();
+    await s2?.stop();
+    await s3?.stop();
+  }
+});
+
+test('setup: HOST_PASSWORD が設定されているサーバーでは、画面からは決められない', async () => {
+  const c = await Client.open(server.ws);
+  c.send({ t: 'host_status' });
+  assert.deepEqual(await c.next('host_status'), { t: 'host_status', setup: false });
+  c.send({ t: 'setup', password: OTHER_PASSWORD });
+  assert.equal((await c.next('error')).code, 'already_set');
+  c.send({ t: 'auth', password: OTHER_PASSWORD });
+  assert.equal((await c.next('auth_fail')).reason, 'wrong');
+  // 入っている主催者も、画面からは変えられない
+  const { c: host } = await joinHost(server);
+  host.send({ t: 'setup', password: OTHER_PASSWORD });
+  assert.equal((await host.next('error')).code, 'already_set');
+});
+
+test('auth: 多くの接続から同時に間違えても、5回で締め出される', async () => {
+  const s2 = await startServer();
+  try {
+    const clients = await Promise.all(Array.from({ length: 12 }, () => Client.open(s2.ws)));
+    clients.forEach((c, i) => c.send({ t: 'auth', password: 'wrong-' + i }));
+    const reasons = await Promise.all(clients.map((c) => c.next('auth_fail').then((m) => m.reason)));
+    assert.ok(reasons.every((r) => r === 'wrong' || r === 'locked'), reasons.join());
+    const c = await Client.open(s2.ws);
+    c.send({ t: 'auth', password: HOST_PASSWORD });
+    assert.equal((await c.next('auth_fail')).reason, 'locked');
+  } finally {
+    closeAll();
+    await s2.stop();
+  }
+});

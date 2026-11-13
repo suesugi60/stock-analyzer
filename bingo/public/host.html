@@ -21,6 +21,23 @@
   </header>
 
   <main>
+    <section id="setup" class="panel login" hidden>
+      <h2 class="panel-title">主催者の合言葉を決める</h2>
+      <p class="note">この画面を最初に開いた人が、主催者の合言葉を決めます。合言葉を知っている人だけが、申請の許可や番号の発表をできます。忘れないように控えておいてください。</p>
+      <form id="setup-form" novalidate>
+        <label class="field">
+          <span class="field-label">合言葉(8文字以上)</span>
+          <input id="new-password" type="password" autocomplete="new-password">
+        </label>
+        <label class="field">
+          <span class="field-label">確認のため、もう一度</span>
+          <input id="new-password2" type="password" autocomplete="new-password">
+        </label>
+        <button id="setup-btn" type="submit" class="btn primary">この合言葉に決める</button>
+      </form>
+      <p id="setup-error" class="note warn" hidden></p>
+    </section>
+
     <section id="login" class="panel login" hidden>
       <h2 class="panel-title">主催者の合言葉</h2>
       <form id="login-form" novalidate>
