@@ -2,6 +2,7 @@
 import { connect } from './net.mjs';
 import { analyzeCard, normalizeName, isValidCount, isValidToken, LIMITS, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderCard, renderWinners, toast, confirmDialog } from './view.mjs';
+import { playDraw, cancelDraw } from './draw-show.mjs';
 
 const TOKEN_KEY = 'bingo.v1.token';
 const EMPTY_YOU = { name: null, blocked: false, pending: null, rejected: false, cards: [] };
@@ -34,6 +35,8 @@ let token = null;
 let net = null;
 let linkToken = null;           // 引き継ぎリンクで渡された合い札(まだ切り替えていない)
 const revealTimers = new Map(); // 何個目の番号か → タイマー
+let showingSeq = null;          // いま抽選の演出を見せている番号(何個目か)
+let showToken = 0;              // 演出の打ち切りを見分けるための通し番号
 const cardNodes = new Map();    // カード番号 → 要素
 let knownBingo = null;          // 前回の描画でビンゴしていたカード番号(初回は null)
 let lastShown = 0;
@@ -94,11 +97,30 @@ function clearReveals() {
   revealTimers.clear();
 }
 
+// 見せている途中の演出を打ち切る。その番号は、演出の続きとしては出さない。
+function stopShow() {
+  showToken++;
+  showingSeq = null;
+  cancelDraw();
+}
+
+// seq 個目の番号を見せる。抽選機の演出を挟み、終わってから穴を開ける。
 function reveal(seq) {
   revealTimers.delete(seq);
-  if (seq > state.draws.length) return;
-  if (seq > state.shown) state.shown = seq;
+  if (seq > state.draws.length || seq <= state.shown) { render(); return; }
+  // 前の番号の演出がまだ続いていたら、その番号は先に出してしまう
+  if (showingSeq !== null && showingSeq < seq && showingSeq <= state.draws.length) {
+    state.shown = Math.max(state.shown, showingSeq);
+  }
+  const token = ++showToken;
+  showingSeq = seq;
   render();
+  playDraw({ n: state.draws[seq - 1] }).then(() => {
+    if (token !== showToken) return; // 取り消しや取り直しで打ち切られた
+    showingSeq = null;
+    if (seq <= state.draws.length && seq > state.shown) state.shown = seq;
+    render();
+  });
 }
 
 function scheduleReveal(seq, waitMs) {
@@ -123,6 +145,7 @@ function onMessage(msg) {
   switch (msg.t) {
     case 'state': {
       clearReveals();
+      stopShow();
       state.ready = true;
       state.accepting = msg.accepting;
       state.delay = msg.delay;
@@ -160,6 +183,7 @@ function onMessage(msg) {
     case 'undo':
       clearTimeout(revealTimers.get(msg.seq));
       revealTimers.delete(msg.seq);
+      if (showingSeq !== null && showingSeq >= msg.seq) stopShow();
       state.draws.length = Math.min(state.draws.length, msg.seq - 1);
       state.winners = state.winners.filter((w) => w.at < msg.seq);
       state.shown = Math.min(state.shown, state.draws.length);
@@ -175,12 +199,14 @@ function onMessage(msg) {
       break;
     case 'round':
       clearReveals();
+      stopShow();
       state.draws = [];
       state.winners = [];
       state.shown = 0;
       break;
     case 'reset':
       clearReveals();
+      stopShow();
       state.draws = [];
       state.winners = [];
       state.shown = 0;

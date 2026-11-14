@@ -2,8 +2,12 @@
 import { connect } from './net.mjs';
 import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderWinners, toast, confirmDialog, letterOf } from './view.mjs';
+import { playDraw, cancelDraw } from './draw-show.mjs';
+import { createDrawSound } from './draw-sound.mjs';
 
 const PASSWORD_KEY = 'bingo.v1.hostpw';
+const FX_KEY = 'bingo.v1.host.fx';       // 抽選の演出('0' ならオフ)
+const SOUND_KEY = 'bingo.v1.host.sound'; // 抽選の音('1' ならオン)
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -14,12 +18,15 @@ const dom = {
   toggle: $('accepting-toggle'), totals: $('totals'), delay: $('delay-select'),
   requests: $('requests'), requestsEmpty: $('requests-empty'), approveAll: $('approve-all'),
   current: $('host-current'), drawnCount: $('host-drawn-count'), drawBtn: $('draw-btn'), undoBtn: $('undo-btn'),
+  fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'),
   board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
   participants: $('participants'), participantsEmpty: $('participants-empty'),
   blockedBox: $('blocked-box'), blocked: $('blocked'),
 };
 
 function readPassword() { try { return localStorage.getItem(PASSWORD_KEY); } catch { return null; } }
+function readSetting(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function saveSetting(key, value) { try { localStorage.setItem(key, value); } catch { /* 保存できなくても動く */ } }
 function savePassword(value) { try { localStorage.setItem(PASSWORD_KEY, value); } catch { /* 保存できなくても動く */ } }
 function forgetPassword() { try { localStorage.removeItem(PASSWORD_KEY); } catch { /* 同上 */ } }
 
@@ -31,6 +38,10 @@ let snap = null;                 // サーバーから届いた最新の全体
 const editedCounts = new Map();  // 申請ID → 主催者が変えた枚数
 const requestRows = new Map();   // 申請ID → 行の要素
 let busyDraw = false;            // 二度押しで2つ引かないため
+let fxOn = readSetting(FX_KEY) !== '0';       // 抽選の演出(最初はオン)
+let soundOn = readSetting(SOUND_KEY) === '1'; // 抽選の音(最初はオフ)
+let manualCall = false;          // この端末で盤面から押した番号は、演出なしで出す
+const drawSound = createDrawSound();
 let rowLockUntil = 0;            // 申請の行が消えた直後は、許可・却下の押下を受け付けない
 let rowLockTimer = null;
 let retryTimer = null;           // 締め出し中の入り直し
@@ -66,12 +77,21 @@ const net = connect({
 
 function onMessage(msg) {
   switch (msg.t) {
-    case 'host':
+    case 'host': {
+      const before = authed && snap ? snap.draws.length : null;
       if (!authed) savePassword(password);
       authed = true;
       busyDraw = false;
       snap = msg;
+      if (before !== null && msg.draws.length === before + 1) {
+        // 新しい番号が1つ出た。ランダムに引いたとき(と、別の端末で出たとき)は抽選機を見せる。
+        if (!manualCall && fxOn) playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
+      } else if (before !== null && msg.draws.length < before) {
+        cancelDraw(); // 取り消し・次のゲーム・リセット
+      }
+      manualCall = false;
       break;
+    }
     case 'req_add':
       if (!snap) return;
       if (!snap.requests.some((r) => r.id === msg.req.id)) snap.requests.push(msg.req);
@@ -118,6 +138,7 @@ function onMessage(msg) {
       break;
     case 'error':
       busyDraw = false;
+      manualCall = false;
       dom.setupBtn.disabled = false;
       if (msg.code === 'already_set') {
         // ほかの人が先に決めた(または Cloudflare の設定で決まっている)
@@ -168,6 +189,12 @@ function render() {
   const cardTotal = snap.players.reduce((sum, p) => sum + p.cards, 0);
   dom.totals.textContent = `参加 ${snap.players.length}人 / カード ${cardTotal}枚 / 申請 ${snap.requests.length}件`;
   if (document.activeElement !== dom.delay) dom.delay.value = String(snap.delay);
+
+  dom.fxToggle.setAttribute('aria-pressed', String(fxOn));
+  dom.fxToggle.textContent = `抽選の演出: ${fxOn ? 'オン' : 'オフ'}`;
+  dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
+  dom.soundToggle.textContent = `抽選の音: ${soundOn ? 'オン' : 'オフ'}`;
+  dom.soundToggle.disabled = !fxOn; // 音は演出と一緒に鳴る
 
   renderRequests();
   renderNumbers();
@@ -359,7 +386,21 @@ dom.approveAll.addEventListener('click', async () => {
   }
 });
 
+dom.fxToggle.addEventListener('click', () => {
+  fxOn = !fxOn;
+  saveSetting(FX_KEY, fxOn ? '1' : '0');
+  render();
+});
+
+dom.soundToggle.addEventListener('click', () => {
+  soundOn = !soundOn;
+  saveSetting(SOUND_KEY, soundOn ? '1' : '0');
+  if (soundOn) drawSound.unlock(); // 押した操作のうちに、音を出せる状態にしておく
+  render();
+});
+
 dom.drawBtn.addEventListener('click', () => {
+  if (soundOn && fxOn) drawSound.unlock();
   busyDraw = true;
   dom.drawBtn.disabled = true;
   net.send({ t: 'draw' });
@@ -376,6 +417,7 @@ dom.undoBtn.addEventListener('click', async () => {
 dom.board.addEventListener('click', (event) => {
   const button = event.target.closest('.num');
   if (!button || button.disabled) return;
+  manualCall = true;
   net.send({ t: 'call', n: Number(button.dataset.n) });
 });
 

@@ -30,8 +30,9 @@ afterEach(async () => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 新しいブラウザ(別の人)でページを開く。エラーは errors に集まる。
-async function openPage(path = '/', { viewport = PHONE, context } = {}) {
-  const ctx = context ?? (await browser.newContext({ viewport }));
+// motion: true にすると抽選の演出が出る。既定は「動きを減らす」設定(演出なし)。
+async function openPage(path = '/', { viewport = PHONE, context, motion = false } = {}) {
+  const ctx = context ?? (await browser.newContext({ viewport, reducedMotion: motion ? 'no-preference' : 'reduce' }));
   if (!context) contexts.push(ctx);
   ctx.setDefaultTimeout(TIMEOUT);
   const page = await ctx.newPage();
@@ -255,7 +256,7 @@ test('リスナー: 遅れの途中で取り消された番号は表示しない
 
 test('リスナー: 切断中に発表された番号が、復帰後に操作なしで反映される', async () => {
   const { c: host } = await fresh(server);
-  const ctx = await browser.newContext({ viewport: PHONE });
+  const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
   contexts.push(ctx);
   const page = await ctx.newPage();
   ctx.setDefaultTimeout(TIMEOUT);
@@ -289,7 +290,7 @@ test('リスナー: 切断中に発表された番号が、復帰後に操作な
 
 test('リスナー: 止まった接続のまま画面に戻っても、取り直して最新になる', async () => {
   const { c: host } = await fresh(server);
-  const ctx = await browser.newContext({ viewport: PHONE });
+  const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
   contexts.push(ctx);
   const page = await ctx.newPage();
   ctx.setDefaultTimeout(TIMEOUT);
@@ -318,7 +319,7 @@ test('リスナー: 止まった接続のまま画面に戻っても、取り直
 
 test('リスナー: 引き継ぎリンクを別のブラウザで開くと同じカードが出る', async () => {
   const { c: host } = await fresh(server);
-  const ctx = await browser.newContext({ viewport: PHONE });
+  const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
   contexts.push(ctx);
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   const { page, errors } = await openPage('/', { context: ctx });
@@ -382,8 +383,8 @@ test('ページに Content-Security-Policy が付いている', async () => {
 
 const DESKTOP = { width: 1280, height: 800 };
 
-async function openHost(viewport = DESKTOP) {
-  const h = await openPage('/host', { viewport });
+async function openHost(viewport = DESKTOP, { motion = false } = {}) {
+  const h = await openPage('/host', { viewport, motion });
   await h.page.fill('#password', HOST_PASSWORD);
   await h.page.click('#login-btn');
   await h.page.locator('#panel').waitFor();
@@ -690,7 +691,7 @@ test('主催者: 2つの端末で開いても、片方の操作がもう片方�
 
 test('主催者: 接続が切れても、合言葉を入れ直さずに戻る', async () => {
   await fresh(server);
-  const ctx = await browser.newContext({ viewport: DESKTOP });
+  const ctx = await browser.newContext({ viewport: DESKTOP, reducedMotion: 'reduce' });
   contexts.push(ctx);
   ctx.setDefaultTimeout(TIMEOUT);
   const page = await ctx.newPage();
@@ -712,7 +713,7 @@ test('主催者: 接続が切れても、合言葉を入れ直さずに戻る', 
 
 test('リスナー: 画面を開いたまま接続が黙って止まっても、気づいてつなぎ直す', async () => {
   const { c: host } = await fresh(server);
-  const ctx = await browser.newContext({ viewport: PHONE });
+  const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
   contexts.push(ctx);
   ctx.setDefaultTimeout(TIMEOUT);
   const page = await ctx.newPage();
@@ -785,7 +786,7 @@ test('主催者: 却下の二度押しでも、次の人まで却下しない', 
 
 test('リスナー: カードを持っていないブラウザでは、引き継ぎリンクは確認なしで開く', async () => {
   const { c: host } = await fresh(server);
-  const ctx = await browser.newContext({ viewport: PHONE });
+  const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
   contexts.push(ctx);
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   const { page } = await openPage('/', { context: ctx });
@@ -833,7 +834,7 @@ test('ビンゴの一覧は100枚までを表示し、その旨を添える', as
 test('主催者: 締め出されても、保存した合言葉は消さず、理由を表示する', async () => {
   const s2 = await startServer();
   try {
-    const ctx = await browser.newContext({ viewport: DESKTOP });
+    const ctx = await browser.newContext({ viewport: DESKTOP, reducedMotion: 'reduce' });
     contexts.push(ctx);
     ctx.setDefaultTimeout(TIMEOUT);
     const page = await ctx.newPage();
@@ -868,7 +869,7 @@ test('主催者: 合言葉が決まっていなければ、最初に開いた人
   const s2 = await startServer({ vars: { HOST_PASSWORD: null } });
   try {
     const open = async () => {
-      const ctx = await browser.newContext({ viewport: PHONE });
+      const ctx = await browser.newContext({ viewport: PHONE, reducedMotion: 'reduce' });
       contexts.push(ctx);
       ctx.setDefaultTimeout(TIMEOUT);
       const page = await ctx.newPage();
@@ -929,4 +930,138 @@ test('主催者: 合言葉が決まっているサーバーでは、決める画
   await page.locator('#login').waitFor();
   assert.equal(await page.locator('#setup').isVisible(), false);
   assert.deepEqual(errors, []);
+});
+
+// ---- 抽選の演出 ----
+
+test('演出(リスナー): 番号が届くと抽選機が出て、終わってから穴が開く', async () => {
+  const { c: host } = await fresh(server);
+  const { page, errors } = await openPage('/', { motion: true });
+  await seat(host, page, 'たろう', 1);
+  const row = (await readCard(page)).slice(0, 5);
+  assert.equal(await page.locator('#draw-show').isVisible(), false);
+
+  await call(host, row[0]);
+  await page.locator('#draw-show').waitFor({ state: 'visible' });
+  // 演出の間は、まだ番号も穴も出ていない
+  assert.deepEqual(await markedIndexes(page), [12]);
+  assert.doesNotMatch(await page.locator('#current').textContent(), /\d/);
+  assert.equal(await page.locator('#draw-show-ball').isVisible(), false);
+  // 玉が出て、番号が見える
+  await page.locator('#draw-show-ball').waitFor({ state: 'visible' });
+  assert.equal((await page.locator('#draw-show-ball').textContent()).trim(), String(row[0]));
+  // 演出が閉じると、穴が開いている
+  await page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await page.locator('#cards .card[data-no="1"] .cell.marked').nth(1).waitFor();
+  assert.deepEqual(await markedIndexes(page), [0, 12]);
+  assert.equal((await page.locator('#current').textContent()).trim(), String(row[0]));
+  assert.deepEqual(errors, []);
+});
+
+test('演出(リスナー): タップで飛ばせる', async () => {
+  const { c: host } = await fresh(server);
+  const { page, errors } = await openPage('/', { motion: true });
+  await seat(host, page, 'たろう', 1);
+  const row = (await readCard(page)).slice(0, 5);
+  await call(host, row[0]);
+  await page.locator('#draw-show').waitFor({ state: 'visible' });
+  const started = Date.now();
+  await page.locator('#draw-show').click();
+  await page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await page.locator('#cards .card[data-no="1"] .cell.marked').nth(1).waitFor();
+  assert.ok(Date.now() - started < 1500, '飛ばしたら、すぐに番号が出る');
+  assert.deepEqual(await markedIndexes(page), [0, 12]);
+  assert.deepEqual(errors, []);
+});
+
+test('演出(リスナー): 途中で取り消された番号は出さない', async () => {
+  const { c: host } = await fresh(server);
+  const { page, errors } = await openPage('/', { motion: true });
+  await seat(host, page, 'たろう', 1);
+  const row = (await readCard(page)).slice(0, 5);
+  await call(host, row[0]);
+  await page.locator('#draw-show').waitFor({ state: 'visible' });
+  host.send({ t: 'undo' });
+  await host.next('host');
+  await page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await sleep(600);
+  assert.deepEqual(await markedIndexes(page), [12]);
+  assert.doesNotMatch(await page.locator('#current').textContent(), /\d/);
+  // そのあとの番号は、ふつうに演出つきで出る
+  await call(host, row[1]);
+  await page.locator('#draw-show').waitFor({ state: 'visible' });
+  await page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await page.locator('#cards .card[data-no="1"] .cell.marked').nth(1).waitFor();
+  assert.deepEqual(await markedIndexes(page), [1, 12]);
+  assert.deepEqual(errors, []);
+});
+
+test('演出(リスナー): 動きを減らす設定の端末では出さず、すぐ番号を出す', async () => {
+  const { c: host } = await fresh(server);
+  const { page, errors } = await openPage('/');
+  await seat(host, page, 'たろう', 1);
+  const row = (await readCard(page)).slice(0, 5);
+  await call(host, row[0]);
+  await page.locator('#cards .card[data-no="1"] .cell.marked').nth(1).waitFor({ timeout: 1500 });
+  assert.equal(await page.locator('#draw-show').isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
+test('演出(主催者): ランダムに引くと抽選機が出る。盤面から押したときは出ない。スイッチで切れて、設定は残る', async () => {
+  await fresh(server);
+  const host = await openHost(DESKTOP, { motion: true });
+  assert.equal(await host.page.locator('#fx-toggle').getAttribute('aria-pressed'), 'true');
+
+  await host.page.click('#draw-btn');
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  await host.page.locator('#draw-show-ball').waitFor({ state: 'visible' });
+  const shown = (await host.page.locator('#draw-show-ball').textContent()).trim();
+  assert.match(shown, /^\d+$/);
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  assert.equal((await host.page.locator('#host-current').textContent()).trim(), shown);
+  assert.equal(await host.page.locator(`#board .num[data-n="${shown}"]`).getAttribute('class').then((c) => c.includes('called')), true);
+
+  // 自分で引いた番号を盤面から押したときは、演出なしですぐ出る
+  const manual = shown === '40' ? '41' : '40';
+  await host.page.click(`#board .num[data-n="${manual}"]`);
+  await host.page.locator(`#board .num[data-n="${manual}"].called`).waitFor();
+  assert.equal(await host.page.locator('#draw-show').isVisible(), false);
+
+  // 演出を切る
+  await host.page.click('#fx-toggle');
+  assert.equal(await host.page.locator('#fx-toggle').getAttribute('aria-pressed'), 'false');
+  await host.page.click('#draw-btn');
+  await host.page.locator('#host-drawn-count', { hasText: '3個目' }).waitFor();
+  assert.equal(await host.page.locator('#draw-show').isVisible(), false);
+
+  await host.page.reload();
+  await host.page.locator('#panel').waitFor();
+  assert.equal(await host.page.locator('#fx-toggle').getAttribute('aria-pressed'), 'false');
+  assert.deepEqual(host.errors, []);
+});
+
+test('演出(主催者): 音のスイッチを入れて引いても問題なく動き、設定は残る', async () => {
+  await fresh(server);
+  const host = await openHost(PHONE, { motion: true });
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'false');
+  await host.page.click('#sound-toggle');
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'true');
+
+  await host.page.click('#draw-btn');
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await host.page.locator('#host-drawn-count', { hasText: '1個目' }).waitFor();
+  // 途中で飛ばしても、音の後始末でエラーにならない
+  await host.page.click('#draw-btn');
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  await host.page.locator('#draw-show').click();
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await host.page.locator('#host-drawn-count', { hasText: '2個目' }).waitFor();
+
+  await host.page.reload();
+  await host.page.locator('#panel').waitFor();
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'true');
+  const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.equal(overflow, 0);
+  assert.deepEqual(host.errors, []);
 });
