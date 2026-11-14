@@ -3,7 +3,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Store } from './store.mjs';
 import {
-  LIMITS, DELAYS, MAX_NUMBER, WINNERS_SHOWN, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard,
+  LIMITS, DELAYS, MAX_NUMBER, WINNERS_SHOWN, WAITING_SHOWN, waitingNumbers, isValidToken, isValidCount, normalizeName, makeCard, analyzeCard,
   pickUncalled, rankWinners, cryptoRng,
 } from '../public/logic.mjs';
 
@@ -58,6 +58,7 @@ export class BingoRoom extends DurableObject {
     this.store = new Store(ctx.storage);
     this.cardsMax = Number(env.CARDS_MAX) || LIMITS.CARDS_MAX;
     this.pendingMax = Number(env.PENDING_MAX) || LIMITS.PENDING_MAX;
+    this.waitingMax = Number(env.WAITING_MAX) || WAITING_SHOWN;
     // SQLite から読んだものの控え。休止すると消えるので、なければ読み直す。
     // 書き込むたびに、古くなった分を捨てる。
     this.cache = {};
@@ -188,6 +189,48 @@ export class BingoRoom extends DurableObject {
   #cards() { return (this.cache.cards ??= this.store.allCards()); }
   #cardTotal() { return (this.cache.total ??= this.store.cardCount()); }
 
+  // ---- リーチの人(全員に見せる) ----
+
+  // 誰がどの番号でリーチか。{ list: [{ name, waits }], total }。list は先頭の waitingMax 人まで。
+  // つなぎ直しのたびに全カードを調べ直さないよう、作った結果を保存しておく。
+  #waiting() {
+    if (!this.cache.waiting) this.cache.waiting = JSON.parse(this.store.meta('waiting', '{"list":[],"total":0}'));
+    return this.cache.waiting;
+  }
+
+  // カードか番号が変わったあとに呼ぶ。一覧を作り直し、変わっていれば保存して true を返す。
+  #refreshWaiting() {
+    const called = this.#called();
+    let next = { list: [], total: 0 };
+    if (called.size >= 3) { // FREE を含む列でも、3つ出るまではリーチにならない
+      const byPid = new Map();
+      for (const card of this.#cards()) {
+        if (card.bingo_at !== null) continue; // ビンゴ済みのカードは数えない
+        const waits = waitingNumbers(card.numbers, called);
+        if (waits.length === 0) continue;
+        let entry = byPid.get(card.pid);
+        if (!entry) { entry = { pid: card.pid, name: card.name, set: new Set() }; byPid.set(card.pid, entry); }
+        for (const n of waits) entry.set.add(n);
+      }
+      const all = [...byPid.values()].sort((a, b) => a.pid - b.pid);
+      next = {
+        list: all.slice(0, this.waitingMax).map((e) => ({ name: e.name, waits: [...e.set].sort((x, y) => x - y) })),
+        total: all.length,
+      };
+    }
+    const json = JSON.stringify(next);
+    if (json === JSON.stringify(this.#waiting())) return false;
+    this.store.setMeta('waiting', json);
+    this.cache.waiting = next;
+    return true;
+  }
+
+  // 番号以外の理由(途中の配布・ブロック・取り消し)で一覧が変わったときに、全員へ送る。
+  // seq は「何個目の番号まで出た時点の一覧か」。リスナー画面が、まだ見せていない番号の分を先に出さないために使う。
+  #sendWaiting() {
+    this.#toPlayers({ t: 'waiting', seq: this.#draws().length, waiting: this.#waiting() });
+  }
+
   // ---- 状態の組み立て ----
 
   #publicState() {
@@ -199,6 +242,7 @@ export class BingoRoom extends DurableObject {
       draws: draws.map((d) => d.n),
       lastAge: last ? Math.max(0, Date.now() - last.at_ms) : null,
       winners: this.#shownWinners(),
+      waiting: this.#waiting(),
     };
   }
 
@@ -215,15 +259,33 @@ export class BingoRoom extends DurableObject {
   }
 
   // カードを持つ人ごとの集計。bingo: ビンゴしたカードの枚数 / reach: ビンゴしておらずリーチのカードの枚数。
+  // 主催者にだけ見せる、ビンゴへの近さ。まだビンゴしていないカードのうち、いちばん近い1枚で表す。
+  //   need: そのカードがあといくつでそろうか(全カードがビンゴ済みなら null)
+  //   near: 同じ近さのカードが何枚あるか / holes: そのカードの開いた穴の数(FREE は数えない) / no: カード番号
   #summarize(cards, called) {
     const byPid = new Map();
     for (const card of cards) {
       let p = byPid.get(card.pid);
-      if (!p) { p = { pid: card.pid, name: card.name, cards: 0, bingo: 0, reach: 0 }; byPid.set(card.pid, p); }
+      if (!p) {
+        p = { pid: card.pid, name: card.name, cards: 0, bingo: 0, reach: 0, need: null, near: 0, holes: 0, no: null, waits: [] };
+        byPid.set(card.pid, p);
+      }
       const a = analyzeCard(card.numbers, called);
       p.cards++;
-      if (a.lines > 0) p.bingo++;
-      else if (a.reach > 0) p.reach++;
+      if (a.lines > 0) { p.bingo++; continue; }
+      if (a.reach > 0) {
+        p.reach++;
+        // 待ち番号(その人のリーチのカードすべてを合わせ、小さい順・重複なし)
+        p.waits = [...new Set([...p.waits, ...waitingNumbers(card.numbers, called)])].sort((x, y) => x - y);
+      }
+      const holes = a.marked.filter(Boolean).length - 1;
+      if (p.need === null || a.need < p.need) {
+        p.need = a.need; p.near = 1; p.holes = holes; p.no = card.no;
+      } else if (a.need === p.need) {
+        p.near++;
+        // 同じ近さなら、穴の多いカードを代表にする
+        if (holes > p.holes) { p.holes = holes; p.no = card.no; }
+      }
     }
     return [...byPid.values()];
   }
@@ -240,6 +302,7 @@ export class BingoRoom extends DurableObject {
     const pub = this.#publicState();
     return {
       t: 'host', accepting: pub.accepting, delay: pub.delay, draws: pub.draws, winners: pub.winners,
+      waiting: pub.waiting,
       requests: this.store.pendingRequests(), players: this.#playerSummaries(), blocked: this.store.blockedPlayers(),
     };
   }
@@ -401,14 +464,14 @@ export class BingoRoom extends DurableObject {
     if (this.#cardTotal() + msg.count > this.cardsMax) return fail(ws, 'cards_full');
 
     const won = this.#issue(req, msg.count);
+    const waitingChanged = this.#refreshWaiting();
     const player = this.store.playerById(req.pid);
     this.#toHosts({ t: 'req_del', id: req.id });
     this.#toHosts({ t: 'player', player: this.#summaryOf(player) });
     this.#sendYou(player.token_hash);
-    if (won) {
-      this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
-      this.#toHosts(this.#hostState());
-    }
+    if (won) this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
+    if (waitingChanged) this.#sendWaiting();
+    if (won || waitingChanged) this.#toHosts(this.#hostState());
     return undefined;
   }
 
@@ -424,6 +487,7 @@ export class BingoRoom extends DurableObject {
     }
     for (const pid of done) this.#sendYou(this.store.playerById(pid).token_hash);
     if (won) this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
+    if (this.#refreshWaiting()) this.#sendWaiting();
     this.#toHosts(this.#hostState());
     if (full) fail(ws, 'cards_full');
   }
@@ -468,8 +532,11 @@ export class BingoRoom extends DurableObject {
     draws.push({ seq, n, at_ms: atMs });
     for (const card of hits) card.bingo_at = seq;
     this.cache.winners = undefined;
+    this.#refreshWaiting();
 
-    this.#toPlayers({ t: 'draw', n, seq, winners: this.#shownWinners().filter((w) => w.at === seq) });
+    this.#toPlayers({
+      t: 'draw', n, seq, winners: this.#shownWinners().filter((w) => w.at === seq), waiting: this.#waiting(),
+    });
     this.#toHosts(this.#hostState());
     return undefined;
   }
@@ -493,10 +560,12 @@ export class BingoRoom extends DurableObject {
     draws.pop();
     for (const card of affected) card.bingo_at = kept.has(card) ? seq - 1 : null;
     this.cache.winners = undefined;
+    this.#refreshWaiting();
 
     this.#toPlayers({ t: 'undo', seq });
     // 一覧の入れ替わり(付け替えや、100枚より後ろからの繰り上がり)があるので、全体を送り直す
     this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
+    this.#sendWaiting();
     this.#toHosts(this.#hostState());
     return undefined;
   }
@@ -511,9 +580,11 @@ export class BingoRoom extends DurableObject {
     this.cache.cards = undefined;
     this.cache.winners = undefined;
     this.cache.total = undefined;
+    const waitingChanged = this.#refreshWaiting();
 
     this.#sendYou(player.token_hash);
     if (hadBingo) this.#toPlayers({ t: 'winners', winners: this.#shownWinners() });
+    if (waitingChanged) this.#sendWaiting();
     this.#toHosts(this.#hostState());
     return undefined;
   }
@@ -531,6 +602,7 @@ export class BingoRoom extends DurableObject {
 
   #newRound() {
     this.store.newRound();
+    this.store.setMeta('waiting', '{"list":[],"total":0}');
     this.cache = {};
     this.#toPlayers({ t: 'round' });
     this.#toHosts(this.#hostState());
@@ -538,6 +610,7 @@ export class BingoRoom extends DurableObject {
 
   #resetAll() {
     this.store.resetAll();
+    this.store.setMeta('waiting', '{"list":[],"total":0}');
     this.cache = {};
     this.#toPlayers({ t: 'reset' });
     this.#toHosts(this.#hostState());

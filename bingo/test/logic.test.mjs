@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   FREE, LINES, makeCard, analyzeCard, pickUncalled, normalizeName,
   isValidCount, isValidToken, rankWinners, seededRng, cryptoRng, LIMITS, DELAYS, MAX_NUMBER, WINNERS_SHOWN,
+  WAITING_SHOWN, waitingNumbers,
 } from '../public/logic.mjs';
 
 test('定数: 上限と遅れの選択肢', () => {
@@ -117,4 +118,22 @@ test('rankWinners: at・id 順、同時は同順位(1,1,3)', () => {
     { rank: 1, name: 'a', no: 1, at: 11 }, { rank: 1, name: 'b', no: 2, at: 11 }, { rank: 3, name: 'c', no: 1, at: 12 },
   ]);
   assert.deepEqual(rankWinners([]), []);
+});
+
+test('waitingNumbers: あと1つの列の、足りない番号', () => {
+  assert.equal(WAITING_SHOWN, 50);
+  const c = makeCard(seededRng(7));
+  assert.deepEqual(waitingNumbers(c, new Set()), []);
+  // 1行目を4つ → 5つ目が待ち
+  assert.deepEqual(waitingNumbers(c, new Set([c[0], c[1], c[2], c[3]])), [c[4]]);
+  // 3つではまだ待ちにならない
+  assert.deepEqual(waitingNumbers(c, new Set([c[0], c[1], c[2]])), []);
+  // FREE を含む列(中央の行)は、3つで待ちになる
+  assert.deepEqual(waitingNumbers(c, new Set([c[10], c[11], c[13]])), [c[14]]);
+  // 2つの列が同時に待ち → 小さい順
+  const two = waitingNumbers(c, new Set([c[0], c[1], c[2], c[3], c[5], c[10], c[15]]));
+  assert.deepEqual(two, [c[4], c[20]].sort((a, b) => a - b));
+  // 同じ番号を2つの列が待っていても、1回だけ
+  const cross = waitingNumbers(c, new Set([c[1], c[2], c[3], c[4], c[5], c[10], c[15], c[20]]));
+  assert.deepEqual(cross, [c[0]]);
 });

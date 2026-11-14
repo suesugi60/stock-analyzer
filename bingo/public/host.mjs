@@ -1,7 +1,7 @@
 // 主催者画面。
 import { connect } from './net.mjs';
 import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
-import { el, clear, renderBall, renderWinners, toast, confirmDialog, letterOf } from './view.mjs';
+import { el, clear, renderBall, renderWinners, renderWaiting, toast, confirmDialog, letterOf } from './view.mjs';
 import { playDraw, cancelDraw } from './draw-show.mjs';
 import { createDrawSound } from './draw-sound.mjs';
 
@@ -20,6 +20,8 @@ const dom = {
   current: $('host-current'), drawnCount: $('host-drawn-count'), drawBtn: $('draw-btn'), undoBtn: $('undo-btn'),
   fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'),
   board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
+  waitingList: $('host-waiting-list'), waitingEmpty: $('host-waiting-empty'), waitingNote: $('host-waiting-note'),
+  waitingCount: $('host-waiting-count'),
   participants: $('participants'), participantsEmpty: $('participants-empty'),
   blockedBox: $('blocked-box'), blocked: $('blocked'),
 };
@@ -79,17 +81,27 @@ function onMessage(msg) {
   switch (msg.t) {
     case 'host': {
       const before = authed && snap ? snap.draws.length : null;
+      const reachedBefore = authed && snap ? new Set(snap.waiting.list.map((e) => e.name)) : null;
       if (!authed) savePassword(password);
       authed = true;
       busyDraw = false;
       snap = msg;
+      let show = Promise.resolve();
       if (before !== null && msg.draws.length === before + 1) {
         // 新しい番号が1つ出た。ランダムに引いたとき(と、別の端末で出たとき)は抽選機を見せる。
-        if (!manualCall && fxOn) playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
+        if (!manualCall && fxOn) show = playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
       } else if (before !== null && msg.draws.length < before) {
         cancelDraw(); // 取り消し・次のゲーム・リセット
       }
       manualCall = false;
+      // 新しくリーチになった人を知らせる。抽選の演出が出ている間は待つ(番号より先に分からないように)。
+      if (reachedBefore !== null) {
+        const fresh = msg.waiting.list.map((e) => e.name).filter((name) => !reachedBefore.has(name));
+        if (fresh.length > 0) {
+          const names = fresh.slice(0, 3).join('、') + (fresh.length > 3 ? ` ほか${fresh.length - 3}人` : '');
+          show.then(() => toast(`${names} さんがリーチ!`));
+        }
+      }
       break;
     }
     case 'req_add':
@@ -277,9 +289,12 @@ function renderNumbers() {
     dom.drawnCount.textContent = `${draws.length}個目`;
   }
   const called = new Set(draws);
+  // 出るとビンゴになる人がいる番号(全参加者の待ち番号)
+  const awaited = new Set(snap.players.flatMap((p) => p.waits));
   for (const button of dom.board.querySelectorAll('.num')) {
     const isCalled = called.has(Number(button.dataset.n));
     button.classList.toggle('called', isCalled);
+    button.classList.toggle('awaited', !isCalled && awaited.has(Number(button.dataset.n)));
     button.classList.toggle('latest', Number(button.dataset.n) === latest);
     button.disabled = isCalled || !online;
   }
@@ -293,18 +308,39 @@ function renderWinnersBox() {
   dom.winnerStats.textContent = `ビンゴ ${bingo}枚 / リーチ ${reach}枚`;
   renderWinners(dom.winners, snap.winners);
   dom.winnersNote.hidden = snap.winners.length < WINNERS_SHOWN;
+  renderWaiting(dom.waitingList, dom.waitingNote, snap.waiting);
+  dom.waitingEmpty.hidden = snap.waiting.list.length > 0;
+  dom.waitingCount.textContent = `${snap.waiting.total}人`;
+}
+
+// ビンゴに近い順。まだビンゴしていないカードのうち、いちばん近い1枚で比べる。
+// 同じ近さなら、その近さのカードが多い人、穴が多い人、先に参加した人の順。
+// 全カードがビンゴ済みの人は最後。
+function byCloseness(a, b) {
+  const na = a.need === null ? Infinity : a.need;
+  const nb = b.need === null ? Infinity : b.need;
+  return (na - nb) || (b.near - a.near) || (b.holes - a.holes) || (a.pid - b.pid);
 }
 
 function renderPeople() {
   clear(dom.participants);
-  for (const p of snap.players) {
+  for (const p of [...snap.players].sort(byCloseness)) {
     const status = el('span', { class: 'p-status' });
     if (p.bingo > 0) status.appendChild(el('span', { class: 'chip chip-bingo', text: `ビンゴ ${p.bingo}` }));
-    if (p.reach > 0) status.appendChild(el('span', { class: 'chip chip-reach', text: `リーチ ${p.reach}` }));
+    let detail = null;
+    if (p.need !== null) {
+      const many = p.near > 1 ? ` ×${p.near}枚` : '';
+      const text = p.need === 1 ? `リーチ あと1つ${many}` : `あと${p.need}つ${many}`;
+      status.appendChild(el('span', { class: p.need === 1 ? 'chip chip-reach p-near' : 'chip p-near', text }));
+      detail = el('span', { class: 'p-detail', text: `カード${p.no}・穴 ${p.holes}個` });
+    }
+    const waits = p.waits.length > 0 ? el('span', { class: 'p-waits', text: `待ち ${p.waits.join('・')}` }) : null;
     dom.participants.appendChild(el('div', { class: 'participant', dataset: { pid: p.pid } },
       el('span', { class: 'p-name', text: p.name }),
       el('span', { class: 'p-cards', text: `${p.cards}枚` }),
       status,
+      detail,
+      waits,
       el('button', { type: 'button', class: 'btn small ghost block', text: 'ブロック' })));
   }
   dom.participantsEmpty.hidden = snap.players.length > 0;

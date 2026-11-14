@@ -91,6 +91,22 @@ export function renderWinners(listEl, winners) {
   }
 }
 
+// リーチの人と、その人が待っている番号。waiting: { list: [{ name, waits }], total }
+export function renderWaiting(listEl, noteEl, waiting) {
+  clear(listEl);
+  for (const entry of waiting.list) {
+    const balls = el('span', { class: 'wait-balls' });
+    for (const n of entry.waits) {
+      balls.appendChild(renderBall(n, 'small'));
+      balls.appendChild(document.createTextNode(' '));
+    }
+    listEl.appendChild(el('li', null, el('span', { class: 'w-name', text: entry.name }), ' ', balls));
+  }
+  const more = waiting.total - waiting.list.length;
+  noteEl.textContent = more > 0 ? `ほか ${more}人` : '';
+  noteEl.hidden = more <= 0;
+}
+
 let toastTimer = null;
 export function toast(message) {
   const node = document.getElementById('toast');

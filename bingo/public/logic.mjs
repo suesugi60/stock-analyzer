@@ -7,6 +7,8 @@ export const LIMITS = Object.freeze({ NAME_MAX: 20, COUNT_MAX: 50, CARDS_MAX: 50
 export const DELAYS = Object.freeze([0, 3, 5, 8, 10, 15, 20, 30]);
 // ビンゴの一覧に出すのは先着この枚数まで(長いゲームでは一覧が数千件になるため)
 export const WINNERS_SHOWN = 100;
+// 「リーチの人」の一覧に出すのは、先頭のこの人数まで
+export const WAITING_SHOWN = 50;
 
 const SIZE = 5;
 const CENTER = 12;
@@ -51,6 +53,19 @@ export function analyzeCard(numbers, called) {
     if (missing < need) need = missing;
   }
   return { marked, lines, reach, need };
+}
+
+// あと1つでそろう列の、足りない番号(待ち番号)。小さい順、重複なし。
+export function waitingNumbers(numbers, called) {
+  const marked = numbers.map((n) => n === FREE || called.has(n));
+  const waits = new Set();
+  for (const line of LINES) {
+    let missing = -1;
+    let count = 0;
+    for (const i of line) if (!marked[i]) { missing = i; count++; }
+    if (count === 1) waits.add(numbers[missing]);
+  }
+  return [...waits].sort((a, b) => a - b);
 }
 
 export function pickUncalled(called, rng) {

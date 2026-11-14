@@ -61,6 +61,19 @@
               <div id="host-drawn-count" class="now-count">まだ番号は出ていません</div>
             </div>
           </div>
+          <!-- リーチの人。高さを決めておき、人が増えても下のボタンや盤面が動かないようにする。 -->
+          <div class="reach-box">
+            <div class="reach-head">
+              <span class="reach-title">リーチの人</span>
+              <span id="host-waiting-count" class="chip chip-reach">0人</span>
+              <span class="reach-hint">リスナー全員に見えています</span>
+            </div>
+            <div class="reach-scroll">
+              <ul id="host-waiting-list" class="waiting"></ul>
+              <p id="host-waiting-empty" class="note">まだいません</p>
+              <p id="host-waiting-note" class="note" hidden></p>
+            </div>
+          </div>
           <div class="draw-buttons">
             <button id="draw-btn" type="button" class="btn primary big">ランダムに引く</button>
             <button id="undo-btn" type="button" class="btn ghost" disabled>直前の番号を取り消す</button>
@@ -71,6 +84,7 @@
           </div>
           <p class="note">自分で引いた番号は、下の盤面を押して発表します(このときは演出なしで出ます)。</p>
           <div id="board" class="board"></div>
+          <p class="note board-legend"><span class="legend-mark" aria-hidden="true"></span>ピンクの点線の番号は、出るとビンゴになる人がいます。</p>
         </section>
 
         <section class="panel area-winners">
@@ -102,7 +116,8 @@
         </section>
 
         <section class="panel area-people">
-          <h2 class="panel-title">参加者</h2>
+          <h2 id="people-title" class="panel-title">参加者(ビンゴに近い順)</h2>
+          <p class="note people-note">まだビンゴしていないカードのうち、いちばん近い1枚で並べています。リスナーには見えません。</p>
           <div id="participants" class="people"></div>
           <p id="participants-empty" class="note">カードを持っている人はまだいません</p>
           <div id="blocked-box" hidden>

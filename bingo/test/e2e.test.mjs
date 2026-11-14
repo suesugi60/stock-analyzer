@@ -477,7 +477,8 @@ for (const [label, viewport] of [['PC幅', DESKTOP], ['スマホ幅', PHONE]]) {
     assert.match(await host.page.locator('#host-drawn-count').textContent(), /5個目/);
     assert.equal(await host.page.locator('#board .num.called').count(), 5);
     assert.equal((await host.page.locator('#host-current').textContent()).trim(), String(row[4]));
-    assert.match(await host.page.locator('#participants .participant').first().locator('.p-status').textContent(), /ビンゴ/);
+    const taroRow = host.page.locator('#participants .participant').filter({ has: host.page.locator('.p-name', { hasText: 'たろう' }) });
+    assert.match(await taroRow.locator('.p-status').textContent(), /ビンゴ/);
     await hanako.page.locator('#winners li', { hasText: 'たろう' }).waitFor();
 
     // 直前の番号を取り消す
@@ -1063,5 +1064,183 @@ test('演出(主催者): 音のスイッチを入れて引いても問題なく�
   assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'true');
   const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.equal(overflow, 0);
+  assert.deepEqual(host.errors, []);
+});
+
+// ---- 主催者に見せる、ビンゴへの近さ ----
+
+test('主催者: 参加者はビンゴに近い順に並び、あといくつかと穴の数が出る', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  await grant(ws, a.c, 'あや', 1);
+  const yb = await grant(ws, b.c, 'べに', 1);
+  const rowB = yb.cards[0].numbers.slice(0, 5);
+  const person = (name) => host.page.locator('#participants .participant').filter({ has: host.page.locator('.p-name', { hasText: name }) });
+  await person('べに').waitFor();
+
+  // まだ番号が出ていないときは、全員「あと4つ」
+  assert.match(await person('べに').locator('.p-near').textContent(), /あと4つ/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /穴 0個/);
+
+  // べにの1行目を4つ出す → リーチ。いちばん上に来る。
+  for (const n of rowB.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  await person('べに').locator('.p-near', { hasText: 'リーチ' }).waitFor();
+  assert.match(await person('べに').locator('.p-near').textContent(), /あと1つ/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /カード1/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /穴 4個/);
+  assert.deepEqual(await host.page.locator('#participants .p-name').allTextContents(), ['べに', 'あや']);
+  assert.match(await host.page.locator('#people-title').textContent(), /ビンゴに近い順/);
+
+  // べにがビンゴすると、まだビンゴしていない人が上に来る
+  await host.page.click(`#board .num[data-n="${rowB[4]}"]`);
+  await person('べに').locator('.chip-bingo').waitFor();
+  assert.deepEqual(await host.page.locator('#participants .p-name').allTextContents(), ['あや', 'べに']);
+  assert.equal(await person('べに').locator('.p-near').count(), 0);
+  assert.match(await person('あや').locator('.p-near').textContent(), /あと\d+つ/);
+
+  // リスナーの画面には、他の人の状況は出ない
+  const listener = await openPage('/');
+  await listener.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.equal(await listener.page.locator('.p-near').count(), 0);
+  assert.doesNotMatch(await listener.page.locator('main').textContent(), /あや/);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
+});
+
+// ---- リーチの人と待ち番号(全員に見せる) ----
+
+test('リーチの人と待ち番号が、リスナー全員と主催者に見える', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const watcher = await openPage('/'); // カードを持っていない、見ているだけの人
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
+  // 主催者画面: リーチの欄は最初から場所を取ってあり、人数は0人
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /0人/);
+  // ページの先頭からの位置(画面のスクロール量に左右されないように)
+  const pageY = (selector) => host.page.locator(selector).first().evaluate((node) => node.getBoundingClientRect().y + window.scrollY);
+  const drawButtonBefore = await pageY('#draw-btn');
+  const boardBefore = await pageY('#board');
+
+  for (const n of row.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  const item = watcher.page.locator('#waiting-list li', { hasText: 'りいち' });
+  await item.waitFor();
+  assert.match(await item.textContent(), new RegExp(`\\b${row[4]}\\b`));
+  // 主催者画面にも、同じ一覧と、参加者の行の待ち番号が出る
+  await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).waitFor();
+  // 主催者画面では目立たせる: 人数、お知らせ、盤面の待ち番号の印
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /1人/);
+  await host.page.locator('#toast', { hasText: 'りいち さんがリーチ' }).waitFor();
+  await host.page.locator(`#board .num.awaited[data-n="${row[4]}"]`).waitFor();
+  // リーチの欄は「いまの番号」のすぐ下にあり、盤面より上
+  assert.ok((await pageY('#host-waiting-list')) < boardBefore, 'リーチの欄は盤面より上にある');
+  assert.ok((await pageY('#host-waiting-list')) < drawButtonBefore, 'リーチの欄は「ランダムに引く」より上にある');
+  // リーチの人が増えても、引くボタンや盤面の位置は動かない(押し間違いを防ぐ)
+  assert.equal(await pageY('#draw-btn'), drawButtonBefore);
+  assert.equal(await pageY('#board'), boardBefore);
+  assert.match(await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).textContent(), new RegExp(`\\b${row[4]}\\b`));
+  assert.match(await host.page.locator('#participants .participant .p-waits').first().textContent(), new RegExp(`\\b${row[4]}\\b`));
+
+  // ビンゴすると、リーチの一覧から消える
+  await host.page.click(`#board .num[data-n="${row[4]}"]`);
+  await item.waitFor({ state: 'detached' });
+  await host.page.locator('#host-waiting-list li').first().waitFor({ state: 'detached' });
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /0人/);
+  assert.equal(await host.page.locator('#board .num.awaited').count(), 0);
+  await watcher.page.locator('#winners li', { hasText: 'りいち' }).waitFor();
+  assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
+  // 取り消すと戻る
+  await host.page.click('#undo-btn');
+  await yes(host.page);
+  await item.waitFor();
+  assert.deepEqual([...host.errors, ...watcher.errors], []);
+});
+
+test('リーチの一覧は、番号と同じく「反映の遅れ」のぶん遅れて出る', async () => {
+  const { c: ws } = await fresh(server);
+  const watcher = await openPage('/');
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  for (const n of row.slice(0, 3)) await call(ws, n);
+  await watcher.page.locator('#drawn-count', { hasText: '3個目' }).waitFor();
+
+  ws.send({ t: 'delay', sec: 3 });
+  await ws.next('host');
+  await call(ws, row[3]);
+  await sleep(1200);
+  // まだ4個目が見えていないので、リーチも出ていない
+  assert.match(await watcher.page.locator('#drawn-count').textContent(), /3個目/);
+  assert.equal(await watcher.page.locator('#waiting-list li').count(), 0);
+  await watcher.page.locator('#waiting-list li', { hasText: 'りいち' }).waitFor({ timeout: 6000 });
+  assert.match(await watcher.page.locator('#drawn-count').textContent(), /4個目/);
+
+  // 待っている途中で開き直しても、先には出ない
+  await call(ws, row[4]);
+  await watcher.page.reload();
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  await sleep(500);
+  assert.equal(await watcher.page.locator('#winners li').count(), 0);
+  await watcher.page.locator('#winners li', { hasText: 'りいち' }).waitFor({ timeout: 6000 });
+  assert.equal(await watcher.page.locator('#waiting-list li').count(), 0);
+  assert.deepEqual(watcher.errors, []);
+});
+
+test('リーチの人の名前に入れたHTMLは、文字として表示される', async () => {
+  const { c: ws } = await fresh(server);
+  const NAME = '<svg onload=a()>';
+  const host = await openHost();
+  const watcher = await openPage('/');
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, NAME, 1);
+  for (const n of ya.cards[0].numbers.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  await watcher.page.locator('#waiting-list li').waitFor();
+  assert.match(await watcher.page.locator('#waiting-list li').textContent(), /<svg onload=a\(\)>/);
+  await host.page.locator('#host-waiting-list li').waitFor();
+  assert.match(await host.page.locator('#host-waiting-list li').textContent(), /<svg onload=a\(\)>/);
+  assert.equal(await watcher.page.locator('main svg').count(), 0);
+  assert.equal(await host.page.locator('main svg').count(), 0);
+  assert.deepEqual([...host.errors, ...watcher.errors], []);
+});
+
+test('主催者(スマホ幅): リーチの欄は、スクロールしなくても見える位置にある', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost(PHONE);
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  for (const n of ya.cards[0].numbers.slice(0, 4)) await call(ws, n);
+  await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).waitFor();
+  // 「番号」の欄の先頭に画面を合わせたとき、リーチの欄と引くボタンが両方見えている
+  await host.page.locator('.area-numbers').evaluate((node) => window.scrollTo(0, node.offsetTop - 60));
+  await sleep(200);
+  for (const selector of ['#host-waiting-list li', '#draw-btn']) {
+    const box = await host.page.locator(selector).first().boundingBox();
+    assert.ok(box.y >= 0 && box.y + box.height <= PHONE.height, `${selector} が画面内にある`);
+  }
+  const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.equal(overflow, 0);
+  assert.deepEqual(host.errors, []);
+});
+
+test('主催者: 抽選の演出の間は、リーチのお知らせを出さない(番号より先に分からないように)', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost(DESKTOP, { motion: true });
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  for (const n of row.slice(0, 3)) await call(ws, n);
+  await host.page.locator('#host-drawn-count', { hasText: '3個目' }).waitFor();
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  // 別の端末(ここでは WebSocket)から4つ目が出る → この画面には演出が出る
+  ws.send({ t: 'call', n: row[3] });
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  assert.equal(await host.page.locator('#toast').isVisible(), false);
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await host.page.locator('#toast', { hasText: 'りいち さんがリーチ' }).waitFor();
   assert.deepEqual(host.errors, []);
 });
