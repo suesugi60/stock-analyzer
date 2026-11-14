@@ -187,7 +187,9 @@ test('許可すると許可した枚数が本人にだけ届く', async () => {
   }
   assert.notDeepEqual(you.cards[0].numbers, you.cards[1].numbers);
   assert.deepEqual(await host.next('req_del'), { t: 'req_del', id: req.id });
-  assert.deepEqual((await host.next('player')).player, { pid: req.pid, name: 'たろう', cards: 2, bingo: 0, reach: 0 });
+  assert.deepEqual((await host.next('player')).player, {
+    pid: req.pid, name: 'たろう', cards: 2, bingo: 0, reach: 0, need: 4, near: 2, holes: 0, no: 1,
+  });
   await b.c.none('you');
 });
 
@@ -509,7 +511,10 @@ test('主催者の集計: リーチとビンゴの枚数', async () => {
     return an.lines === 0 && an.reach > 0;
   }).length;
   assert.ok(reachCards >= 1);
-  assert.deepEqual(snap.players, [{ pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: reachCards }]);
+  const nearCards = ya.cards.filter((c) => analyzeCard(c.numbers, new Set(row.slice(0, 4))).need === 1).length;
+  assert.deepEqual(snap.players, [{
+    pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: reachCards, need: 1, near: nearCards, holes: 4, no: 1,
+  }]);
   host.send({ t: 'call', n: row[4] });
   snap = await host.next('host');
   assert.equal(snap.players[0].bingo >= 1, true);
@@ -667,7 +672,9 @@ test('次のゲーム: 番号とビンゴだけ消え、カードと申請は残
   assert.deepEqual(await a.c.next('round'), { t: 'round' });
   const snap = await host.next('host');
   assert.deepEqual([snap.draws, snap.winners], [[], []]);
-  assert.deepEqual(snap.players, [{ pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: 0 }]);
+  assert.deepEqual(snap.players, [{
+    pid: ya.pid, name: 'A', cards: 2, bingo: 0, reach: 0, need: 4, near: 2, holes: 0, no: 1,
+  }]);
   assert.deepEqual(snap.requests.map((r) => r.name), ['B']);
 
   const again = await joinPlayer(server, a.token);
@@ -1000,5 +1007,61 @@ test('auth: 多くの接続から同時に間違えても、5回で締め出さ�
   } finally {
     closeAll();
     await s2.stop();
+  }
+});
+
+// ---- 主催者に見せる、ビンゴへの近さ ----
+
+test('主催者の集計: まだビンゴしていないカードのうち、いちばん近いカードと穴の数', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 2);
+  const yb = await grant(host, b.c, 'B', 1);
+  const row = lineNumbers(ya.cards[0].numbers, 0);
+  host.drain();
+  let snap;
+  for (const n of row) { host.send({ t: 'call', n }); snap = await host.next('host'); }
+
+  // A はカード1がビンゴ。残るカード2が「いちばん近いカード」になる。
+  const called = new Set(row);
+  const card2 = analyzeCard(ya.cards[1].numbers, called);
+  const pa = snap.players.find((p) => p.pid === ya.pid);
+  assert.deepEqual(pa, {
+    pid: ya.pid, name: 'A', cards: 2, bingo: 1, reach: card2.lines === 0 && card2.reach > 0 ? 1 : 0,
+    need: card2.need, near: 1, holes: card2.marked.filter(Boolean).length - 1, no: 2,
+  });
+  // B は1枚だけ。開いた穴は、出た番号のうちカードにあるもの(FREE は数えない)。
+  const cardB = analyzeCard(yb.cards[0].numbers, called);
+  const pb = snap.players.find((p) => p.pid === yb.pid);
+  assert.deepEqual([pb.need, pb.near, pb.holes, pb.no], [cardB.need, 1, cardB.marked.filter(Boolean).length - 1, 1]);
+});
+
+test('主催者の集計: すべてのカードがビンゴした人は、近いカードなし', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const ya = await grant(host, a.c, 'A', 1);
+  host.drain();
+  let snap;
+  for (const n of lineNumbers(ya.cards[0].numbers, 0)) { host.send({ t: 'call', n }); snap = await host.next('host'); }
+  assert.deepEqual(snap.players, [{
+    pid: ya.pid, name: 'A', cards: 1, bingo: 1, reach: 0, need: null, near: 0, holes: 0, no: null,
+  }]);
+});
+
+test('ビンゴへの近さは、リスナーには送らない', async () => {
+  const { c: host } = await fresh(server);
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  await grant(host, a.c, 'A', 1);
+  await grant(host, b.c, 'B', 1);
+  host.send({ t: 'call', n: 1 });
+  await a.c.next('draw');
+  await new Promise((r) => setTimeout(r, 300));
+  const fresh2 = await joinPlayer(server, b.token);
+  // リスナーが受け取るものに、他人の状況(players)は入っていない
+  for (const msg of [fresh2.state, ...b.c.queue, ...a.c.queue]) {
+    assert.equal('players' in msg, false);
+    assert.equal(JSON.stringify(msg).includes('"near"'), false);
   }
 });

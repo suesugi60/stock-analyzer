@@ -477,7 +477,8 @@ for (const [label, viewport] of [['PC幅', DESKTOP], ['スマホ幅', PHONE]]) {
     assert.match(await host.page.locator('#host-drawn-count').textContent(), /5個目/);
     assert.equal(await host.page.locator('#board .num.called').count(), 5);
     assert.equal((await host.page.locator('#host-current').textContent()).trim(), String(row[4]));
-    assert.match(await host.page.locator('#participants .participant').first().locator('.p-status').textContent(), /ビンゴ/);
+    const taroRow = host.page.locator('#participants .participant').filter({ has: host.page.locator('.p-name', { hasText: 'たろう' }) });
+    assert.match(await taroRow.locator('.p-status').textContent(), /ビンゴ/);
     await hanako.page.locator('#winners li', { hasText: 'たろう' }).waitFor();
 
     // 直前の番号を取り消す
@@ -1064,4 +1065,45 @@ test('演出(主催者): 音のスイッチを入れて引いても問題なく�
   const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   assert.equal(overflow, 0);
   assert.deepEqual(host.errors, []);
+});
+
+// ---- 主催者に見せる、ビンゴへの近さ ----
+
+test('主催者: 参加者はビンゴに近い順に並び、あといくつかと穴の数が出る', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const a = await joinPlayer(server);
+  const b = await joinPlayer(server);
+  await grant(ws, a.c, 'あや', 1);
+  const yb = await grant(ws, b.c, 'べに', 1);
+  const rowB = yb.cards[0].numbers.slice(0, 5);
+  const person = (name) => host.page.locator('#participants .participant').filter({ has: host.page.locator('.p-name', { hasText: name }) });
+  await person('べに').waitFor();
+
+  // まだ番号が出ていないときは、全員「あと4つ」
+  assert.match(await person('べに').locator('.p-near').textContent(), /あと4つ/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /穴 0個/);
+
+  // べにの1行目を4つ出す → リーチ。いちばん上に来る。
+  for (const n of rowB.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  await person('べに').locator('.p-near', { hasText: 'リーチ' }).waitFor();
+  assert.match(await person('べに').locator('.p-near').textContent(), /あと1つ/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /カード1/);
+  assert.match(await person('べに').locator('.p-detail').textContent(), /穴 4個/);
+  assert.deepEqual(await host.page.locator('#participants .p-name').allTextContents(), ['べに', 'あや']);
+  assert.match(await host.page.locator('#people-title').textContent(), /ビンゴに近い順/);
+
+  // べにがビンゴすると、まだビンゴしていない人が上に来る
+  await host.page.click(`#board .num[data-n="${rowB[4]}"]`);
+  await person('べに').locator('.chip-bingo').waitFor();
+  assert.deepEqual(await host.page.locator('#participants .p-name').allTextContents(), ['あや', 'べに']);
+  assert.equal(await person('べに').locator('.p-near').count(), 0);
+  assert.match(await person('あや').locator('.p-near').textContent(), /あと\d+つ/);
+
+  // リスナーの画面には、他の人の状況は出ない
+  const listener = await openPage('/');
+  await listener.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.equal(await listener.page.locator('.p-near').count(), 0);
+  assert.doesNotMatch(await listener.page.locator('main').textContent(), /あや/);
+  assert.deepEqual([...host.errors, ...listener.errors], []);
 });

@@ -547,3 +547,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
   .ball.huge::before { top: 12px; font-size: 30px; }
   .show-hint { font-size: 14px; }
 }
+
+/* 主催者画面: ビンゴへの近さ */
+.people-note { margin-bottom: 8px; }
+.p-status { flex-wrap: wrap; }
+.chip.p-near:not(.chip-reach) { background: #f1f3fb; }
+.p-detail { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+.participant .block { margin-left: auto; }

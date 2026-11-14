@@ -295,16 +295,32 @@ function renderWinnersBox() {
   dom.winnersNote.hidden = snap.winners.length < WINNERS_SHOWN;
 }
 
+// ビンゴに近い順。まだビンゴしていないカードのうち、いちばん近い1枚で比べる。
+// 同じ近さなら、その近さのカードが多い人、穴が多い人、先に参加した人の順。
+// 全カードがビンゴ済みの人は最後。
+function byCloseness(a, b) {
+  const na = a.need === null ? Infinity : a.need;
+  const nb = b.need === null ? Infinity : b.need;
+  return (na - nb) || (b.near - a.near) || (b.holes - a.holes) || (a.pid - b.pid);
+}
+
 function renderPeople() {
   clear(dom.participants);
-  for (const p of snap.players) {
+  for (const p of [...snap.players].sort(byCloseness)) {
     const status = el('span', { class: 'p-status' });
     if (p.bingo > 0) status.appendChild(el('span', { class: 'chip chip-bingo', text: `ビンゴ ${p.bingo}` }));
-    if (p.reach > 0) status.appendChild(el('span', { class: 'chip chip-reach', text: `リーチ ${p.reach}` }));
+    let detail = null;
+    if (p.need !== null) {
+      const many = p.near > 1 ? ` ×${p.near}枚` : '';
+      const text = p.need === 1 ? `リーチ あと1つ${many}` : `あと${p.need}つ${many}`;
+      status.appendChild(el('span', { class: p.need === 1 ? 'chip chip-reach p-near' : 'chip p-near', text }));
+      detail = el('span', { class: 'p-detail', text: `カード${p.no}・穴 ${p.holes}個` });
+    }
     dom.participants.appendChild(el('div', { class: 'participant', dataset: { pid: p.pid } },
       el('span', { class: 'p-name', text: p.name }),
       el('span', { class: 'p-cards', text: `${p.cards}枚` }),
       status,
+      detail,
       el('button', { type: 'button', class: 'btn small ghost block', text: 'ブロック' })));
   }
   dom.participantsEmpty.hidden = snap.players.length > 0;

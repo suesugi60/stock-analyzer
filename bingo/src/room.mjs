@@ -215,15 +215,29 @@ export class BingoRoom extends DurableObject {
   }
 
   // カードを持つ人ごとの集計。bingo: ビンゴしたカードの枚数 / reach: ビンゴしておらずリーチのカードの枚数。
+  // 主催者にだけ見せる、ビンゴへの近さ。まだビンゴしていないカードのうち、いちばん近い1枚で表す。
+  //   need: そのカードがあといくつでそろうか(全カードがビンゴ済みなら null)
+  //   near: 同じ近さのカードが何枚あるか / holes: そのカードの開いた穴の数(FREE は数えない) / no: カード番号
   #summarize(cards, called) {
     const byPid = new Map();
     for (const card of cards) {
       let p = byPid.get(card.pid);
-      if (!p) { p = { pid: card.pid, name: card.name, cards: 0, bingo: 0, reach: 0 }; byPid.set(card.pid, p); }
+      if (!p) {
+        p = { pid: card.pid, name: card.name, cards: 0, bingo: 0, reach: 0, need: null, near: 0, holes: 0, no: null };
+        byPid.set(card.pid, p);
+      }
       const a = analyzeCard(card.numbers, called);
       p.cards++;
-      if (a.lines > 0) p.bingo++;
-      else if (a.reach > 0) p.reach++;
+      if (a.lines > 0) { p.bingo++; continue; }
+      if (a.reach > 0) p.reach++;
+      const holes = a.marked.filter(Boolean).length - 1;
+      if (p.need === null || a.need < p.need) {
+        p.need = a.need; p.near = 1; p.holes = holes; p.no = card.no;
+      } else if (a.need === p.need) {
+        p.near++;
+        // 同じ近さなら、穴の多いカードを代表にする
+        if (holes > p.holes) { p.holes = holes; p.no = card.no; }
+      }
     }
     return [...byPid.values()];
   }
