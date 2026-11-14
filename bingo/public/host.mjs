@@ -1,7 +1,7 @@
 // 主催者画面。
 import { connect } from './net.mjs';
 import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
-import { el, clear, renderBall, renderWinners, toast, confirmDialog, letterOf } from './view.mjs';
+import { el, clear, renderBall, renderWinners, renderWaiting, toast, confirmDialog, letterOf } from './view.mjs';
 import { playDraw, cancelDraw } from './draw-show.mjs';
 import { createDrawSound } from './draw-sound.mjs';
 
@@ -20,6 +20,7 @@ const dom = {
   current: $('host-current'), drawnCount: $('host-drawn-count'), drawBtn: $('draw-btn'), undoBtn: $('undo-btn'),
   fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'),
   board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
+  waitingList: $('host-waiting-list'), waitingEmpty: $('host-waiting-empty'), waitingNote: $('host-waiting-note'),
   participants: $('participants'), participantsEmpty: $('participants-empty'),
   blockedBox: $('blocked-box'), blocked: $('blocked'),
 };
@@ -293,6 +294,8 @@ function renderWinnersBox() {
   dom.winnerStats.textContent = `ビンゴ ${bingo}枚 / リーチ ${reach}枚`;
   renderWinners(dom.winners, snap.winners);
   dom.winnersNote.hidden = snap.winners.length < WINNERS_SHOWN;
+  renderWaiting(dom.waitingList, dom.waitingNote, snap.waiting);
+  dom.waitingEmpty.hidden = snap.waiting.list.length > 0;
 }
 
 // ビンゴに近い順。まだビンゴしていないカードのうち、いちばん近い1枚で比べる。
@@ -316,11 +319,13 @@ function renderPeople() {
       status.appendChild(el('span', { class: p.need === 1 ? 'chip chip-reach p-near' : 'chip p-near', text }));
       detail = el('span', { class: 'p-detail', text: `カード${p.no}・穴 ${p.holes}個` });
     }
+    const waits = p.waits.length > 0 ? el('span', { class: 'p-waits', text: `待ち ${p.waits.join('・')}` }) : null;
     dom.participants.appendChild(el('div', { class: 'participant', dataset: { pid: p.pid } },
       el('span', { class: 'p-name', text: p.name }),
       el('span', { class: 'p-cards', text: `${p.cards}枚` }),
       status,
       detail,
+      waits,
       el('button', { type: 'button', class: 'btn small ghost block', text: 'ブロック' })));
   }
   dom.participantsEmpty.hidden = snap.players.length > 0;

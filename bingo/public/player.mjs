@@ -1,7 +1,7 @@
 // リスナー画面。
 import { connect } from './net.mjs';
 import { analyzeCard, normalizeName, isValidCount, isValidToken, LIMITS, WINNERS_SHOWN } from './logic.mjs';
-import { el, clear, renderBall, renderCard, renderWinners, toast, confirmDialog } from './view.mjs';
+import { el, clear, renderBall, renderCard, renderWinners, renderWaiting, toast, confirmDialog } from './view.mjs';
 import { playDraw, cancelDraw } from './draw-show.mjs';
 
 const TOKEN_KEY = 'bingo.v1.token';
@@ -14,6 +14,7 @@ const dom = {
   requestBtn: $('request-btn'), moreClose: $('more-close'), cancelBtn: $('cancel-btn'), moreBtn: $('more-btn'),
   storageNote: $('storage-note'), mine: $('mine'), summary: $('summary'), cards: $('cards'),
   winnersBox: $('winners-box'), winners: $('winners'), winnersNote: $('winners-note'),
+  waitingBox: $('waiting-box'), waitingList: $('waiting-list'), waitingNote: $('waiting-note'),
   historyBox: $('history-box'), history: $('history'),
   copyLink: $('copy-link'), linkText: $('link-text'), celebrate: $('celebrate'),
 };
@@ -26,6 +27,7 @@ const state = {
   draws: [],         // サーバーが発表した番号(すべて)
   shown: 0,          // そのうち、画面に見せてよい個数
   winners: [],
+  waiting: { list: [], total: 0 }, // リーチの人(画面に見せている分)
   you: EMPTY_YOU,
   moreOpen: false,   // 「追加で申請する」を開いているか
   sending: false,    // 申請・取り消しの返事を待っているか
@@ -35,6 +37,8 @@ let token = null;
 let net = null;
 let linkToken = null;           // 引き継ぎリンクで渡された合い札(まだ切り替えていない)
 const revealTimers = new Map(); // 何個目の番号か → タイマー
+// 「何個目の番号まで出た時点か」→ リーチの人の一覧。まだ見せていない番号の分を、ここで待たせる。
+const pendingWaiting = new Map();
 let showingSeq = null;          // いま抽選の演出を見せている番号(何個目か)
 let showToken = 0;              // 演出の打ち切りを見分けるための通し番号
 const cardNodes = new Map();    // カード番号 → 要素
@@ -97,6 +101,14 @@ function clearReveals() {
   revealTimers.clear();
 }
 
+// 見せてよい番号が進んだら、そこまでの時点のリーチの一覧に切り替える。
+function advanceWaiting() {
+  let best = -1;
+  for (const seq of pendingWaiting.keys()) if (seq <= state.shown && seq > best) best = seq;
+  if (best >= 0) state.waiting = pendingWaiting.get(best);
+  for (const seq of [...pendingWaiting.keys()]) if (seq <= state.shown) pendingWaiting.delete(seq);
+}
+
 // 見せている途中の演出を打ち切る。その番号は、演出の続きとしては出さない。
 function stopShow() {
   showToken++;
@@ -111,6 +123,7 @@ function reveal(seq) {
   // 前の番号の演出がまだ続いていたら、その番号は先に出してしまう
   if (showingSeq !== null && showingSeq < seq && showingSeq <= state.draws.length) {
     state.shown = Math.max(state.shown, showingSeq);
+    advanceWaiting();
   }
   const token = ++showToken;
   showingSeq = seq;
@@ -118,7 +131,7 @@ function reveal(seq) {
   playDraw({ n: state.draws[seq - 1] }).then(() => {
     if (token !== showToken) return; // 取り消しや取り直しで打ち切られた
     showingSeq = null;
-    if (seq <= state.draws.length && seq > state.shown) state.shown = seq;
+    if (seq <= state.draws.length && seq > state.shown) { state.shown = seq; advanceWaiting(); }
     render();
   });
 }
@@ -156,11 +169,15 @@ function onMessage(msg) {
       // 最後の1個だけ、発表からの経過時間に応じて待つ。それ以前はすぐ見せる。
       const total = msg.draws.length;
       const wait = total > 0 && msg.lastAge !== null ? state.delay * 1000 - msg.lastAge : 0;
+      pendingWaiting.clear();
       if (wait > 0 && state.shown < total) {
         state.shown = total - 1;
+        // リーチの一覧も、最後の番号と一緒に出す(それまでは、いま見せている一覧のまま)
+        pendingWaiting.set(total, msg.waiting);
         scheduleReveal(total, wait);
       } else {
         state.shown = total;
+        state.waiting = msg.waiting;
       }
       if (linkToken) {
         const candidate = linkToken;
@@ -178,18 +195,25 @@ function onMessage(msg) {
       state.draws.length = Math.min(state.draws.length, msg.seq - 1);
       state.draws[msg.seq - 1] = msg.n;
       state.winners = state.winners.filter((w) => w.at < msg.seq).concat(msg.winners);
+      pendingWaiting.set(msg.seq, msg.waiting);
       scheduleReveal(msg.seq, state.delay * 1000);
       return; // 描画は reveal がする
     case 'undo':
       clearTimeout(revealTimers.get(msg.seq));
       revealTimers.delete(msg.seq);
       if (showingSeq !== null && showingSeq >= msg.seq) stopShow();
+      for (const seq of [...pendingWaiting.keys()]) if (seq >= msg.seq) pendingWaiting.delete(seq);
       state.draws.length = Math.min(state.draws.length, msg.seq - 1);
       state.winners = state.winners.filter((w) => w.at < msg.seq);
       state.shown = Math.min(state.shown, state.draws.length);
       break;
     case 'winners':
       state.winners = msg.winners;
+      break;
+    case 'waiting':
+      // その時点の番号まで見せていれば、すぐ切り替える。まだなら、その番号が出るときまで待たせる。
+      if (msg.seq <= state.shown) state.waiting = msg.waiting;
+      else pendingWaiting.set(msg.seq, msg.waiting);
       break;
     case 'accepting':
       state.accepting = msg.on;
@@ -200,6 +224,8 @@ function onMessage(msg) {
     case 'round':
       clearReveals();
       stopShow();
+      pendingWaiting.clear();
+      state.waiting = { list: [], total: 0 };
       state.draws = [];
       state.winners = [];
       state.shown = 0;
@@ -207,6 +233,8 @@ function onMessage(msg) {
     case 'reset':
       clearReveals();
       stopShow();
+      pendingWaiting.clear();
+      state.waiting = { list: [], total: 0 };
       state.draws = [];
       state.winners = [];
       state.shown = 0;
@@ -332,6 +360,10 @@ function render() {
     for (const no of nowBingo) if (!knownBingo.has(no)) { celebrate(); break; }
   }
   if (state.ready) knownBingo = nowBingo;
+
+  // リーチの人と待ち番号
+  renderWaiting(dom.waitingList, dom.waitingNote, state.waiting);
+  dom.waitingBox.hidden = state.waiting.list.length === 0;
 
   // ビンゴした人(見せてよい番号までの分)
   const visibleWinners = state.winners.filter((w) => w.at <= state.shown);

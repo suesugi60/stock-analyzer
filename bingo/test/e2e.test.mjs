@@ -1107,3 +1107,84 @@ test('主催者: 参加者はビンゴに近い順に並び、あといくつか
   assert.doesNotMatch(await listener.page.locator('main').textContent(), /あや/);
   assert.deepEqual([...host.errors, ...listener.errors], []);
 });
+
+// ---- リーチの人と待ち番号(全員に見せる) ----
+
+test('リーチの人と待ち番号が、リスナー全員と主催者に見える', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost();
+  const watcher = await openPage('/'); // カードを持っていない、見ているだけの人
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
+
+  for (const n of row.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  const item = watcher.page.locator('#waiting-list li', { hasText: 'りいち' });
+  await item.waitFor();
+  assert.match(await item.textContent(), new RegExp(`\\b${row[4]}\\b`));
+  // 主催者画面にも、同じ一覧と、参加者の行の待ち番号が出る
+  await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).waitFor();
+  assert.match(await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).textContent(), new RegExp(`\\b${row[4]}\\b`));
+  assert.match(await host.page.locator('#participants .participant .p-waits').first().textContent(), new RegExp(`\\b${row[4]}\\b`));
+
+  // ビンゴすると、リーチの一覧から消える
+  await host.page.click(`#board .num[data-n="${row[4]}"]`);
+  await item.waitFor({ state: 'detached' });
+  await watcher.page.locator('#winners li', { hasText: 'りいち' }).waitFor();
+  assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
+  // 取り消すと戻る
+  await host.page.click('#undo-btn');
+  await yes(host.page);
+  await item.waitFor();
+  assert.deepEqual([...host.errors, ...watcher.errors], []);
+});
+
+test('リーチの一覧は、番号と同じく「反映の遅れ」のぶん遅れて出る', async () => {
+  const { c: ws } = await fresh(server);
+  const watcher = await openPage('/');
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  for (const n of row.slice(0, 3)) await call(ws, n);
+  await watcher.page.locator('#drawn-count', { hasText: '3個目' }).waitFor();
+
+  ws.send({ t: 'delay', sec: 3 });
+  await ws.next('host');
+  await call(ws, row[3]);
+  await sleep(1200);
+  // まだ4個目が見えていないので、リーチも出ていない
+  assert.match(await watcher.page.locator('#drawn-count').textContent(), /3個目/);
+  assert.equal(await watcher.page.locator('#waiting-list li').count(), 0);
+  await watcher.page.locator('#waiting-list li', { hasText: 'りいち' }).waitFor({ timeout: 6000 });
+  assert.match(await watcher.page.locator('#drawn-count').textContent(), /4個目/);
+
+  // 待っている途中で開き直しても、先には出ない
+  await call(ws, row[4]);
+  await watcher.page.reload();
+  await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
+  await sleep(500);
+  assert.equal(await watcher.page.locator('#winners li').count(), 0);
+  await watcher.page.locator('#winners li', { hasText: 'りいち' }).waitFor({ timeout: 6000 });
+  assert.equal(await watcher.page.locator('#waiting-list li').count(), 0);
+  assert.deepEqual(watcher.errors, []);
+});
+
+test('リーチの人の名前に入れたHTMLは、文字として表示される', async () => {
+  const { c: ws } = await fresh(server);
+  const NAME = '<svg onload=a()>';
+  const host = await openHost();
+  const watcher = await openPage('/');
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, NAME, 1);
+  for (const n of ya.cards[0].numbers.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
+  await watcher.page.locator('#waiting-list li').waitFor();
+  assert.match(await watcher.page.locator('#waiting-list li').textContent(), /<svg onload=a\(\)>/);
+  await host.page.locator('#host-waiting-list li').waitFor();
+  assert.match(await host.page.locator('#host-waiting-list li').textContent(), /<svg onload=a\(\)>/);
+  assert.equal(await watcher.page.locator('main svg').count(), 0);
+  assert.equal(await host.page.locator('main svg').count(), 0);
+  assert.deepEqual([...host.errors, ...watcher.errors], []);
+});
