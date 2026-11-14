@@ -416,10 +416,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .area-accept { order: 1; }
 .area-requests { order: 2; }
 .area-numbers { order: 3; }
-.area-waiting { order: 4; }
-.area-winners { order: 5; }
-.area-people { order: 6; }
-.area-reset { order: 7; }
+.area-winners { order: 4; }
+.area-people { order: 5; }
+.area-reset { order: 6; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .panel-head .panel-title { margin-bottom: 0; }
 .sub-title { font-size: 13px; font-weight: 800; margin: 14px 0 6px; }
@@ -571,3 +570,24 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 .waiting .w-name { flex: 1 1 100px; min-width: 0; }
 .wait-balls { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .p-waits { font-size: 12px; font-weight: 800; color: var(--warn); }
+
+/* 主催者画面: リーチの人を「いまの番号」のすぐ下に、目立つように出す。
+   高さを固定し、人が増えても下の「ランダムに引く」や盤面の位置が動かないようにする(押し間違いを防ぐ)。 */
+.reach-box {
+  margin-top: 12px;
+  border: 3px dashed var(--pink);
+  border-radius: 14px;
+  background: #fff5f9;
+  padding: 8px 10px;
+}
+.reach-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.reach-title { font-size: 16px; font-weight: 800; color: var(--pink); }
+.reach-hint { font-size: 12px; color: var(--ink-soft); }
+.reach-scroll { height: 170px; overflow-y: auto; padding-right: 2px; } /* 3人ぶんが見える高さ。それ以上はこの中でスクロール */
+.reach-box .waiting li { background: #fff; padding: 5px 10px; }
+.reach-box .w-name { font-size: 17px; }
+
+/* 盤面: 出るとビンゴになる人がいる番号 */
+.num.awaited { border: 3px dashed var(--pink); background: #ffe0ec; }
+.board-legend { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.legend-mark { flex: none; width: 22px; height: 16px; border: 3px dashed var(--pink); border-radius: 6px; background: #ffe0ec; }

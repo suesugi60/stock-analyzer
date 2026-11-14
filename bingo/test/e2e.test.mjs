@@ -1119,6 +1119,12 @@ test('リーチの人と待ち番号が、リスナー全員と主催者に見�
   const row = ya.cards[0].numbers.slice(0, 5);
   await watcher.page.locator('#conn', { hasText: '接続中' }).waitFor();
   assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
+  // 主催者画面: リーチの欄は最初から場所を取ってあり、人数は0人
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /0人/);
+  // ページの先頭からの位置(画面のスクロール量に左右されないように)
+  const pageY = (selector) => host.page.locator(selector).first().evaluate((node) => node.getBoundingClientRect().y + window.scrollY);
+  const drawButtonBefore = await pageY('#draw-btn');
+  const boardBefore = await pageY('#board');
 
   for (const n of row.slice(0, 4)) await host.page.click(`#board .num[data-n="${n}"]`);
   const item = watcher.page.locator('#waiting-list li', { hasText: 'りいち' });
@@ -1126,12 +1132,25 @@ test('リーチの人と待ち番号が、リスナー全員と主催者に見�
   assert.match(await item.textContent(), new RegExp(`\\b${row[4]}\\b`));
   // 主催者画面にも、同じ一覧と、参加者の行の待ち番号が出る
   await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).waitFor();
+  // 主催者画面では目立たせる: 人数、お知らせ、盤面の待ち番号の印
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /1人/);
+  await host.page.locator('#toast', { hasText: 'りいち さんがリーチ' }).waitFor();
+  await host.page.locator(`#board .num.awaited[data-n="${row[4]}"]`).waitFor();
+  // リーチの欄は「いまの番号」のすぐ下にあり、盤面より上
+  assert.ok((await pageY('#host-waiting-list')) < boardBefore, 'リーチの欄は盤面より上にある');
+  assert.ok((await pageY('#host-waiting-list')) < drawButtonBefore, 'リーチの欄は「ランダムに引く」より上にある');
+  // リーチの人が増えても、引くボタンや盤面の位置は動かない(押し間違いを防ぐ)
+  assert.equal(await pageY('#draw-btn'), drawButtonBefore);
+  assert.equal(await pageY('#board'), boardBefore);
   assert.match(await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).textContent(), new RegExp(`\\b${row[4]}\\b`));
   assert.match(await host.page.locator('#participants .participant .p-waits').first().textContent(), new RegExp(`\\b${row[4]}\\b`));
 
   // ビンゴすると、リーチの一覧から消える
   await host.page.click(`#board .num[data-n="${row[4]}"]`);
   await item.waitFor({ state: 'detached' });
+  await host.page.locator('#host-waiting-list li').first().waitFor({ state: 'detached' });
+  assert.match(await host.page.locator('#host-waiting-count').textContent(), /0人/);
+  assert.equal(await host.page.locator('#board .num.awaited').count(), 0);
   await watcher.page.locator('#winners li', { hasText: 'りいち' }).waitFor();
   assert.equal(await watcher.page.locator('#waiting-box').isVisible(), false);
   // 取り消すと戻る
@@ -1187,4 +1206,41 @@ test('リーチの人の名前に入れたHTMLは、文字として表示され�
   assert.equal(await watcher.page.locator('main svg').count(), 0);
   assert.equal(await host.page.locator('main svg').count(), 0);
   assert.deepEqual([...host.errors, ...watcher.errors], []);
+});
+
+test('主催者(スマホ幅): リーチの欄は、スクロールしなくても見える位置にある', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost(PHONE);
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  for (const n of ya.cards[0].numbers.slice(0, 4)) await call(ws, n);
+  await host.page.locator('#host-waiting-list li', { hasText: 'りいち' }).waitFor();
+  // 「番号」の欄の先頭に画面を合わせたとき、リーチの欄と引くボタンが両方見えている
+  await host.page.locator('.area-numbers').evaluate((node) => window.scrollTo(0, node.offsetTop - 60));
+  await sleep(200);
+  for (const selector of ['#host-waiting-list li', '#draw-btn']) {
+    const box = await host.page.locator(selector).first().boundingBox();
+    assert.ok(box.y >= 0 && box.y + box.height <= PHONE.height, `${selector} が画面内にある`);
+  }
+  const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.equal(overflow, 0);
+  assert.deepEqual(host.errors, []);
+});
+
+test('主催者: 抽選の演出の間は、リーチのお知らせを出さない(番号より先に分からないように)', async () => {
+  const { c: ws } = await fresh(server);
+  const host = await openHost(DESKTOP, { motion: true });
+  const a = await joinPlayer(server);
+  const ya = await grant(ws, a.c, 'りいち', 1);
+  const row = ya.cards[0].numbers.slice(0, 5);
+  for (const n of row.slice(0, 3)) await call(ws, n);
+  await host.page.locator('#host-drawn-count', { hasText: '3個目' }).waitFor();
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  // 別の端末(ここでは WebSocket)から4つ目が出る → この画面には演出が出る
+  ws.send({ t: 'call', n: row[3] });
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  assert.equal(await host.page.locator('#toast').isVisible(), false);
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await host.page.locator('#toast', { hasText: 'りいち さんがリーチ' }).waitFor();
+  assert.deepEqual(host.errors, []);
 });

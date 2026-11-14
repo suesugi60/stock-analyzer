@@ -21,6 +21,7 @@ const dom = {
   fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'),
   board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
   waitingList: $('host-waiting-list'), waitingEmpty: $('host-waiting-empty'), waitingNote: $('host-waiting-note'),
+  waitingCount: $('host-waiting-count'),
   participants: $('participants'), participantsEmpty: $('participants-empty'),
   blockedBox: $('blocked-box'), blocked: $('blocked'),
 };
@@ -80,17 +81,27 @@ function onMessage(msg) {
   switch (msg.t) {
     case 'host': {
       const before = authed && snap ? snap.draws.length : null;
+      const reachedBefore = authed && snap ? new Set(snap.waiting.list.map((e) => e.name)) : null;
       if (!authed) savePassword(password);
       authed = true;
       busyDraw = false;
       snap = msg;
+      let show = Promise.resolve();
       if (before !== null && msg.draws.length === before + 1) {
         // 新しい番号が1つ出た。ランダムに引いたとき(と、別の端末で出たとき)は抽選機を見せる。
-        if (!manualCall && fxOn) playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
+        if (!manualCall && fxOn) show = playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
       } else if (before !== null && msg.draws.length < before) {
         cancelDraw(); // 取り消し・次のゲーム・リセット
       }
       manualCall = false;
+      // 新しくリーチになった人を知らせる。抽選の演出が出ている間は待つ(番号より先に分からないように)。
+      if (reachedBefore !== null) {
+        const fresh = msg.waiting.list.map((e) => e.name).filter((name) => !reachedBefore.has(name));
+        if (fresh.length > 0) {
+          const names = fresh.slice(0, 3).join('、') + (fresh.length > 3 ? ` ほか${fresh.length - 3}人` : '');
+          show.then(() => toast(`${names} さんがリーチ!`));
+        }
+      }
       break;
     }
     case 'req_add':
@@ -278,9 +289,12 @@ function renderNumbers() {
     dom.drawnCount.textContent = `${draws.length}個目`;
   }
   const called = new Set(draws);
+  // 出るとビンゴになる人がいる番号(全参加者の待ち番号)
+  const awaited = new Set(snap.players.flatMap((p) => p.waits));
   for (const button of dom.board.querySelectorAll('.num')) {
     const isCalled = called.has(Number(button.dataset.n));
     button.classList.toggle('called', isCalled);
+    button.classList.toggle('awaited', !isCalled && awaited.has(Number(button.dataset.n)));
     button.classList.toggle('latest', Number(button.dataset.n) === latest);
     button.disabled = isCalled || !online;
   }
@@ -296,6 +310,7 @@ function renderWinnersBox() {
   dom.winnersNote.hidden = snap.winners.length < WINNERS_SHOWN;
   renderWaiting(dom.waitingList, dom.waitingNote, snap.waiting);
   dom.waitingEmpty.hidden = snap.waiting.list.length > 0;
+  dom.waitingCount.textContent = `${snap.waiting.total}人`;
 }
 
 // ビンゴに近い順。まだビンゴしていないカードのうち、いちばん近い1枚で比べる。
