@@ -491,3 +491,59 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 
 /* 返事待ちの行と、押せない間のボタン */
 .req.busy { opacity: 0.6; }
+
+/* ---- 抽選機の演出 ---- */
+
+.draw-show {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  background-color: var(--paper);
+  background-image: radial-gradient(rgba(255, 210, 63, 0.45) 2px, transparent 2.5px);
+  background-size: 22px 22px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.show-title { font-size: 24px; font-weight: 800; min-height: 1.6em; }
+.show-canvas { width: min(84vw, 340px, 46vh); height: auto; aspect-ratio: 320 / 300; }
+.show-result { height: 150px; display: grid; place-items: center; }
+.show-hint { font-size: 12px; color: var(--ink-soft); }
+
+.ball.huge { width: 140px; height: 140px; border-width: 12px; font-size: 62px; padding-top: 22px; box-shadow: 0 0 0 4px var(--ink), 6px 6px 0 4px var(--ink); }
+.ball.huge::before {
+  content: attr(data-letter);
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 24px;
+  color: var(--c, var(--ink-soft));
+}
+.ball.huge.pop { animation: show-pop 0.55s cubic-bezier(0.2, 1.7, 0.4, 1); }
+@keyframes show-pop {
+  0% { transform: translateY(-70px) scale(0.2) rotate(-200deg); opacity: 0; }
+  60% { opacity: 1; }
+  100% { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+}
+
+/* 主催者画面のスイッチ */
+.fx-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.btn.switch[aria-pressed="true"] { background: #c9f2e3; }
+
+/* 広い画面(配信に映すPCなど)では、抽選機を大きく見せる。基本の指定より後ろに置く。 */
+@media (min-width: 700px) {
+  .show-title { font-size: 36px; }
+  .show-canvas { width: min(84vw, 520px, 50vh); }
+  .show-result { height: 200px; }
+  .ball.huge { width: 180px; height: 180px; border-width: 15px; font-size: 80px; padding-top: 28px; }
+  .ball.huge::before { top: 12px; font-size: 30px; }
+  .show-hint { font-size: 14px; }
+}

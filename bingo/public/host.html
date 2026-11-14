@@ -65,7 +65,11 @@
             <button id="draw-btn" type="button" class="btn primary big">ランダムに引く</button>
             <button id="undo-btn" type="button" class="btn ghost" disabled>直前の番号を取り消す</button>
           </div>
-          <p class="note">自分で引いた番号は、下の盤面を押して発表します。</p>
+          <div class="fx-row">
+            <button id="fx-toggle" type="button" class="btn small ghost switch" aria-pressed="true">抽選の演出: オン</button>
+            <button id="sound-toggle" type="button" class="btn small ghost switch" aria-pressed="false">抽選の音: オフ</button>
+          </div>
+          <p class="note">自分で引いた番号は、下の盤面を押して発表します(このときは演出なしで出ます)。</p>
           <div id="board" class="board"></div>
         </section>
 
@@ -120,6 +124,12 @@
     </div>
   </main>
 
+  <div id="draw-show" class="draw-show" hidden>
+    <p id="draw-show-title" class="show-title" role="status">抽選中…</p>
+    <canvas id="draw-show-canvas" class="show-canvas" width="320" height="300" aria-hidden="true"></canvas>
+    <div class="show-result"><span id="draw-show-ball" class="ball huge" hidden></span></div>
+    <p class="show-hint">タップで飛ばす</p>
+  </div>
   <p id="toast" class="toast" role="status" hidden></p>
   <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-message" hidden>
     <div class="dialog-box">
