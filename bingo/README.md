@@ -84,23 +84,29 @@ Cloudflare Workers の無料プランで動きます。やることは3つです
 
 ### 1. アカウントを作る
 
-1. <https://dash.cloudflare.com/sign-up> でアカウントを作る。
-2. 左のメニューから **Workers & Pages** を開く。初回に `○○.workers.dev` の `○○` を決める画面が出る。
-   これがビンゴのURLの一部になるので、短く覚えやすいものにする。
+<https://dash.cloudflare.com/sign-up> でアカウントを作る。
 
 ### 2. GitHubのリポジトリをつなぐ
 
-1. **Workers & Pages** で **Create application** を押す。
-2. **GitHub** を選び、GitHubにログインして、Cloudflareに `stock-analyzer` へのアクセスを許可する。
-3. リポジトリ `stock-analyzer` を選ぶ。
-4. 次の2つを入れる。ほかの項目は触らなくてよい。
+1. ログイン後の最初の画面(Account home)で、「Ship something new」の **Create app** を押す。
+2. **Connect GitHub** を押し、GitHubにログインして、Cloudflareに `stock-analyzer` へのアクセスを許可する。
+3. リポジトリ `stock-analyzer` を選んで進める。最初のビルドが自動で始まる。
+4. 設定を2か所直す。作成したWorkerの画面で、上のタブの **Settings** を開く。
 
-   | 項目 | 値 |
+   | 直す場所 | 直す内容 |
    |---|---|
-   | Project name(名前) | `bingo` |
-   | Root directory(詳細設定の中にある) | `bingo` |
+   | 右の一覧の **Builds** → **Root directory** | `/` を `bingo` に変えて **Save** |
+   | 右の一覧の **General** → 名前 | `bingo` に変える |
 
-5. **Save and Deploy** を押す。数分で公開される。以後は `main` を更新するたびに自動で公開される。
+   作成の途中で名前と Root directory を入れる欄が出た場合は、そこで `bingo` と入れておけば、この手順は要らない。
+
+5. `main` を更新すると、新しい設定でビルドがやり直され、ビンゴが公開される。
+
+Root directory が `/` のままだと、ビンゴではなく株式分析ツールのファイルが公開される。必ず `bingo` に直すこと。
+右上の **New deployment** は、手元のファイルをアップロードするためのもので、ここでは使わない。
+
+URLは `https://bingo.○○.workers.dev/` になる。`○○` はアカウントごとに自動で決まる。
+左のメニューの **Compute** → **Workers & Pages** の画面で変えられる。リスナー全員に見えるので、名前などを出したくなければ先に変えておく。
 
 ### 3. 主催者の合言葉を決める
 
