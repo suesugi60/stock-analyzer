@@ -89,3 +89,121 @@ test('rollDice: 1〜6 が3つ、seed は整数、ションベンは rng<0.03 の
   const hi = [0.5, 0.5, 0.5, 0.5, 0.5];
   assert.equal(L.rollDice(() => hi.shift()).shonben, false);
 });
+
+// ---------- 対戦の状態遷移 ----------
+const SETTINGS = { mode: 'both', unit: 10, drinkUnit: 'sip' };
+const roll = (dice, shonben = false) => ({ dice, seed: 1, shonben });
+
+test('createState: ロビー、持ち点100、seq 0', () => {
+  assert.deepEqual(L.createState(), {
+    seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null,
+  });
+});
+
+test('startMatch → 親の番', () => {
+  const s = L.startMatch(L.createState(), 'kid1');
+  assert.equal(s.phase, 'parent');
+  assert.deepEqual(s.match, { childUid: 'kid1', round: 1, parent: { throws: [], hand: null, done: false }, child: { throws: [], hand: null, done: false } });
+  assert.equal(L.canThrow(s, 'parent'), true);
+  assert.equal(L.canThrow(s, 'child'), false);
+});
+
+test('親が1投目で役 → 子の番。親が3投役なし → 目なしで子の不戦勝(result)', () => {
+  let s = L.startMatch(L.createState(), 'kid1');
+  let r = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS);
+  assert.equal(r.state.phase, 'child');
+  assert.equal(r.result, null);
+  assert.equal(r.state.match.parent.hand.label, '5の目');
+  assert.equal(r.state.match.parent.done, true);
+  assert.equal(L.canThrow(r.state, 'child'), true);
+  assert.equal(L.canThrow(r.state, 'parent'), false);
+
+  s = L.startMatch(L.createState(), 'kid1');
+  s = L.applyThrow(s, 'parent', roll([1, 3, 5]), SETTINGS).state;
+  assert.equal(s.phase, 'parent');
+  assert.equal(s.match.parent.throws.length, 1);
+  assert.equal(s.match.parent.hand, null);
+  s = L.applyThrow(s, 'parent', roll([2, 4, 6]), SETTINGS).state;
+  r = L.applyThrow(s, 'parent', roll([1, 4, 6]), SETTINGS);
+  assert.equal(r.state.phase, 'result');
+  assert.equal(r.state.match.parent.hand.type, 'none');
+  assert.equal(r.result.winner, 'child');
+  assert.equal(r.result.mult, 1);
+  assert.equal(r.result.childHand, null);
+  assert.equal(r.result.childUid, 'kid1');
+});
+
+test('親ヒフミは1投で終了して子の不戦勝、倍率2。ションベンも1投で終了', () => {
+  const s = L.startMatch(L.createState(), 'kid1');
+  const r = L.applyThrow(s, 'parent', roll([3, 2, 1]), SETTINGS);
+  assert.equal(r.state.phase, 'result');
+  assert.deepEqual([r.result.winner, r.result.mult], ['child', 2]);
+  const r2 = L.applyThrow(s, 'parent', roll([3, 2, 5], true), SETTINGS);
+  assert.equal(r2.state.match.parent.hand.type, 'shonben');
+  assert.deepEqual([r2.result.winner, r2.result.mult], ['child', 1]);
+});
+
+test('子が役を作ると判定。引き分けなら round+1 で親の番に戻り throws が空', () => {
+  let s = L.startMatch(L.createState(), 'kid1');
+  s = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS).state;
+  let r = L.applyThrow(s, 'child', roll([1, 3, 6]), SETTINGS);
+  assert.equal(r.state.phase, 'child');
+  assert.equal(r.state.match.child.throws.length, 1);
+  r = L.applyThrow(r.state, 'child', roll([4, 4, 5]), SETTINGS); // 5の目 = 親と同じ → 引き分け
+  assert.equal(r.result, null);
+  assert.equal(r.state.phase, 'parent');
+  assert.equal(r.state.match.round, 2);
+  assert.deepEqual(r.state.match.parent, { throws: [], hand: null, done: false });
+  assert.deepEqual(r.state.match.child, { throws: [], hand: null, done: false });
+  assert.equal(r.state.lastThrow.throw.hand.label, '5の目');
+});
+
+test('結果で host の points/wins/losses/drinks が動く(both/unit 10/sip)', () => {
+  let s = L.startMatch(L.createState(), 'kid1');
+  s = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS).state;
+  const r = L.applyThrow(s, 'child', roll([6, 6, 6]), SETTINGS); // 子 6ゾロ(3倍)
+  assert.equal(r.state.phase, 'result');
+  assert.deepEqual([r.result.winner, r.result.mult], ['child', 3]);
+  assert.deepEqual(r.result.deltas.parent, { points: -30, drinks: 3, wins: 0, losses: 1 });
+  assert.deepEqual(r.result.deltas.child, { points: 30, drinks: 0, wins: 1, losses: 0 });
+  assert.deepEqual(r.state.host, { points: 70, wins: 0, losses: 1, drinks: 3 });
+  assert.deepEqual(r.state.result, r.result);
+  assert.equal(r.result.parentHand.label, '5の目');
+  assert.equal(r.result.childHand.label, '6ゾロ');
+});
+
+test('canThrow: result では誰も振れず、手番でない側の applyThrow は例外', () => {
+  let s = L.startMatch(L.createState(), 'kid1');
+  assert.throws(() => L.applyThrow(s, 'child', roll([2, 2, 5]), SETTINGS));
+  s = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS).state;
+  assert.throws(() => L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS));
+  const done = L.applyThrow(s, 'child', roll([3, 3, 1]), SETTINGS).state;
+  assert.equal(L.canThrow(done, 'parent'), false);
+  assert.equal(L.canThrow(done, 'child'), false);
+  assert.equal(L.canThrow(L.createState(), 'parent'), false);
+});
+
+test('applyThrow は元の state を変えず、seq が1ずつ増え、lastThrow に by/seq/throw が入る', () => {
+  const s0 = L.startMatch(L.createState(), 'kid1');
+  const snapshot = JSON.stringify(s0);
+  const r = L.applyThrow(s0, 'parent', roll([2, 2, 5]), SETTINGS);
+  assert.equal(JSON.stringify(s0), snapshot);
+  assert.equal(r.state.seq, s0.seq + 1);
+  assert.equal(r.state.lastThrow.by, 'parent');
+  assert.equal(r.state.lastThrow.seq, r.state.seq);
+  assert.deepEqual(r.state.lastThrow.throw.dice, [2, 2, 5]);
+  assert.equal(typeof r.state.lastThrow.throw.at, 'number');
+  assert.equal(L.startMatch(L.createState(), 'k').seq, 1);
+});
+
+test('nextMatch で lobby に戻り match/result が null、host の成績は残る', () => {
+  let s = L.startMatch(L.createState(), 'kid1');
+  s = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS).state;
+  s = L.applyThrow(s, 'child', roll([6, 6, 6]), SETTINGS).state;
+  const n = L.nextMatch(s);
+  assert.equal(n.phase, 'lobby');
+  assert.equal(n.match, null);
+  assert.equal(n.result, null);
+  assert.deepEqual(n.host, { points: 70, wins: 0, losses: 1, drinks: 3 });
+  assert.equal(n.seq, s.seq + 1);
+});

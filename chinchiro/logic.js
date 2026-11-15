@@ -72,6 +72,91 @@ const ChinchiroLogic = (() => {
     return { dice, seed, shonben };
   }
 
-  return { DRINK_UNITS, POINT_UNITS, SHONBEN_RATE, NONE, SHONBEN, HIFUMI, evaluate, penaltyMult, judge, resultDeltas, rollDice };
+  // ---------- 部屋の状態遷移(親機だけが実行し、結果を同期先に書く) ----------
+  const MAX_THROWS = 3;
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const emptySide = () => ({ throws: [], hand: null, done: false });
+
+  function createState() {
+    return { seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null };
+  }
+
+  function bump(state) { const s = clone(state); s.seq += 1; return s; }
+
+  function startMatch(state, childUid) {
+    const s = bump(state);
+    s.phase = 'parent';
+    s.result = null;
+    s.match = { childUid, round: 1, parent: emptySide(), child: emptySide() };
+    return s;
+  }
+
+  function canThrow(state, by) {
+    if (!state.match) return false;
+    if (by === 'parent') return state.phase === 'parent' && !state.match.parent.done;
+    if (by === 'child') return state.phase === 'child' && !state.match.child.done;
+    return false;
+  }
+
+  /** 1投を反映する。結果が出たら result も返す(state.result にも入る)。 */
+  function applyThrow(state, by, roll, settings, now = Date.now()) {
+    if (!canThrow(state, by)) throw new Error(`${by} は今振れません`);
+    const s = bump(state);
+    const side = s.match[by];
+    let hand = roll.shonben ? { ...SHONBEN } : evaluate(roll.dice);
+    if (!hand && side.throws.length + 1 >= MAX_THROWS) hand = { ...NONE };
+    const thr = { dice: roll.dice.slice(), seed: roll.seed, shonben: !!roll.shonben, hand, at: now };
+    side.throws.push(thr);
+    s.lastThrow = { by, seq: s.seq, throw: thr };
+    let result = null;
+    if (hand) {
+      side.hand = hand;
+      side.done = true;
+      if (by === 'parent') {
+        if (hand.lose) result = finish(s, settings);
+        else s.phase = 'child';
+      } else {
+        const verdict = judge(s.match.parent.hand, hand);
+        if (verdict.winner === 'draw') {
+          s.match.round += 1;
+          s.match.parent = emptySide();
+          s.match.child = emptySide();
+          s.phase = 'parent';
+        } else {
+          result = finish(s, settings);
+        }
+      }
+    }
+    return { state: s, result };
+  }
+
+  function finish(s, settings) {
+    const parentHand = s.match.parent.hand;
+    const childHand = s.match.child.hand;
+    const verdict = judge(parentHand, childHand);
+    const deltas = resultDeltas(verdict, settings);
+    const result = { winner: verdict.winner, mult: verdict.mult, parentHand, childHand, deltas, childUid: s.match.childUid };
+    s.host.points += deltas.parent.points;
+    s.host.wins += deltas.parent.wins;
+    s.host.losses += deltas.parent.losses;
+    s.host.drinks += deltas.parent.drinks;
+    s.result = result;
+    s.phase = 'result';
+    return result;
+  }
+
+  function nextMatch(state) {
+    const s = bump(state);
+    s.phase = 'lobby';
+    s.match = null;
+    s.result = null;
+    return s;
+  }
+
+  return {
+    DRINK_UNITS, POINT_UNITS, SHONBEN_RATE, MAX_THROWS, NONE, SHONBEN, HIFUMI,
+    evaluate, penaltyMult, judge, resultDeltas, rollDice,
+    createState, startMatch, canThrow, applyThrow, nextMatch,
+  };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroLogic;
