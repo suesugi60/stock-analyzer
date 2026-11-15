@@ -472,3 +472,90 @@ test('設定が無いまま本番モードで開くと、Firebase の準備手�
   assert.deepEqual(errors, []);
   await context.close();
 });
+
+// ---------- レビュー後の修正 ----------
+test('荒らし対策: char にプロトタイプ名(__defineGetter__)を書かれても親機の描画が止まらない', async () => {
+  const { host, context, errors, code, kids } = await setupMatch([['うさ', 'kappa']]);
+  await kids[0].page.evaluate((c) => {
+    const uid = sessionStorage.getItem('chinchiro.uid');
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].players[uid].char = '__defineGetter__';
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+    new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
+  }, code);
+  await host.waitForTimeout(400);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  assert.equal(await host.locator('#queue .queue-row').count(), 0);
+  assert.ok(!(await host.locator('#screen-host .arena').innerHTML()).includes('[object Object]'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('非表示にした人の名前は、手番や勝敗の表示にも出ない', async () => {
+  const { host, context, code, kids } = await setupMatch([['ひみつ', 'kappa']]);
+  await host.locator('#queue .queue-row').first().locator('[data-act="hide"]').click();
+  await host.locator('#queue .queue-row .qname').filter({ hasText: '？？？' }).waitFor({ state: 'attached', ...T });
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  let status = await host.locator('.arena .center .status').innerText();
+  assert.ok(!status.includes('ひみつ') && status.includes('？？？'), status);
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  status = await host.locator('.arena .center .status').innerText();
+  assert.ok(!status.includes('ひみつ') && status.includes('？？？'), status);
+  assert.ok(!(await host.locator('#screen-host .arena').innerText()).includes('ひみつ'));
+  await context.close();
+});
+
+test('対決スタートの二度押しでも、先頭の人との対戦が上書きされない', async () => {
+  const { host, context, code, kids } = await setupMatch([['いちばん', 'kappa'], ['にばん', 'akaoni']]);
+  const first = await kids[0].page.evaluate(() => sessionStorage.getItem('chinchiro.uid'));
+  await host.evaluate(() => { const b = document.getElementById('start-match'); b.click(); b.click(); b.click(); });
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.waitForTimeout(500);
+  const room = await readRoom(host, code);
+  assert.equal(room.state.match.childUid, first);
+  assert.equal(Object.keys(room.queue).length, 1, '2人目は列に残る');
+  await context.close();
+});
+
+test('表示専用画面は音を出さない(親機は出す)', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  assert.equal(await host.locator('#stage-overlay').getAttribute('data-muted'), 'false');
+  const stagePage = await context.newPage();
+  await stagePage.goto(`${url}/index.html?mock=1&room=${code}&stage=1`);
+  await stagePage.locator('#screen-stage').waitFor({ state: 'visible', ...T });
+  assert.equal(await stagePage.locator('#stage-overlay').getAttribute('data-muted'), 'true');
+  await context.close();
+});
+
+test('同じブラウザで親機を2つ開くと、2つ目は親機にならず案内が出る', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1&shareduid=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const second = await context.newPage();
+  await second.goto(`${url}/index.html?mock=1&shareduid=1`);
+  await second.locator('#screen-host-busy').waitFor({ state: 'visible', ...T });
+  assert.ok((await second.locator('#screen-host-busy').innerText()).includes(code));
+  assert.equal(await host.locator('#screen-host').evaluate((e) => e.hidden), false, '1つ目はそのまま親機');
+  await context.close();
+});
+
+test('音のロック解除: unlock() で AudioContext が作られる(iOS 対策)', async () => {
+  const { page, context } = await newPage(null, 'index.html?mock=1');
+  const r = await page.evaluate(() => { const s = ChinchiroAnim.createSounds(); const before = s.unlocked; s.unlock(); return [before, s.unlocked]; });
+  assert.deepEqual(r, [false, true]);
+  await context.close();
+});
+
+test('QR が描けないときは参加URLを大きく出す', async () => {
+  const { page, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  await createRoom(page);
+  assert.equal(await page.locator('#qr').evaluate((e) => e.hidden), true);
+  assert.ok(await page.locator('#join-url.big').isVisible());
+  await context.close();
+});

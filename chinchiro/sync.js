@@ -118,6 +118,8 @@ const ChinchiroSync = (() => {
       async onDisconnectRemove(path) { onDisconnect.push(() => api.remove(path)); },
       async onDisconnectSet(path, value) { onDisconnect.push(() => api.set(path, value)); },
       now: () => Date.now(),
+      serverTimestamp: () => Date.now(),
+      onConnected(cb) { queueMicrotask(() => cb(true)); return () => {}; },
       close() {
         if (channel) { channel.removeEventListener('message', onMessage); channel.close(); }
         watchers.clear();
@@ -151,6 +153,8 @@ const ChinchiroSync = (() => {
       onDisconnectRemove: (path) => dbMod.onDisconnect(r(path)).remove(),
       onDisconnectSet: (path, value) => dbMod.onDisconnect(r(path)).set(value),
       now: () => Date.now(),
+      serverTimestamp: () => dbMod.serverTimestamp(),
+      onConnected: (cb) => dbMod.onValue(r('.info/connected'), (snap) => cb(!!snap.val())),
       close() {},
     };
   }

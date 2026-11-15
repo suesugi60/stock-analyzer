@@ -29,6 +29,7 @@ const ChinchiroAnim = (() => {
   function createSounds() {
     let ctx = null;
     let muted = false;
+    let unlocked = false;
     const ac = () => {
       try {
         ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
@@ -55,6 +56,9 @@ const ChinchiroAnim = (() => {
       o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
     }
     return {
+      /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
+      unlock() { const c = ac(); if (c) unlocked = true; },
+      get unlocked() { return unlocked; },
       clack(vol = 1) { noise(0.06, 2000 + Math.random() * 800, 1.5, 0.55 * vol); tone(2500 + Math.random() * 500, 0.09, 0.16 * vol); },
       rattle(ms = 600) { const n = Math.floor(ms / 70); for (let i = 0; i < n; i++) setTimeout(() => noise(0.03, 3000, 2, 0.22), i * 70 + Math.random() * 25); },
       chime(kind) {
@@ -135,7 +139,7 @@ const ChinchiroAnim = (() => {
     }
 
     function setThrower(t) {
-      if (t && t.char && typeof SugorokuArt !== 'undefined' && SugorokuArt.CHAR_ART[t.char]) {
+      if (t && t.char && typeof SugorokuArt !== 'undefined' && Object.hasOwn(SugorokuArt.CHAR_ART, t.char)) {
         el.avatar.innerHTML = SugorokuArt.CHAR_ART[t.char]();
         el.avatar.dataset.char = t.char;
         el.avatar.style.setProperty('--c', t.color || '#2b2d5c');

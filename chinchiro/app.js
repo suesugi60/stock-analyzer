@@ -9,6 +9,7 @@
   const ROOM_PARAM = (params.get('room') || '').toUpperCase();
   const IS_STAGE = params.get('stage') === '1';
   const QUICK = params.get('quick') === '1'; // 演出を一瞬で終える(テスト用)
+  const SHARED_UID = params.get('shareduid') === '1'; // mock で uid をタブ間で共有(テスト用)
   const KEY_HOST = 'chinchiro.host';
   const KEY_SETUP = 'chinchiro.setup';
   const KEY_MUTED = 'chinchiro.muted';
@@ -22,6 +23,9 @@
     { id: 'kiji', name: 'きじ' }, { id: 'kappa', name: 'かっぱ' }, { id: 'binbo', name: 'びんぼうがみ' },
   ];
   const CHAR_NAME = Object.fromEntries(CHARACTERS.map((c) => [c.id, c.name]));
+  const validChar = (id) => typeof id === 'string' && Object.hasOwn(CHAR_NAME, id) && Object.hasOwn(SugorokuArt.CHAR_ART, id);
+  const charArt = (id) => (validChar(id) ? SugorokuArt.CHAR_ART[id]() : SugorokuArt.CHAR_ART.binbo());
+  const charName = (id) => (validChar(id) ? CHAR_NAME[id] : '');
   const COLORS = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#4dd4e8', '#ff7bd2'];
   const MODE_LABEL = { points: { label: '点数', hint: '持ち点100から' }, drink: { label: '飲み', hint: '負けたら飲む' }, both: { label: '両方', hint: '点数も飲みも' } };
 
@@ -42,8 +46,8 @@
     window.scrollTo(0, 0);
   }
   function setAvatar(el, charId, color) {
-    const art = SugorokuArt.CHAR_ART[charId] ? SugorokuArt.CHAR_ART[charId]() : '';
-    el.dataset.char = charId || '';
+    const art = charArt(charId);
+    el.dataset.char = validChar(charId) ? charId : '';
     el.style.setProperty('--c', color || '#2b2d5c');
     el.innerHTML = art;
   }
@@ -73,7 +77,7 @@
   let unsubRoom = null;
 
   async function connect() {
-    if (MOCK) return SY.createBackend({ kind: 'mock', storage: localStorage, uidStorage: sessionStorage });
+    if (MOCK) return SY.createBackend({ kind: 'mock', storage: localStorage, uidStorage: SHARED_UID ? localStorage : sessionStorage });
     return SY.createBackend({ kind: 'firebase', config: window.FIREBASE_CONFIG });
   }
 
@@ -89,7 +93,7 @@
     pickCb = cb;
     setAvatar($('pick-avatar'), current, '#ff4d4d');
     $('pick-title').textContent = title;
-    $('pick-hint').textContent = `いまは「${CHAR_NAME[current] || ''}」。好きなキャラをタップしてね`;
+    $('pick-hint').textContent = `いまは「${charName(current)}」。好きなキャラをタップしてね`;
     const grid = $('picks');
     grid.innerHTML = '';
     for (const c of CHARACTERS) {
@@ -133,7 +137,7 @@
     const saved = store.get(KEY_SETUP);
     if (saved && typeof saved === 'object') {
       if (typeof saved.name === 'string') setup.name = safeName(saved.name);
-      if (CHAR_NAME[saved.char]) setup.char = saved.char;
+      if (validChar(saved.char)) setup.char = saved.char;
       if (MODE_LABEL[saved.mode]) setup.mode = saved.mode;
       if (L.POINT_UNITS.includes(saved.unit)) setup.unit = saved.unit;
       if (L.DRINK_UNITS[saved.drinkUnit]) setup.drinkUnit = saved.drinkUnit;
@@ -148,10 +152,10 @@
     setup.name = safeName($('host-name').value) || '配信者';
     const c = SY.roomCode();
     const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char };
-    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.now(), settings, state: L.createState() });
+    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState() });
     store.set(KEY_SETUP, setup);
     store.set(KEY_HOST, { code: c, uid: backend.uid });
-    enterHost(c);
+    await enterHost(c);
   }
 
   // ---------- 親機: 本体 ----------
@@ -163,7 +167,24 @@
     for (const el of root.querySelectorAll('[data-ref]')) view.refs[el.dataset.ref] = el;
   }
 
-  function enterHost(c) {
+  /** 親機は1タブだけ(同じブラウザで2つ開くと出目が食い違う)。Web Locks でロックを持ち続ける。 */
+  function acquireHostLock(c) {
+    if (!navigator.locks) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      navigator.locks.request(`chinchiro-host-${c}`, { ifAvailable: true }, (lock) => {
+        if (!lock) { resolve(false); return undefined; }
+        resolve(true);
+        return new Promise(() => {}); // ページが閉じるまで保持
+      }).catch(() => resolve(true));
+    });
+  }
+
+  async function enterHost(c) {
+    if (!(await acquireHostLock(c))) {
+      $('busy-code').textContent = c;
+      show('screen-host-busy');
+      return;
+    }
     role = 'host';
     bind(hostView, $('screen-host'));
     subscribe(c);
@@ -173,6 +194,8 @@
 
   function enterStage(c) {
     role = 'stage';
+    sounds.setMuted(true); // 表示専用は音なし(配信ソースで二重に鳴らさない)
+    renderMute();
     const clone = $('screen-host').cloneNode(true);
     clone.id = 'screen-stage';
     for (const b of clone.querySelectorAll('button')) b.remove();
@@ -192,18 +215,38 @@
   }
 
   let qrDrawnFor = null;
-  function drawQr(canvas, text) {
-    if (!canvas || qrDrawnFor === text) return;
-    if (!window.QRCode || typeof window.QRCode.toCanvas !== 'function') { canvas.hidden = true; return; }
+  let qrLoading = false;
+  function loadQrLib() {
+    if (qrLoading || MOCK || window.QRCode) return;
+    qrLoading = true;
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js';
+    sc.onload = () => render();
+    sc.onerror = () => { qrLoading = false; };
+    document.head.appendChild(sc);
+  }
+  function drawQr(view, text) {
+    const canvas = view.refs.qr;
+    const urlEl = view.refs.url;
+    if (!canvas) return;
+    if (!window.QRCode || typeof window.QRCode.toCanvas !== 'function') {
+      loadQrLib();
+      canvas.hidden = true;
+      if (urlEl) urlEl.classList.add('big'); // QR が無いときは URL を大きく
+      return;
+    }
+    if (qrDrawnFor === text) return;
     qrDrawnFor = text;
-    window.QRCode.toCanvas(canvas, text, { width: 84, margin: 1 }, (err) => { if (err) canvas.hidden = true; });
+    canvas.hidden = false;
+    if (urlEl) urlEl.classList.remove('big');
+    window.QRCode.toCanvas(canvas, text, { width: 84, margin: 1 }, (err) => { if (err) { canvas.hidden = true; if (urlEl) urlEl.classList.add('big'); } });
   }
 
   function unitLabel(settings) { return (L.DRINK_UNITS[settings.drinkUnit] || L.DRINK_UNITS.sip).label; }
 
   function fighterHtml(cls, char, color, name, sub, handText, handSub, turn, extraCls = '') {
     return `<div class="fighter ${cls} ${turn ? 'turn' : ''} ${extraCls}">
-      <span class="avatar" data-char="${esc(char)}" style="--c:${esc(color)}">${SugorokuArt.CHAR_ART[char] ? SugorokuArt.CHAR_ART[char]() : ''}</span>
+      <span class="avatar" data-char="${validChar(char) ? char : ''}" style="--c:${esc(color)}">${charArt(char)}</span>
       <div class="fname">${esc(name)}</div><div class="fsub">${esc(sub)}</div>
       <div class="fhand">${esc(handText)}${handSub ? `<small>${esc(handSub)}</small>` : ''}</div></div>`;
   }
@@ -223,7 +266,7 @@
     const players = room.players || {};
     if (r.code) r.code.textContent = code;
     if (r.url) r.url.textContent = joinUrl(code);
-    if (r.qr) drawQr(r.qr, joinUrl(code));
+    if (r.qr) drawQr(view, joinUrl(code));
     // 配信者の成績
     if (r.record) {
       const h = st.host || {};
@@ -237,6 +280,7 @@
     if (r.arena) {
       const m = st.match;
       const child = m ? players[m.childUid] : null;
+      const childName = child ? (child.hidden ? '？？？' : (child.name || 'リスナー')) : '挑戦者';
       const [ph, phs] = sideText(m && m.parent);
       const [ch, chs] = sideText(m && m.child);
       let center = '<div class="vs">VS</div>';
@@ -244,13 +288,13 @@
       let drink = '';
       if (st.phase === 'lobby') status = Object.keys(room.queue || {}).length ? (readonly ? '次の対決を待っています' : '「対決スタート」で先頭の人と対決') : '挑戦者を待っています';
       else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length}/${L.MAX_THROWS})`;
-      else if (st.phase === 'child') status = `${child ? child.name : '挑戦者'} さんの番(${m.child.throws.length}/${L.MAX_THROWS})`;
+      else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length}/${L.MAX_THROWS})`;
       else if (st.phase === 'result' && st.result) {
         const res = st.result;
         center = `<div class="vs">${res.winner === 'draw' ? '引き分け' : `×${res.mult}`}</div>`;
-        status = res.winner === 'parent' ? `${settings.hostName || '配信者'} の勝ち!` : res.winner === 'child' ? `${child ? child.name : '挑戦者'} さんの勝ち!` : 'もう一度!';
+        status = res.winner === 'parent' ? `${settings.hostName || '配信者'} の勝ち!` : res.winner === 'child' ? `${childName} さんの勝ち!` : 'もう一度!';
         if (settings.mode !== 'points' && res.winner !== 'draw') {
-          const loser = res.winner === 'parent' ? (child ? (child.hidden ? '？？？' : child.name) : '挑戦者') : (settings.hostName || '配信者');
+          const loser = res.winner === 'parent' ? childName : (settings.hostName || '配信者');
           drink = `${loser} さんが飲む: ${unitLabel(settings)} × ${res.mult}`;
         }
       } else if (st.phase === 'closed') status = '部屋は閉じました';
@@ -259,7 +303,7 @@
         fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '') +
         `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
         (child
-          ? fighterHtml('child', child.char, colorFor(m.childUid), child.hidden ? '？？？' : child.name, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
+          ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
     }
     // 順番待ち
@@ -272,8 +316,8 @@
         row.className = 'queue-row';
         row.dataset.uid = uid;
         const pts = settings.mode !== 'drink' ? `${p.points ?? 100}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
-        row.innerHTML = `<span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${colorFor(uid)}">${SugorokuArt.CHAR_ART[p.char] ? SugorokuArt.CHAR_ART[p.char]() : ''}</span>` +
-          `<span class="qname">${p.hidden ? '？？？' : esc(p.name)}${p.online === false ? ' <span class="offline">オフライン</span>' : ''}</span><span class="qpts">${esc(pts)}</span>`;
+        row.innerHTML = `<span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${colorFor(uid)}">${charArt(p.char)}</span>` +
+          `<span class="qname">${p.hidden ? '？？？' : esc(p.name || 'リスナー')}${p.online === false ? ' <span class="offline">オフライン</span>' : ''}</span><span class="qpts">${esc(pts)}</span>`;
         if (!readonly) row.insertAdjacentHTML('beforeend', `<span class="qacts"><button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button></span>`);
         r.queue.appendChild(row);
       });
@@ -285,7 +329,7 @@
         .map(([uid, p]) => ({ uid, name: p.name, points: p.points, char: p.char }));
       rows.push({ uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? 100, char: settings.hostChar, host: true });
       rows.sort((a, b) => b.points - a.points);
-      r.ranking.innerHTML = rows.slice(0, 11).map((p, i) => `<div class="rank-row2"><span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${p.host ? '#ff4d4d' : colorFor(p.uid)}">${SugorokuArt.CHAR_ART[p.char] ? SugorokuArt.CHAR_ART[p.char]() : ''}</span><span class="qname">${esc(p.name)}${p.host ? ' (配信者)' : ''}</span><span class="qpts">${p.points}点</span></div>`).join('');
+      r.ranking.innerHTML = rows.slice(0, 11).map((p, i) => `<div class="rank-row2"><span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${p.host ? '#ff4d4d' : colorFor(p.uid)}">${charArt(p.char)}</span><span class="qname">${esc(p.name || 'リスナー')}${p.host ? ' (配信者)' : ''}</span><span class="qpts">${p.points}点</span></div>`).join('');
     }
   }
 
@@ -316,7 +360,7 @@
     $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
   }
 
-  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; }
+  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); }
 
   function render() {
     if (!room) {
@@ -340,6 +384,8 @@
   // ---------- リスナー ----------
   const listenerView = { root: null, refs: {} };
   let join = { name: '', char: 'momotaro' };
+  let joined = false; // 列に並んだことがある(online を管理する)
+  let lastTurnKey = null;
   const keyListener = () => `chinchiro.listener.${code}`;
 
   function renderJoin() {
@@ -357,16 +403,27 @@
     if (me && me.banned) { show('screen-banned'); return; }
     const presence = Object.keys(r.presence || {}).length;
     if (!me && presence >= MAX_PRESENCE) { show('screen-full'); return; }
-    await backend.set(`rooms/${c}/presence/${backend.uid}`, true);
-    await backend.onDisconnectRemove(`rooms/${c}/presence/${backend.uid}`);
+    // 接続のたび(初回と回線が戻ったとき)に presence/online を立て直し、切断時の後始末を登録し直す
+    backend.onConnected(async (ok) => {
+      if (!ok) return;
+      try {
+        await backend.set(`rooms/${c}/presence/${backend.uid}`, true);
+        await backend.onDisconnectRemove(`rooms/${c}/presence/${backend.uid}`);
+        if (joined) {
+          await backend.update(`rooms/${c}/players/${backend.uid}`, { online: true });
+          await backend.onDisconnectSet(`rooms/${c}/players/${backend.uid}/online`, false);
+        }
+      } catch (e) { console.warn('presence の更新に失敗', e); }
+    });
     if (me) { // 再読み込み: 参加済みなら自分の画面へ直接戻る
+      joined = true;
       await backend.update(`rooms/${c}/players/${backend.uid}`, { online: true });
       await backend.onDisconnectSet(`rooms/${c}/players/${backend.uid}/online`, false);
       enterListener(c);
       return;
     }
     const saved = store.get(keyListener());
-    if (saved && typeof saved === 'object') { join.name = safeName(saved.name); if (CHAR_NAME[saved.char]) join.char = saved.char; }
+    if (saved && typeof saved === 'object') { join.name = safeName(saved.name); if (validChar(saved.char)) join.char = saved.char; }
     renderJoin();
     show('screen-join');
   }
@@ -374,15 +431,16 @@
   async function challenge() {
     join.name = safeName($('join-name').value) || 'リスナー';
     const base = `rooms/${code}/players/${backend.uid}`;
-    await backend.update(base, { name: join.name, char: join.char, joinedAt: backend.now(), online: true });
-    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.now() });
+    await backend.update(base, { name: join.name, char: join.char, joinedAt: backend.serverTimestamp(), online: true });
+    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.serverTimestamp() });
     await backend.onDisconnectSet(`${base}/online`, false);
+    joined = true;
     store.set(keyListener(), join);
     enterListener(code);
   }
 
   async function requeue() {
-    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.now() });
+    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.serverTimestamp() });
   }
 
   function enterListener(c) {
@@ -408,7 +466,11 @@
     else if (me) status = '順番待ちから抜けています';
     $('my-status').textContent = status;
     const box = document.querySelector('.mystatus');
-    box.classList.toggle('turn', !!(inMatch && st.phase === 'child'));
+    const myTurn = !!(inMatch && st.phase === 'child');
+    box.classList.toggle('turn', myTurn);
+    const turnKey = myTurn ? `${st.seq}` : null;
+    if (turnKey && turnKey !== lastTurnKey) { try { navigator.vibrate?.(200); } catch { /* 非対応 */ } sounds.roll(); }
+    lastTurnKey = turnKey;
     if (me) {
       setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
       $('my-avatar').hidden = false;
@@ -445,7 +507,7 @@
     rollRequested = true;
     rollReqSeq = (room.state.lastThrow && room.state.lastThrow.seq) || 0;
     renderListener();
-    await backend.set(`rooms/${code}/actions/${backend.uid}`, { type: 'roll', at: backend.now() });
+    await backend.set(`rooms/${code}/actions/${backend.uid}`, { type: 'roll', at: backend.serverTimestamp() });
     setTimeout(() => { if (rollRequested) { rollRequested = false; if (room) renderListener(); } }, 6000); // 親機が応答しないときの保険
   }
 
@@ -464,7 +526,7 @@
     const child = st.match ? (room.players || {})[st.match.childUid] : null;
     const thrower = lt.by === 'parent'
       ? { name: settings.hostName || '配信者', char: settings.hostChar, color: '#ff4d4d' }
-      : { name: child ? (child.hidden ? '？？？' : child.name) : '挑戦者', char: child ? child.char : 'binbo', color: colorFor(st.match ? st.match.childUid : '') };
+      : { name: child ? (child.hidden ? '？？？' : (child.name || 'リスナー')) : '挑戦者', char: child && validChar(child.char) ? child.char : 'binbo', color: colorFor(st.match ? st.match.childUid : '') };
     const side = st.match && st.match[lt.by];
     const remaining = side && side.throws.length ? L.MAX_THROWS - side.throws.length : 0;
     pendingThrow = { throwObj: lt.throw, thrower, remaining };
@@ -495,23 +557,26 @@
   const writeState = (st) => backend.set(`rooms/${code}/state`, st);
 
   async function hostStartMatch(uid) {
-    const st = L.startMatch(room.state, uid);
-    await backend.remove(`rooms/${code}/queue/${uid}`);
-    await writeState(st);
+    const cur = room.state;
+    if (cur.phase !== 'lobby' && cur.phase !== 'result') return; // 二度押し・遅れて届いた要求は無視
+    const st = L.startMatch(cur, uid);
+    await backend.update(`rooms/${code}`, { state: st, [`queue/${uid}`]: null }); // 列からの削除と対戦開始を1回で
   }
-  async function hostThrow(by) {
+  async function hostThrowAndSettle(by) {
     const st = room.state;
     if (!L.canThrow(st, by)) return;
     const roll = L.rollDice(Math.random);
     const { state, result } = L.applyThrow(st, by, roll, room.settings);
-    await writeState(state);
-    if (result) await applyResultToChild(result);
-  }
-  async function applyResultToChild(result) {
+    if (!result) { await writeState(state); return; }
+    // 結果の書き込みと子の点数の更新を1回で(途中で親機が落ちても食い違わない)
     const p = (room.players || {})[result.childUid] || {};
     const d = result.deltas.child;
-    await backend.update(`rooms/${code}/players/${result.childUid}`, {
-      points: (p.points ?? 100) + d.points, wins: (p.wins ?? 0) + d.wins, losses: (p.losses ?? 0) + d.losses, drinks: (p.drinks ?? 0) + d.drinks,
+    await backend.update(`rooms/${code}`, {
+      state,
+      [`players/${result.childUid}/points`]: (p.points ?? 100) + d.points,
+      [`players/${result.childUid}/wins`]: (p.wins ?? 0) + d.wins,
+      [`players/${result.childUid}/losses`]: (p.losses ?? 0) + d.losses,
+      [`players/${result.childUid}/drinks`]: (p.drinks ?? 0) + d.drinks,
     });
   }
   /** リスナーの「振る」要求を処理する。手番の子の要求だけ受け付け、それ以外は捨てる。 */
@@ -521,7 +586,7 @@
       const st = room.state;
       const isTurn = a && a.type === 'roll' && st.phase === 'child' && st.match && st.match.childUid === uid && L.canThrow(st, 'child');
       await backend.remove(`rooms/${code}/actions/${uid}`);
-      if (isTurn) await hostThrow('child');
+      if (isTurn) await hostThrowAndSettle('child');
     }
   }
   function firstInQueue() {
@@ -544,7 +609,7 @@
     const prev = store.get(KEY_HOST);
     if (prev && prev.code && prev.uid === backend.uid) { // 再読み込み: 前回の部屋へ直接戻る
       const r = await backend.get(`rooms/${prev.code}`);
-      if (r && r.hostUid === backend.uid && (!r.state || r.state.phase !== 'closed')) { enterHost(prev.code); return; }
+      if (r && r.hostUid === backend.uid && (!r.state || r.state.phase !== 'closed')) { await enterHost(prev.code); return; }
       store.del(KEY_HOST);
     }
     enterHostEntry();
@@ -566,9 +631,11 @@
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + e.message)));
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
-  $('start-match').addEventListener('click', () => hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }));
-  $('host-roll').addEventListener('click', () => hostDo(() => hostThrow('parent')));
-  $('roll-for-child').addEventListener('click', () => hostDo(() => hostThrow('child')));
+  document.addEventListener('pointerdown', () => sounds.unlock()); // iOS: 最初のタップで音を使えるようにする
+  renderMute();
+  $('start-match').addEventListener('click', () => { $('start-match').hidden = true; hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }); });
+  $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });
+  $('roll-for-child').addEventListener('click', () => { $('roll-for-child').hidden = true; hostDo(() => hostThrowAndSettle('child')); });
   $('next-match').addEventListener('click', () => hostDo(() => writeState(L.nextMatch(room.state))));
   $('rematch').addEventListener('click', () => hostDo(() => { const uid = room.state.match && room.state.match.childUid; if (uid) return hostStartMatch(uid); }));
   $('listener-roll').addEventListener('click', () => listenerRoll().catch((e) => alert('振れませんでした: ' + e.message)));

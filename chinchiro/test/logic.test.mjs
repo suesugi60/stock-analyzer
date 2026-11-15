@@ -221,3 +221,13 @@ test('normalizeState: 同期で消えた空配列や null を補い、その状�
   assert.deepEqual(L.normalizeState(undefined), L.createState());
   assert.deepEqual(L.nextMatch(stripped).phase, 'lobby');
 });
+
+test('startMatch: 対戦中(parent/child)には始められず、lobby と result からだけ始められる', () => {
+  let s = L.startMatch(L.createState(), 'k1');
+  assert.throws(() => L.startMatch(s, 'k2'), /対戦中/);
+  s = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS).state;
+  assert.throws(() => L.startMatch(s, 'k2'), /対戦中/);
+  s = L.applyThrow(s, 'child', roll([6, 6, 6]), SETTINGS).state;
+  assert.equal(s.phase, 'result');
+  assert.equal(L.startMatch(s, 'k1').phase, 'parent', 'result からは同じ人ともう一回できる');
+});

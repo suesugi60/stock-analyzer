@@ -32,7 +32,7 @@
 ### 演出の確認
 
 `...?demo=1&dice=4,5,6&seed=7` で任意の出目の演出だけ見られる(`&shonben=1` でションベン)。
-`...?mock=1` を付けると、Firebase なしで同じブラウザ内(別タブ)だけで同期して試せる。
+`...?mock=1` を付けると、Firebase なしで同じブラウザ内(別タブ)だけで同期して試せる(お試し専用。他の端末とはつながらない)。
 
 ## ルール
 
@@ -63,12 +63,15 @@
 5. 「Authentication」→「Settings(設定)」→「承認済みドメイン」に `suesugi60.github.io` を追加。
 6. 左上の歯車 →「プロジェクトの設定」→ 下の「マイアプリ」→ ウェブ(`</>`)→ 名前を付けて登録 → 表示される
    `const firebaseConfig = { ... }` の中身をコピーして、`chinchiro/firebase-config.js` に貼る
-   (`firebase-config.example.js` が見本。この値は公開してよいもの)。
+   (`firebase-config.example.js` が見本。この値は公開してよいもの)。`databaseURL` が含まれていることを確認する
+   (無ければ Realtime Database のページ上部に出ている `https://....firebasedatabase.app` を `databaseURL` として足す)。
 7. `main` に反映すると公開URLで動く。まず自分のスマホで `?room=コード` を開いて、親機と別端末で対決できるか確かめる。
 
 無料枠(Spark)は同時接続100・転送10GB/月。このアプリは観戦者が80人を超えると「満員」にして接続しない。
 
 ### セキュリティルール
+
+`chinchiro/firebase-rules.json` の中身をそのまま貼ります(下に同じものを載せています)。
 
 ```json
 {
@@ -76,30 +79,58 @@
     "rooms": {
       "$code": {
         ".read": true,
-        "hostUid":   { ".write": "auth != null && !data.exists() && newData.val() == auth.uid" },
-        "createdAt": { ".write": "auth != null && !data.exists()" },
+        ".write": "auth != null && !data.exists() && newData.child('hostUid').val() == auth.uid && newData.hasChildren(['hostUid', 'settings', 'state'])",
+        "hostUid":   { ".write": "auth != null && !data.exists() && newData.val() == auth.uid", ".validate": "newData.isString()" },
+        "createdAt": { ".write": "auth != null && !data.exists()", ".validate": "newData.isNumber()" },
         "settings":  { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
         "state":     { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
         "players": {
           "$uid": {
-            "name":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().length <= 12" },
-            "char":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString()" },
-            "joinedAt": { ".write": "auth != null && $uid == auth.uid" },
-            "online":   { ".write": "auth != null && $uid == auth.uid" },
-            "$other":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid" }
+            "name":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 12" },
+            "char":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().matches(/^(momotaro|kintaro|urashima|kaguya|issun|akaoni|aooni|inu|saru|kiji|kappa|binbo)$/)" },
+            "joinedAt": { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isNumber()" },
+            "online":   { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isBoolean()" },
+            "points":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "wins":     { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "losses":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "drinks":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "hidden":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isBoolean()" },
+            "banned":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isBoolean()" },
+            "$other":   { ".validate": false }
           }
         },
-        "presence": { "$uid": { ".write": "auth != null && $uid == auth.uid" } },
-        "queue":    { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } },
-        "actions":  { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } }
+        "presence": { "$uid": { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isBoolean()" } },
+        "queue": {
+          "$uid": {
+            ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
+            ".validate": "newData.hasChildren(['joinedAt']) && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 60000 && newData.child('joinedAt').val() <= now + 60000",
+            "$other": { ".validate": false }
+          }
+        },
+        "actions": {
+          "$uid": {
+            ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
+            ".validate": "newData.child('type').val() == 'roll' && newData.child('at').isNumber()",
+            "$other": { ".validate": "$other == 'type' || $other == 'at'" }
+          }
+        },
+        "$other": { ".validate": false }
       }
     }
   }
 }
 ```
 
-意味: 出目・勝敗・点数(`state` と `players/*/points` など)は部屋を作った親機しか書けない。
-リスナーは自分の名前・キャラ・順番待ち・「振る」要求だけ書ける。
+意味: 部屋は「作る人の uid が hostUid」のときだけ新規作成できる。以後、出目・勝敗・点数(`state` と `players/*/points` など)は
+その親機しか書けない。リスナーは自分の名前(1〜12文字)・キャラ(12体のどれか)・順番待ち(時刻はサーバー時刻の±60秒)・
+「振る」要求・接続中フラグだけ書ける。それ以外のキーは拒否。
+
+**確認のしかた(推奨)**: Realtime Database の「ルール」タブ右上の「ルール プレイグラウンド」で、
+認証を「匿名 (uid 任意)」にして次を試す。
+- `set /rooms/AB7K` に `{"hostUid":"<同じuid>","settings":{},"state":{"phase":"lobby"}}` → 許可
+- 別の uid で `set /rooms/AB7K/state` → 拒否
+- 自分の uid で `set /rooms/AB7K/players/<uid>/name` に 13文字 → 拒否、12文字 → 許可
+- 自分の uid で `set /rooms/AB7K/players/<uid>/char` に `"dragon"` → 拒否、`"kappa"` → 許可
 
 ## ファイル構成
 
@@ -114,6 +145,7 @@ chinchiro/
   app.js                     親機・リスナー・表示専用の画面
   firebase-config.js         Firebase の設定(利用者が貼る)
   firebase-config.example.js 見本
+  firebase-rules.json        Realtime Database に貼るセキュリティルール
   test/                      node --test(ロジック・同期)と Playwright(画面)
 ```
 

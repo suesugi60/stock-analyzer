@@ -104,6 +104,8 @@ const ChinchiroLogic = (() => {
   function bump(state) { const s = normalizeState(state); s.seq += 1; return s; }
 
   function startMatch(state, childUid) {
+    const cur = normalizeState(state);
+    if (cur.phase === 'parent' || cur.phase === 'child') throw new Error('対戦中は始められません');
     const s = bump(state);
     s.phase = 'parent';
     s.result = null;

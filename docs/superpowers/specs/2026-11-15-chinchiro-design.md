@@ -170,36 +170,12 @@ Hand  = { type: 'pinzoro'|'zoro'|'shigoro'|'me'|'none'|'hifumi'|'shonben', value
 
 ### セキュリティルール(Realtime Database)
 
-```json
-{
-  "rules": {
-    "rooms": {
-      "$code": {
-        ".read": true,
-        "hostUid":   { ".write": "auth != null && !data.exists() && newData.val() == auth.uid" },
-        "createdAt": { ".write": "auth != null && !data.exists()" },
-        "settings":  { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
-        "state":     { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
-        "players": {
-          "$uid": {
-            "name":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().length <= 12" },
-            "char":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString()" },
-            "joinedAt": { ".write": "auth != null && $uid == auth.uid" },
-            "online":   { ".write": "auth != null && $uid == auth.uid" },
-            "$other":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid" }
-          }
-        },
-        "presence": { "$uid": { ".write": "auth != null && $uid == auth.uid" } },
-        "queue":   { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } },
-        "actions": { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } }
-      }
-    }
-  }
-}
-```
+正本は `chinchiro/firebase-rules.json`(README にも転載)。要点:
 
-ルールの意図: 親機以外は出目・勝敗・点数を書けない。リスナーは自分の名前・キャラ・順番待ち・「振る」要求だけ。
-(ルールの文面は実装時に Firebase のシミュレーターで検証する。細部の修正は作り手に任せる。)
+- `rooms/$code` は「作る人の uid が `hostUid`」のときだけ新規作成できる(親に `.write` が無いと子が許可されていても作成できないため、親に作成だけ許す)。
+- `settings` / `state` / `players/*/{points,wins,losses,drinks,hidden,banned}` は親機だけ。
+- リスナーは自分の `name`(1〜12文字)・`char`(12体の id のどれか)・`joinedAt`・`online`・`presence`・`queue`(`joinedAt` はサーバー時刻±60秒)・`actions`(`type:'roll'`, `at`)だけ。それ以外のキーは `.validate: false`。
+- 実装レビューで判明した点: 当初案は親の `.write` が無く部屋を作れなかった。ルールはこの環境から検証できないため、README に「ルール プレイグラウンド」での確認手順を載せた。
 
 ### 出目の決定と演出の同期
 

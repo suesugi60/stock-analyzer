@@ -89,3 +89,13 @@ test('firebase: config が無ければ分かるエラー', async () => {
   await assert.rejects(createBackend({ kind: 'firebase' }), /FIREBASE_CONFIG/);
   await assert.rejects(createBackend({ kind: 'firebase', config: null }), /FIREBASE_CONFIG/);
 });
+
+test('mock: onConnected は接続時に true で呼ばれ、serverTimestamp は数値', async () => {
+  const { a, b } = await pair();
+  const seen = [];
+  a.onConnected((v) => seen.push(v));
+  await waitFor(() => seen.length >= 1);
+  assert.deepEqual(seen, [true]);
+  assert.equal(typeof a.serverTimestamp(), 'number');
+  a.close(); b.close();
+});
