@@ -237,3 +237,4 @@ h2::before { content: '▶ '; color: var(--red); }
 .arena.compact .fighter .avatar { width: 64px; height: 64px; }
 .arena.compact .fighter .fname { font-size: .95rem; }
 .arena.compact .center .vs { font-size: 1.6rem; }
+.arena .center .drink { display: block; color: var(--red); font-weight: 900; font-size: .9rem; margin-top: 4px; }

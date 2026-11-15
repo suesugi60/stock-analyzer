@@ -119,12 +119,10 @@ test('表示専用: ?room=CODE&stage=1 を開くと同じ部屋の状態が見�
   await context.close();
 });
 
-test('親機: 再読み込みすると「前回の部屋を続ける」で同じコードに戻る', async () => {
+test('親機: 再読み込みすると同じ部屋に直接戻る', async () => {
   const { page, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
   const code = await createRoom(page);
   await page.reload();
-  await page.locator('#resume-room').waitFor({ state: 'visible', ...T });
-  await page.click('#resume-room');
   await page.locator('#screen-host').waitFor({ state: 'visible', ...T });
   assert.equal((await page.locator('#room-code').innerText()).trim(), code);
   await context.close();
@@ -219,8 +217,8 @@ test('満員: presence が 80 ある部屋を見るだけで開くと満員表�
 
 // ---------- 対戦 ----------
 // quick=1: 演出を一瞬で終える(流れのテスト用)
-async function setupMatch(names = [['うさ', 'kappa']], opts = {}) {
-  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+async function setupMatch(names = [['うさ', 'kappa']], opts = {}, hostExtra = '') {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1' + hostExtra, { width: 1280, height: 720 });
   const code = await createRoom(host, opts);
   const kids = [];
   for (const [n, c] of names) {
@@ -370,5 +368,98 @@ test('次の挑戦者で列の次の人と対戦', async () => {
   assert.equal((await readRoom(host, code)).state.match.childUid, await kids[1].page.evaluate(() => sessionStorage.getItem('chinchiro.uid')));
   await kids[1].page.locator('#my-status').filter({ hasText: '親が振っています' }).waitFor({ state: 'visible', ...T });
   await kids[0].page.locator('#requeue').waitFor({ state: 'visible', ...T });
+  await context.close();
+});
+
+// ---------- 代わりに振る・復帰・ランキング・飲みモード・閉じる ----------
+const FIX_PARENT_4ZORO_CHILD_6ME = '[0.5, 0.5, 0.5, 0.5, 0.3, 0.5, 0.1, 0.1, 0.9, 0.3]';   // 親 4ゾロ → 子 1,1,6(親の勝ち ×3)
+const FIX_PARENT_2ME_CHILD_4ZORO = '[0.5, 0.7, 0.7, 0.2, 0.3, 0.5, 0.5, 0.5, 0.5, 0.3]';   // 親 5,5,2 → 子 4ゾロ(子の勝ち ×3)
+const fixDice = (page, seqText) => page.evaluate((txt) => { const seq = JSON.parse(txt); Math.random = () => (seq.length ? seq.shift() : 0.5); }, seqText);
+
+test('代わりに振る: 子が反応しないと親機にボタンが出て、押すと子の投げとして進む', async () => {
+  const { host, context, code } = await setupMatch([['うさ', 'kappa']], {}, '&proxy=500');
+  await fixDice(host, FIX_PARENT_4ZORO_CHILD_6ME);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('#roll-for-child').waitFor({ state: 'visible', ...T });
+  await host.click('#roll-for-child');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  const room = await readRoom(host, code);
+  assert.equal(room.state.phase, 'result');
+  assert.deepEqual(room.state.match.child.throws[0].dice, [1, 1, 6]);
+  assert.equal(room.state.result.winner, 'parent');
+  await context.close();
+});
+
+test('親機が再読み込みしても続きから: 子の番の途中で reload → 同じ部屋・同じ phase で続行できる', async () => {
+  const { host, context, code, kids } = await setupMatch();
+  await fixDice(host, FIX_PARENT_4ZORO_CHILD_6ME);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await host.reload();
+  await host.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  assert.equal((await host.locator('#room-code').innerText()).trim(), code);
+  assert.ok((await host.locator('.arena .center .status').innerText()).includes('うさ さんの番'));
+  assert.equal(await host.locator('#host-roll').evaluate((e) => e.hidden), true);
+  await fixDice(host, '[0.5, 0.1, 0.1, 0.9, 0.3]');
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  assert.equal((await readRoom(host, code)).state.phase, 'result');
+  await context.close();
+});
+
+test('リスナーが再読み込みしても自分の画面に戻る', async () => {
+  const { context, kids } = await setupMatch();
+  const kid = kids[0].page;
+  await kid.reload();
+  await kid.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+  assert.match(await kid.locator('#my-status').innerText(), /1 番目/);
+  assert.ok((await kid.locator('#my-record').innerText()).includes('うさ'));
+  await context.close();
+});
+
+test('ランキング: 点数順に並び、非表示の人は出ない', async () => {
+  const { host, context, code, kids } = await setupMatch([['うさ', 'kappa'], ['かくれ', 'inu']]);
+  await host.locator('#queue .queue-row').nth(1).locator('[data-act="hide"]').click();
+  await host.locator('#queue .queue-row .qname').filter({ hasText: '？？？' }).waitFor({ state: 'attached', ...T });
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  const rows = await host.locator('#ranking .rank-row2').allInnerTexts();
+  assert.equal(rows.length, 2, 'うさ と配信者だけ(非表示の人は出ない)');
+  assert.ok(rows[0].includes('うさ') && rows[0].includes('130点'), rows[0]);
+  assert.ok(rows[1].includes('配信者') && rows[1].includes('70点'), rows[1]);
+  await context.close();
+});
+
+test('飲みモード: 結果に「1口 × 3」と出て累計が増える', async () => {
+  const { host, context, code, kids } = await setupMatch([['うさ', 'kappa']], { mode: 'drink', drink: 'sip' });
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('.arena .center .drink').innerText()).includes('1口 × 3'));
+  assert.ok((await host.locator('#host-record').innerText()).includes('飲んだ 1口 × 3'));
+  assert.ok(!(await host.locator('#host-record').innerText()).includes('点'), '飲みモードでは点数を出さない');
+  assert.ok((await kids[0].page.locator('.arena .center .drink').innerText()).includes('1口 × 3'));
+  await context.close();
+});
+
+test('部屋を閉じるとリスナーに「終了しました」', async () => {
+  const { host, context, kids } = await setupMatch();
+  host.on('dialog', (d) => d.accept());
+  await host.click('#close-room');
+  await kids[0].page.locator('#screen-closed').waitFor({ state: 'visible', ...T });
+  await host.locator('#screen-host-entry').waitFor({ state: 'visible', ...T });
   await context.close();
 });

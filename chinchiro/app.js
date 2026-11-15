@@ -13,6 +13,7 @@
   const KEY_SETUP = 'chinchiro.setup';
   const KEY_MUTED = 'chinchiro.muted';
   const MAX_PRESENCE = 80; // 無料枠(同時100接続)の安全装置
+  const PROXY_ROLL_MS = Number(params.get('proxy')) || 20000; // 子が反応しないとき「代わりに振る」を出すまで
 
   const CHARACTERS = [
     { id: 'momotaro', name: 'ももたろう' }, { id: 'kintaro', name: 'きんたろう' }, { id: 'urashima', name: 'うらしまたろう' },
@@ -240,6 +241,7 @@
       const [ch, chs] = sideText(m && m.child);
       let center = '<div class="vs">VS</div>';
       let status = '';
+      let drink = '';
       if (st.phase === 'lobby') status = Object.keys(room.queue || {}).length ? (readonly ? '次の対決を待っています' : '「対決スタート」で先頭の人と対決') : '挑戦者を待っています';
       else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length}/${L.MAX_THROWS})`;
       else if (st.phase === 'child') status = `${child ? child.name : '挑戦者'} さんの番(${m.child.throws.length}/${L.MAX_THROWS})`;
@@ -247,11 +249,15 @@
         const res = st.result;
         center = `<div class="vs">${res.winner === 'draw' ? '引き分け' : `×${res.mult}`}</div>`;
         status = res.winner === 'parent' ? `${settings.hostName || '配信者'} の勝ち!` : res.winner === 'child' ? `${child ? child.name : '挑戦者'} さんの勝ち!` : 'もう一度!';
+        if (settings.mode !== 'points' && res.winner !== 'draw') {
+          const loser = res.winner === 'parent' ? (child ? (child.hidden ? '？？？' : child.name) : '挑戦者') : (settings.hostName || '配信者');
+          drink = `${loser} さんが飲む: ${unitLabel(settings)} × ${res.mult}`;
+        }
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
       r.arena.innerHTML =
         fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '') +
-        `<div class="center">${center}<span class="status">${esc(status)}</span></div>` +
+        `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
         (child
           ? fighterHtml('child', child.char, colorFor(m.childUid), child.hidden ? '？？？' : child.name, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
@@ -283,6 +289,9 @@
     }
   }
 
+  let childTurnKey = null;
+  let childTurnSince = 0;
+  let proxyTimer = null;
   function renderHostControls() {
     if (role !== 'host' || !room) return;
     const st = room.state || {};
@@ -290,7 +299,19 @@
     const child = st.match && (room.players || {})[st.match.childUid];
     $('start-match').hidden = playing || !(st.phase === 'lobby' && hasQueue);
     $('host-roll').hidden = playing || st.phase !== 'parent';
-    $('roll-for-child').hidden = true;
+    if (st.phase === 'child' && st.match) {
+      const key = String(st.seq);
+      if (childTurnKey !== key) {
+        childTurnKey = key;
+        childTurnSince = Date.now();
+        clearTimeout(proxyTimer);
+        proxyTimer = setTimeout(renderHostControls, PROXY_ROLL_MS + 50);
+      }
+      $('roll-for-child').hidden = playing || Date.now() - childTurnSince < PROXY_ROLL_MS;
+    } else {
+      childTurnKey = null;
+      $('roll-for-child').hidden = true;
+    }
     $('next-match').hidden = playing || st.phase !== 'result';
     $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
   }
@@ -338,6 +359,12 @@
     if (!me && presence >= MAX_PRESENCE) { show('screen-full'); return; }
     await backend.set(`rooms/${c}/presence/${backend.uid}`, true);
     await backend.onDisconnectRemove(`rooms/${c}/presence/${backend.uid}`);
+    if (me) { // 再読み込み: 参加済みなら自分の画面へ直接戻る
+      await backend.update(`rooms/${c}/players/${backend.uid}`, { online: true });
+      await backend.onDisconnectSet(`rooms/${c}/players/${backend.uid}/online`, false);
+      enterListener(c);
+      return;
+    }
     const saved = store.get(keyListener());
     if (saved && typeof saved === 'object') { join.name = safeName(saved.name); if (CHAR_NAME[saved.char]) join.char = saved.char; }
     renderJoin();
@@ -395,7 +422,10 @@
       $('my-record').textContent = '';
     }
     if (inMatch && st.phase === 'result' && st.result) {
-      $('my-status').textContent = st.result.winner === 'child' ? 'あなたの勝ち!' : st.result.winner === 'parent' ? 'あなたの負け…' : '引き分け、もう一度!';
+      const res = st.result;
+      let text = res.winner === 'child' ? 'あなたの勝ち!' : res.winner === 'parent' ? 'あなたの負け…' : '引き分け、もう一度!';
+      if (res.winner === 'parent' && settings.mode !== 'points') text += ` ${unitLabel(settings)} × ${res.mult} 飲む!`;
+      $('my-status').textContent = text;
     }
     $('requeue').hidden = !(me && pos < 0 && !inMatch);
     $('leave').hidden = !(pos >= 0);
@@ -511,6 +541,12 @@
     }
     if (ROOM_PARAM && IS_STAGE) { enterStage(ROOM_PARAM); return; }
     if (ROOM_PARAM) { await enterListenerEntry(ROOM_PARAM); return; }
+    const prev = store.get(KEY_HOST);
+    if (prev && prev.code && prev.uid === backend.uid) { // 再読み込み: 前回の部屋へ直接戻る
+      const r = await backend.get(`rooms/${prev.code}`);
+      if (r && r.hostUid === backend.uid && (!r.state || r.state.phase !== 'closed')) { enterHost(prev.code); return; }
+      store.del(KEY_HOST);
+    }
     enterHostEntry();
   }
 
@@ -532,6 +568,7 @@
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
   $('start-match').addEventListener('click', () => hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }));
   $('host-roll').addEventListener('click', () => hostDo(() => hostThrow('parent')));
+  $('roll-for-child').addEventListener('click', () => hostDo(() => hostThrow('child')));
   $('next-match').addEventListener('click', () => hostDo(() => writeState(L.nextMatch(room.state))));
   $('rematch').addEventListener('click', () => hostDo(() => { const uid = room.state.match && room.state.match.childUid; if (uid) return hostStartMatch(uid); }));
   $('listener-roll').addEventListener('click', () => listenerRoll().catch((e) => alert('振れませんでした: ' + e.message)));
