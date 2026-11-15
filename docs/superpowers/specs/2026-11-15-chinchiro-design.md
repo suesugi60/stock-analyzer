@@ -33,7 +33,7 @@
 
 ## 制約
 
-- 単一の `chinchiro/index.html` + 設定ファイル `chinchiro/firebase-config.js`。ビルド工程なし。Firebase SDK は CDN(gstatic)から読む。
+- `chinchiro/` 配下の素の HTML/CSS/JS(index.html, style.css, logic.js, art.js, sync.js, anim.js, app.js)+ 設定ファイル `firebase-config.js`。ビルド工程なし。Firebase SDK は CDN(gstatic)から読む。(実装時の変更: 保守のため単一ファイルではなく役割ごとに分けた)
 - **この開発環境からは Firebase(gstatic.com / firebaseio.com)に接続できない。** 本物の同期は利用者の環境で確認する。
   開発・テストでは同じ画面を「モック同期(同一ブラウザ内の BroadcastChannel + localStorage)」で動かす。
 - 利用者が Firebase プロジェクトを作る作業(無料、10分程度)が一度だけ必要。手順は README に書く。
@@ -234,7 +234,7 @@ Hand  = { type: 'pinzoro'|'zoro'|'shigoro'|'me'|'none'|'hifumi'|'shonben', value
 
 ## 技術構成
 
-- `chinchiro/index.html`: 1ファイル。構成は飲みスゴロクと同じ3層:
+- `chinchiro/` の各ファイル。構成は飲みスゴロクと同じ3層(実装ではファイルを分けた。計画書の「ファイル構成」を参照):
   1. `<script id="chinchiro-logic">`: 役の判定・比較・支払い、部屋状態の遷移(純粋関数。`state` を受け取り新しい `state` を返す)。
   2. 絵(キャラ12体・サイコロ・器): 飲みスゴロクの `SugorokuArt` を複製して使う(別ファイル参照にはしない)。
   3. 表示層 + 同期アダプタ。

@@ -463,3 +463,12 @@ test('部屋を閉じるとリスナーに「終了しました」', async () =>
   await host.locator('#screen-host-entry').waitFor({ state: 'visible', ...T });
   await context.close();
 });
+
+// ---------- 本番モードの配線 ----------
+test('設定が無いまま本番モードで開くと、Firebase の準備手順への案内が出てページエラーにならない', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html');
+  await page.locator('#screen-setup-needed').waitFor({ state: 'visible', ...T });
+  assert.ok((await page.locator('#screen-setup-needed').innerText()).includes('firebase-config.js'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
