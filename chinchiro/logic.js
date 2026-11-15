@@ -81,7 +81,27 @@ const ChinchiroLogic = (() => {
     return { seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null };
   }
 
-  function bump(state) { const s = clone(state); s.seq += 1; return s; }
+  /** 同期先(Firebase)は空配列や null を保存しないので、読み戻した状態の欠けを補う。 */
+  function normalizeState(state) {
+    const st = state && typeof state === 'object' ? clone(state) : {};
+    const base = createState();
+    st.seq = Number.isInteger(st.seq) ? st.seq : base.seq;
+    st.phase = st.phase || base.phase;
+    st.match = st.match && typeof st.match === 'object' ? st.match : null;
+    st.result = st.result && typeof st.result === 'object' ? st.result : null;
+    st.host = { ...base.host, ...(st.host || {}) };
+    st.lastThrow = st.lastThrow && typeof st.lastThrow === 'object' ? st.lastThrow : null;
+    if (st.match) {
+      st.match.round = Number.isInteger(st.match.round) ? st.match.round : 1;
+      for (const k of ['parent', 'child']) {
+        const side = st.match[k] || {};
+        st.match[k] = { throws: Array.isArray(side.throws) ? side.throws : [], hand: side.hand || null, done: !!side.done };
+      }
+    }
+    return st;
+  }
+
+  function bump(state) { const s = normalizeState(state); s.seq += 1; return s; }
 
   function startMatch(state, childUid) {
     const s = bump(state);
@@ -91,7 +111,8 @@ const ChinchiroLogic = (() => {
     return s;
   }
 
-  function canThrow(state, by) {
+  function canThrow(raw, by) {
+    const state = normalizeState(raw);
     if (!state.match) return false;
     if (by === 'parent') return state.phase === 'parent' && !state.match.parent.done;
     if (by === 'child') return state.phase === 'child' && !state.match.child.done;
@@ -156,7 +177,7 @@ const ChinchiroLogic = (() => {
   return {
     DRINK_UNITS, POINT_UNITS, SHONBEN_RATE, MAX_THROWS, NONE, SHONBEN, HIFUMI,
     evaluate, penaltyMult, judge, resultDeltas, rollDice,
-    createState, startMatch, canThrow, applyThrow, nextMatch,
+    createState, normalizeState, startMatch, canThrow, applyThrow, nextMatch,
   };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroLogic;

@@ -8,6 +8,7 @@
   const MOCK = params.get('mock') === '1';
   const ROOM_PARAM = (params.get('room') || '').toUpperCase();
   const IS_STAGE = params.get('stage') === '1';
+  const QUICK = params.get('quick') === '1'; // 演出を一瞬で終える(テスト用)
   const KEY_HOST = 'chinchiro.host';
   const KEY_SETUP = 'chinchiro.setup';
   const KEY_MUTED = 'chinchiro.muted';
@@ -78,7 +79,7 @@
   function subscribe(c) {
     if (unsubRoom) unsubRoom();
     code = c;
-    unsubRoom = backend.watch(`rooms/${c}`, (r) => { room = r; render(); });
+    unsubRoom = backend.watch(`rooms/${c}`, (r) => { room = r ? { ...r, state: L.normalizeState(r.state) } : r; render(); });
   }
 
   // ---------- キャラ選択画面(共通) ----------
@@ -240,7 +241,7 @@
       let center = '<div class="vs">VS</div>';
       let status = '';
       if (st.phase === 'lobby') status = Object.keys(room.queue || {}).length ? (readonly ? '次の対決を待っています' : '「対決スタート」で先頭の人と対決') : '挑戦者を待っています';
-      else if (st.phase === 'parent') status = `親の番(${m.parent.throws.length}/${L.MAX_THROWS})`;
+      else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length}/${L.MAX_THROWS})`;
       else if (st.phase === 'child') status = `${child ? child.name : '挑戦者'} さんの番(${m.child.throws.length}/${L.MAX_THROWS})`;
       else if (st.phase === 'result' && st.result) {
         const res = st.result;
@@ -286,11 +287,12 @@
     if (role !== 'host' || !room) return;
     const st = room.state || {};
     const hasQueue = Object.keys(room.queue || {}).length > 0;
-    $('start-match').hidden = !(st.phase === 'lobby' && hasQueue);
-    $('host-roll').hidden = st.phase !== 'parent';
+    const child = st.match && (room.players || {})[st.match.childUid];
+    $('start-match').hidden = playing || !(st.phase === 'lobby' && hasQueue);
+    $('host-roll').hidden = playing || st.phase !== 'parent';
     $('roll-for-child').hidden = true;
-    $('next-match').hidden = st.phase !== 'result';
-    $('rematch').hidden = st.phase !== 'result';
+    $('next-match').hidden = playing || st.phase !== 'result';
+    $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
   }
 
   function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; }
@@ -300,6 +302,8 @@
       if (role === 'stage' && stageView.refs.arena) stageView.refs.arena.innerHTML = '<div class="empty-note">この部屋は見つかりません</div>';
       return;
     }
+    maybePlayThrow();
+    if (role === 'host') hostQueue = hostQueue.then(processActions).catch((e) => console.warn('要求の処理に失敗', e));
     if (role === 'host') { renderBoard(hostView, false); renderHostControls(); }
     if (role === 'stage') renderBoard(stageView, true);
     if (role === 'listener') { renderBoard(listenerView, true); renderListener(); }
@@ -372,7 +376,7 @@
     const pos = queue.indexOf(backend.uid);
     const inMatch = st.match && st.match.childUid === backend.uid;
     let status = '見るだけ';
-    if (inMatch) status = st.phase === 'child' ? 'あなたの番!' : st.phase === 'parent' ? '親が振っています…' : '結果';
+    if (inMatch) status = st.phase === 'child' ? 'あなたの番!' : st.phase === 'parent' ? (st.match.round > 1 && st.match.parent.throws.length === 0 ? '引き分け! もう一度。親が振っています…' : '親が振っています…') : '結果';
     else if (pos >= 0) status = `あなたは ${pos + 1} 番目`;
     else if (me) status = '順番待ちから抜けています';
     $('my-status').textContent = status;
@@ -390,9 +394,110 @@
       $('my-avatar').hidden = true;
       $('my-record').textContent = '';
     }
+    if (inMatch && st.phase === 'result' && st.result) {
+      $('my-status').textContent = st.result.winner === 'child' ? 'あなたの勝ち!' : st.result.winner === 'parent' ? 'あなたの負け…' : '引き分け、もう一度!';
+    }
     $('requeue').hidden = !(me && pos < 0 && !inMatch);
     $('leave').hidden = !(pos >= 0);
-    $('listener-roll').hidden = true;
+    const lastSeq = (st.lastThrow && st.lastThrow.seq) || 0;
+    if (rollRequested && lastSeq > rollReqSeq) rollRequested = false;
+    const canRoll = inMatch && L.canThrow(st, 'child') && !playing;
+    $('listener-roll').hidden = !canRoll;
+    $('listener-roll').disabled = rollRequested;
+    $('listener-roll').textContent = rollRequested ? '振っています…' : '🎲 振る';
+  }
+
+  // ---------- リスナー: 振る要求 ----------
+  let rollRequested = false;
+  let rollReqSeq = 0;
+  async function listenerRoll() {
+    if (rollRequested || !room || !L.canThrow(room.state, 'child') || room.state.match.childUid !== backend.uid) return;
+    rollRequested = true;
+    rollReqSeq = (room.state.lastThrow && room.state.lastThrow.seq) || 0;
+    renderListener();
+    await backend.set(`rooms/${code}/actions/${backend.uid}`, { type: 'roll', at: backend.now() });
+    setTimeout(() => { if (rollRequested) { rollRequested = false; if (room) renderListener(); } }, 6000); // 親機が応答しないときの保険
+  }
+
+  // ---------- 投げの再生(全端末で同じ映像) ----------
+  let playedSeq = null;   // 再生済みの lastThrow.seq
+  let playing = false;
+  let pendingThrow = null;
+  function maybePlayThrow() {
+    const st = room.state;
+    const lt = st && st.lastThrow;
+    const seq = (lt && lt.seq) || 0;
+    if (playedSeq === null) { playedSeq = seq; return; } // 途中から開いた端末は最後の投げを再生しない
+    if (!lt || seq <= playedSeq) return;
+    playedSeq = seq;
+    const settings = room.settings || {};
+    const child = st.match ? (room.players || {})[st.match.childUid] : null;
+    const thrower = lt.by === 'parent'
+      ? { name: settings.hostName || '配信者', char: settings.hostChar, color: '#ff4d4d' }
+      : { name: child ? (child.hidden ? '？？？' : child.name) : '挑戦者', char: child ? child.char : 'binbo', color: colorFor(st.match ? st.match.childUid : '') };
+    const side = st.match && st.match[lt.by];
+    const remaining = side && side.throws.length ? L.MAX_THROWS - side.throws.length : 0;
+    pendingThrow = { throwObj: lt.throw, thrower, remaining };
+    runPlayback();
+  }
+  async function runPlayback() {
+    if (playing) { stage.skip(); return; } // 新しい投げが来たら今のを飛ばして次へ
+    playing = true;
+    renderControlsOnly();
+    while (pendingThrow) {
+      const t = pendingThrow;
+      pendingThrow = null;
+      $('stage-overlay').hidden = false;
+      try { await stage.play(t.throwObj, { thrower: t.thrower, remaining: t.remaining, reduced: QUICK }); } catch (e) { console.warn('演出に失敗', e); }
+    }
+    $('stage-overlay').hidden = true;
+    playing = false;
+    render();
+  }
+  function renderControlsOnly() {
+    if (role === 'host') renderHostControls();
+    if (role === 'listener' && room) renderListener();
+  }
+
+  // ---------- 親機: 対戦の進行(state を書けるのは親機だけ) ----------
+  let hostQueue = Promise.resolve();
+  const hostDo = (fn) => { hostQueue = hostQueue.then(fn).catch((e) => { console.warn(e); alert('進行に失敗しました: ' + e.message); }); return hostQueue; };
+  const writeState = (st) => backend.set(`rooms/${code}/state`, st);
+
+  async function hostStartMatch(uid) {
+    const st = L.startMatch(room.state, uid);
+    await backend.remove(`rooms/${code}/queue/${uid}`);
+    await writeState(st);
+  }
+  async function hostThrow(by) {
+    const st = room.state;
+    if (!L.canThrow(st, by)) return;
+    const roll = L.rollDice(Math.random);
+    const { state, result } = L.applyThrow(st, by, roll, room.settings);
+    await writeState(state);
+    if (result) await applyResultToChild(result);
+  }
+  async function applyResultToChild(result) {
+    const p = (room.players || {})[result.childUid] || {};
+    const d = result.deltas.child;
+    await backend.update(`rooms/${code}/players/${result.childUid}`, {
+      points: (p.points ?? 100) + d.points, wins: (p.wins ?? 0) + d.wins, losses: (p.losses ?? 0) + d.losses, drinks: (p.drinks ?? 0) + d.drinks,
+    });
+  }
+  /** リスナーの「振る」要求を処理する。手番の子の要求だけ受け付け、それ以外は捨てる。 */
+  async function processActions() {
+    if (!room || !room.actions) return;
+    for (const [uid, a] of Object.entries(room.actions)) {
+      const st = room.state;
+      const isTurn = a && a.type === 'roll' && st.phase === 'child' && st.match && st.match.childUid === uid && L.canThrow(st, 'child');
+      await backend.remove(`rooms/${code}/actions/${uid}`);
+      if (isTurn) await hostThrow('child');
+    }
+  }
+  function firstInQueue() {
+    const players = room.players || {};
+    const q = Object.entries(room.queue || {}).filter(([uid]) => players[uid] && !players[uid].banned).sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0));
+    return q.length ? q[0][0] : null;
   }
 
   // ---------- 初期化 ----------
@@ -425,6 +530,11 @@
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + e.message)));
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
+  $('start-match').addEventListener('click', () => hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }));
+  $('host-roll').addEventListener('click', () => hostDo(() => hostThrow('parent')));
+  $('next-match').addEventListener('click', () => hostDo(() => writeState(L.nextMatch(room.state))));
+  $('rematch').addEventListener('click', () => hostDo(() => { const uid = room.state.match && room.state.match.childUid; if (uid) return hostStartMatch(uid); }));
+  $('listener-roll').addEventListener('click', () => listenerRoll().catch((e) => alert('振れませんでした: ' + e.message)));
   $('mute').addEventListener('click', () => { sounds.setMuted(!sounds.muted); store.set(KEY_MUTED, sounds.muted); renderMute(); });
   $('close-room').addEventListener('click', async () => {
     if (!confirm('部屋を閉じますか? リスナーには「終了しました」と表示されます')) return;

@@ -207,3 +207,17 @@ test('nextMatch で lobby に戻り match/result が null、host の成績は残
   assert.deepEqual(n.host, { points: 70, wins: 0, losses: 1, drinks: 3 });
   assert.equal(n.seq, s.seq + 1);
 });
+
+test('normalizeState: 同期で消えた空配列や null を補い、その状態でも進行できる', () => {
+  const s = L.startMatch(L.createState(), 'k');
+  // Firebase は空配列と null を保存しないので、それを模す
+  const stripped = JSON.parse(JSON.stringify(s), (k, v) => (v === null || (Array.isArray(v) && v.length === 0) ? undefined : v));
+  assert.equal(stripped.match.parent.throws, undefined);
+  assert.equal(stripped.result, undefined);
+  assert.deepEqual(L.normalizeState(stripped), s);
+  assert.equal(L.canThrow(stripped, 'parent'), true);
+  const r = L.applyThrow(stripped, 'parent', roll([2, 2, 5]), SETTINGS);
+  assert.equal(r.state.phase, 'child');
+  assert.deepEqual(L.normalizeState(undefined), L.createState());
+  assert.deepEqual(L.nextMatch(stripped).phase, 'lobby');
+});

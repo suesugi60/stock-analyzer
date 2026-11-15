@@ -216,3 +216,159 @@ test('満員: presence が 80 ある部屋を見るだけで開くと満員表�
   assert.equal(Object.keys(room.presence).length, 80, '満員のときは自分の presence を書かない');
   await context.close();
 });
+
+// ---------- 対戦 ----------
+// quick=1: 演出を一瞬で終える(流れのテスト用)
+async function setupMatch(names = [['うさ', 'kappa']], opts = {}) {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  const code = await createRoom(host, opts);
+  const kids = [];
+  for (const [n, c] of names) {
+    const { page, errors: e } = await openListener(context, code, '&quick=1');
+    await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+    await page.locator('#join-name').fill(n);
+    if (c) { await page.locator('#join-avatar').click(); await page.click(`#screen-pick .pick[data-char="${c}"]`); }
+    await page.click('#join-challenge');
+    await page.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+    kids.push({ page, errors: e });
+  }
+  await host.locator('#queue .queue-row').nth(names.length - 1).waitFor({ state: 'visible', ...T });
+  return { host, context, errors, code, kids };
+}
+const phaseOf = async (page, code) => (await readRoom(page, code)).state.phase;
+
+/** 親が振る → 子が振る を、結果が出るまで繰り返す(引き分けも続ける)。 */
+async function playUntilResult(host, kid, code) {
+  for (let guard = 0; guard < 30; guard++) {
+    const phase = await phaseOf(host, code);
+    if (phase === 'result') return;
+    if (phase === 'parent') { await host.locator('#host-roll').waitFor({ state: 'visible', ...T }); await host.click('#host-roll'); }
+    else if (phase === 'child') { await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T }); await kid.click('#listener-roll'); }
+    else throw new Error('想定外の phase: ' + phase);
+    await host.waitForTimeout(400);
+  }
+  throw new Error('結果が出ません');
+}
+
+test('対戦: 親が振り、子が振ると両画面に同じ出目と結果が出て点数が動く', async () => {
+  const { host, context, errors, code, kids } = await setupMatch();
+  const kid = kids[0].page;
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  assert.equal(await phaseOf(host, code), 'parent');
+  assert.equal(await host.locator('#queue .queue-row').count(), 0, '対戦中の人は列から外れる');
+  await kid.locator('#my-status').filter({ hasText: '親が振っています' }).waitFor({ state: 'visible', ...T });
+  await playUntilResult(host, kid, code);
+  const room = await readRoom(host, code);
+  const res = room.state.result;
+  assert.ok(res && res.winner !== 'draw');
+  assert.ok(res.mult >= 1);
+  const me = Object.values(room.players)[0];
+  assert.equal(room.state.host.points + me.points, 200, '点数は親と子の間で移る');
+  assert.equal(Math.abs(me.points - 100), 10 * res.mult);
+  assert.equal(me.wins + me.losses, 1);
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  const hostVs = await host.locator('.arena .center .vs').innerText();
+  const kidVs = await kid.locator('.arena .center .vs').innerText();
+  assert.equal(hostVs, kidVs);
+  assert.equal(hostVs, `×${res.mult}`);
+  assert.ok((await kid.locator('#my-status').innerText()).includes(res.winner === 'child' ? '勝ち' : '負け'));
+  assert.deepEqual(errors.concat(kids[0].errors), []);
+  await context.close();
+});
+
+test('両画面に器の場面が出て、止まった出目が同じ', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code);
+  await kid.locator('#join-name').fill('うさ');
+  await kid.click('#join-challenge');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('#stage-overlay').waitFor({ state: 'visible', ...T });
+  await kid.locator('#stage-overlay').waitFor({ state: 'visible', ...T });
+  await host.locator('#stage').click({ position: { x: 10, y: 10 } });
+  await kid.locator('#stage').click({ position: { x: 10, y: 10 } });
+  const faces = async (p) => (await p.locator('#stage .cube').evaluateAll((els) => els.map((e) => e.dataset.face))).join(',');
+  await host.locator('#stage .cube[data-face]').nth(2).waitFor({ state: 'attached', ...T });
+  await kid.locator('#stage .cube[data-face]').nth(2).waitFor({ state: 'attached', ...T });
+  assert.equal(await faces(host), await faces(kid));
+  const stamp = (p) => p.locator('#stage .result-stamp').evaluate((e) => e.textContent);
+  assert.equal(await stamp(host), await stamp(kid));
+  assert.notEqual(await stamp(host), '');
+  const dice = (await readRoom(host, code)).state.lastThrow.throw.dice.join(',');
+  assert.equal(await faces(host), dice);
+  await context.close();
+});
+
+test('連打しても1投だけ', async () => {
+  const { host, context, code, kids } = await setupMatch();
+  const kid = kids[0].page;
+  // 出目を固定: 親 4,4,4(4ゾロ) → 子 1,1,6(6の目)で親の勝ち
+  await host.evaluate(() => { const seq = [0.5, 0.5, 0.5, 0.5, 0.3, 0.5, 0.1, 0.1, 0.9, 0.3]; Math.random = () => (seq.length ? seq.shift() : 0.5); });
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.evaluate(() => { const b = document.getElementById('listener-roll'); for (let i = 0; i < 5; i++) b.click(); });
+  await kid.waitForTimeout(900);
+  const room = await readRoom(host, code);
+  assert.equal(room.state.phase, 'result');
+  assert.equal(room.state.match.child.throws.length, 1);
+  assert.deepEqual(room.state.match.child.throws[0].dice, [1, 1, 6]);
+  await context.close();
+});
+
+test('手番でない人の要求は捨てる', async () => {
+  const { host, context, code, kids } = await setupMatch([['うさ', 'kappa'], ['たろ', 'akaoni']]);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  const before = await readRoom(host, code);
+  // 2人目(手番でない)が actions に直接 roll を書く(mock の通信をまねる)
+  await kids[1].page.evaluate((c) => {
+    const uid = sessionStorage.getItem('chinchiro.uid');
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].actions = { [uid]: { type: 'roll', at: Date.now() } };
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+    new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
+  }, code);
+  await host.waitForTimeout(600);
+  const after = await readRoom(host, code);
+  assert.equal(after.state.seq, before.state.seq, 'state は変わらない');
+  assert.equal(after.actions, undefined, '要求は消される');
+  await context.close();
+});
+
+test('引き分けなら「もう一度!」と出て親の番に戻る', async () => {
+  const { host, context, code, kids } = await setupMatch();
+  const kid = kids[0].page;
+  await host.evaluate(() => { Math.random = () => 0.5; }); // 出目は毎回 4,4,4(4ゾロ)
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('.arena .center .status').filter({ hasText: 'もう一度' }).waitFor({ state: 'visible', ...T });
+  const room = await readRoom(host, code);
+  assert.equal(room.state.phase, 'parent');
+  assert.equal(room.state.match.round, 2);
+  assert.equal(room.state.match.parent.throws, undefined, '同期先は空配列を保存しない(読み戻し時に補う)');
+  await context.close();
+});
+
+test('次の挑戦者で列の次の人と対戦', async () => {
+  const { host, context, code, kids } = await setupMatch([['うさ', 'kappa'], ['たろ', 'akaoni']]);
+  await host.click('#start-match');
+  await playUntilResult(host, kids[0].page, code);
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  await host.click('#next-match');
+  await host.locator('#start-match').waitFor({ state: 'visible', ...T });
+  await host.click('#start-match');
+  await host.locator('.fighter.child .fname').filter({ hasText: 'たろ' }).waitFor({ state: 'visible', ...T });
+  assert.equal((await readRoom(host, code)).state.match.childUid, await kids[1].page.evaluate(() => sessionStorage.getItem('chinchiro.uid')));
+  await kids[1].page.locator('#my-status').filter({ hasText: '親が振っています' }).waitFor({ state: 'visible', ...T });
+  await kids[0].page.locator('#requeue').waitFor({ state: 'visible', ...T });
+  await context.close();
+});
