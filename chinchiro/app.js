@@ -11,6 +11,7 @@
   const KEY_HOST = 'chinchiro.host';
   const KEY_SETUP = 'chinchiro.setup';
   const KEY_MUTED = 'chinchiro.muted';
+  const MAX_PRESENCE = 80; // 無料枠(同時100接続)の安全装置
 
   const CHARACTERS = [
     { id: 'momotaro', name: 'ももたろう' }, { id: 'kintaro', name: 'きんたろう' }, { id: 'urashima', name: 'うらしまたろう' },
@@ -227,7 +228,7 @@
       const parts = [];
       if (settings.mode !== 'drink') parts.push(`${h.points ?? 100}点`);
       parts.push(`${h.wins ?? 0}勝${h.losses ?? 0}敗`);
-      if (settings.mode !== 'points') parts.push(`飲んだ ${h.drinks ?? 0}${unitLabel(settings)}`);
+      if (settings.mode !== 'points') parts.push(`飲んだ ${unitLabel(settings)} × ${h.drinks ?? 0}`);
       r.record.innerHTML = `${esc(settings.hostName || '配信者')}<small>${esc(parts.join(' ・ '))}</small>`;
     }
     // 対戦の場
@@ -266,7 +267,7 @@
         const pts = settings.mode !== 'drink' ? `${p.points ?? 100}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
         row.innerHTML = `<span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${colorFor(uid)}">${SugorokuArt.CHAR_ART[p.char] ? SugorokuArt.CHAR_ART[p.char]() : ''}</span>` +
           `<span class="qname">${p.hidden ? '？？？' : esc(p.name)}${p.online === false ? ' <span class="offline">オフライン</span>' : ''}</span><span class="qpts">${esc(pts)}</span>`;
-        if (!readonly) row.insertAdjacentHTML('beforeend', `<button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button>`);
+        if (!readonly) row.insertAdjacentHTML('beforeend', `<span class="qacts"><button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button></span>`);
         r.queue.appendChild(row);
       });
     }
@@ -301,6 +302,97 @@
     }
     if (role === 'host') { renderBoard(hostView, false); renderHostControls(); }
     if (role === 'stage') renderBoard(stageView, true);
+    if (role === 'listener') { renderBoard(listenerView, true); renderListener(); }
+  }
+
+  // ---------- 親機: 荒らし対策(飛ばす・非表示・ブロック) ----------
+  async function moderate(act, uid) {
+    if (act === 'skip') await backend.remove(`rooms/${code}/queue/${uid}`);
+    if (act === 'hide') { const p = (room.players || {})[uid] || {}; await backend.update(`rooms/${code}/players/${uid}`, { hidden: !p.hidden }); }
+    if (act === 'ban') { await backend.update(`rooms/${code}/players/${uid}`, { banned: true }); await backend.remove(`rooms/${code}/queue/${uid}`); }
+  }
+
+  // ---------- リスナー ----------
+  const listenerView = { root: null, refs: {} };
+  let join = { name: '', char: 'momotaro' };
+  const keyListener = () => `chinchiro.listener.${code}`;
+
+  function renderJoin() {
+    $('join-code').textContent = code;
+    setAvatar($('join-avatar'), join.char, colorFor(backend.uid));
+    if ($('join-name').value !== join.name) $('join-name').value = join.name;
+  }
+
+  async function enterListenerEntry(c) {
+    role = 'listener';
+    code = c;
+    const r = await backend.get(`rooms/${c}`);
+    if (!r || !r.hostUid) { show('screen-notfound'); return; }
+    const me = (r.players || {})[backend.uid];
+    if (me && me.banned) { show('screen-banned'); return; }
+    const presence = Object.keys(r.presence || {}).length;
+    if (!me && presence >= MAX_PRESENCE) { show('screen-full'); return; }
+    await backend.set(`rooms/${c}/presence/${backend.uid}`, true);
+    await backend.onDisconnectRemove(`rooms/${c}/presence/${backend.uid}`);
+    const saved = store.get(keyListener());
+    if (saved && typeof saved === 'object') { join.name = safeName(saved.name); if (CHAR_NAME[saved.char]) join.char = saved.char; }
+    renderJoin();
+    show('screen-join');
+  }
+
+  async function challenge() {
+    join.name = safeName($('join-name').value) || 'リスナー';
+    const base = `rooms/${code}/players/${backend.uid}`;
+    await backend.update(base, { name: join.name, char: join.char, joinedAt: backend.now(), online: true });
+    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.now() });
+    await backend.onDisconnectSet(`${base}/online`, false);
+    store.set(keyListener(), join);
+    enterListener(code);
+  }
+
+  async function requeue() {
+    await backend.set(`rooms/${code}/queue/${backend.uid}`, { joinedAt: backend.now() });
+  }
+
+  function enterListener(c) {
+    role = 'listener';
+    bind(listenerView, $('screen-listener'));
+    subscribe(c);
+    show('screen-listener');
+  }
+
+  function renderListener() {
+    const me = (room.players || {})[backend.uid] || null;
+    const st = room.state || {};
+    const settings = room.settings || {};
+    if (me && me.banned) { show('screen-banned'); return; }
+    if (st.phase === 'closed') { show('screen-closed'); return; }
+    const queue = Object.entries(room.queue || {}).filter(([uid]) => (room.players || {})[uid] && !(room.players || {})[uid].banned)
+      .sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0)).map(([uid]) => uid);
+    const pos = queue.indexOf(backend.uid);
+    const inMatch = st.match && st.match.childUid === backend.uid;
+    let status = '見るだけ';
+    if (inMatch) status = st.phase === 'child' ? 'あなたの番!' : st.phase === 'parent' ? '親が振っています…' : '結果';
+    else if (pos >= 0) status = `あなたは ${pos + 1} 番目`;
+    else if (me) status = '順番待ちから抜けています';
+    $('my-status').textContent = status;
+    const box = document.querySelector('.mystatus');
+    box.classList.toggle('turn', !!(inMatch && st.phase === 'child'));
+    if (me) {
+      setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
+      $('my-avatar').hidden = false;
+      const parts = [];
+      if (settings.mode !== 'drink') parts.push(`${me.points ?? 100}点`);
+      parts.push(`${me.wins ?? 0}勝${me.losses ?? 0}敗`);
+      if (settings.mode !== 'points') parts.push(`飲んだ ${unitLabel(settings)} × ${me.drinks ?? 0}`);
+      $('my-record').textContent = `${me.name} ・ ${parts.join(' ・ ')}`;
+    } else {
+      $('my-avatar').hidden = true;
+      $('my-record').textContent = '';
+    }
+    $('requeue').hidden = !(me && pos < 0 && !inMatch);
+    $('leave').hidden = !(pos >= 0);
+    $('listener-roll').hidden = true;
   }
 
   // ---------- 初期化 ----------
@@ -313,12 +405,23 @@
       return;
     }
     if (ROOM_PARAM && IS_STAGE) { enterStage(ROOM_PARAM); return; }
-    if (ROOM_PARAM) { show('screen-setup-needed'); return; } // リスナー画面は次の段階で
+    if (ROOM_PARAM) { await enterListenerEntry(ROOM_PARAM); return; }
     enterHostEntry();
   }
 
   $('host-avatar').addEventListener('click', () => openPick(setup.char, '配信者のキャラクター', (id) => { setup.char = id; renderEntry(); show('screen-host-entry'); }));
   $('pick-back').addEventListener('click', () => { pickCb = null; show(role === 'listener' ? 'screen-join' : 'screen-host-entry'); });
+  $('join-avatar').addEventListener('click', () => openPick(join.char, 'あなたのキャラクター', (id) => { join.char = id; renderJoin(); show('screen-join'); }));
+  $('join-name').addEventListener('input', () => { join.name = $('join-name').value; });
+  $('join-challenge').addEventListener('click', () => challenge().catch((e) => alert('参加できませんでした: ' + e.message)));
+  $('join-watch').addEventListener('click', () => enterListener(code));
+  $('requeue').addEventListener('click', () => requeue().catch((e) => alert('並べませんでした: ' + e.message)));
+  $('leave').addEventListener('click', () => backend.remove(`rooms/${code}/queue/${backend.uid}`));
+  $('queue').addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-act]'); if (!btn) return;
+    const uid = btn.closest('.queue-row').dataset.uid;
+    moderate(btn.dataset.act, uid).catch((e) => alert('操作できませんでした: ' + e.message));
+  });
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + e.message)));
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });

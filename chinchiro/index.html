@@ -82,6 +82,44 @@
     </div>
   </div>
 </section>
+<section id="screen-join" class="screen" hidden>
+  <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
+  <div class="notice panel">部屋 <b id="join-code"></b> に参加します。配信者と1対1でチンチロ対決!</div>
+  <h2>名前とキャラ(顔をタップで変更)</h2>
+  <div class="player-row">
+    <button class="player-avatar" id="join-avatar" type="button" aria-label="キャラクターを選ぶ"></button>
+    <input id="join-name" class="player-name" placeholder="名前(12文字まで)" maxlength="12">
+  </div>
+  <button id="join-challenge" class="btn btn-primary">挑戦する(順番待ちに並ぶ)</button>
+  <button id="join-watch" class="btn" style="margin-top:10px;width:100%">見るだけ</button>
+</section>
+
+<section id="screen-listener" class="screen" hidden>
+  <div class="panel mystatus">
+    <span class="avatar lg" id="my-avatar"></span>
+    <div class="mytext"><div id="my-status" class="mybig"></div><div id="my-record" class="hint-text"></div></div>
+  </div>
+  <button id="listener-roll" class="btn btn-primary roll-btn" hidden>🎲 振る</button>
+  <div class="arena panel compact" data-ref="arena"></div>
+  <div class="controls">
+    <button id="requeue" class="btn btn-primary" hidden>もう一回並ぶ</button>
+    <button id="leave" class="btn" hidden>列から抜ける</button>
+  </div>
+  <section class="panel box"><h3>順番待ち</h3><div data-ref="queue"></div></section>
+</section>
+
+<section id="screen-full" class="screen" hidden>
+  <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
+  <div class="notice panel"><b>満員です。</b>配信画面で見てね。</div>
+</section>
+<section id="screen-banned" class="screen" hidden>
+  <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
+  <div class="notice panel"><b>この部屋には参加できません。</b></div>
+</section>
+<section id="screen-notfound" class="screen" hidden>
+  <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
+  <div class="notice panel"><b>部屋が見つかりません。</b>部屋コードを確かめてね。</div>
+</section>
 </main>
 
 <div id="stage-overlay" class="overlay" hidden>

@@ -129,3 +129,90 @@ test('親機: 再読み込みすると「前回の部屋を続ける」で同じ
   assert.equal((await page.locator('#room-code').innerText()).trim(), code);
   await context.close();
 });
+
+// ---------- リスナー ----------
+async function openListener(context, code, extra = '') {
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto(`${url}/index.html?mock=1&room=${code}${extra}`);
+  return { page, errors };
+}
+async function joinAs(context, code, name, char) {
+  const { page, errors } = await openListener(context, code);
+  await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await page.locator('#join-name').fill(name);
+  if (char) {
+    await page.locator('#join-avatar').click();
+    await page.click(`#screen-pick .pick[data-char="${char}"]`);
+    await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  }
+  await page.click('#join-challenge');
+  await page.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+  return { page, errors };
+}
+
+test('リスナー: 名前とキャラを入れて挑戦すると、親機の順番待ちに出る', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const a = await joinAs(context, code, 'うさ', 'kappa');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  assert.equal(await host.locator('#queue .queue-row').count(), 1);
+  assert.ok((await host.locator('#queue .queue-row .qname').first().innerText()).includes('うさ'));
+  assert.equal(await host.locator('#queue .queue-row .avatar svg').count(), 1);
+  assert.match(await a.page.locator('#my-status').innerText(), /1 番目/);
+  const b = await joinAs(context, code, 'たろ', 'akaoni');
+  await b.page.locator('#my-status').filter({ hasText: '2 番目' }).waitFor({ state: 'visible', ...T });
+  await host.locator('#queue .queue-row').nth(1).waitFor({ state: 'visible', ...T });
+  const room = await readRoom(host, code);
+  assert.equal(Object.keys(room.players).length, 2);
+  assert.equal(Object.keys(room.queue).length, 2);
+  const me = Object.values(room.players).find((p) => p.name === 'うさ');
+  assert.equal(me.char, 'kappa');
+  assert.equal(me.online, true);
+  assert.equal(me.points, undefined, 'リスナーは自分の点数を書かない');
+  assert.deepEqual(errors.concat(a.errors, b.errors), []);
+  await context.close();
+});
+
+test('名前の HTML はエスケープ: <b>x</b> が文字のまま出る', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  await joinAs(context, code, '<b>x</b>');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#queue .queue-row .qname').first().innerText()).includes('<b>x</b>'));
+  assert.equal(await host.locator('#queue .queue-row .qname b').count(), 0);
+  await context.close();
+});
+
+test('親機の「ブロック」で列から消え、本人は「参加できません」になる。「非表示」で名前が？？？になる', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const a = await joinAs(context, code, 'あらし');
+  const b = await joinAs(context, code, 'ふつう');
+  await host.locator('#queue .queue-row').nth(1).waitFor({ state: 'visible', ...T });
+  await host.locator('#queue .queue-row').first().locator('[data-act="hide"]').click();
+  await host.locator('#queue .queue-row .qname').filter({ hasText: '？？？' }).waitFor({ state: 'visible', ...T });
+  await host.locator('#queue .queue-row').first().locator('[data-act="ban"]').click();
+  await host.locator('#queue .queue-row').filter({ hasText: 'ふつう' }).waitFor({ state: 'visible', ...T });
+  assert.equal(await host.locator('#queue .queue-row').count(), 1);
+  await a.page.locator('#screen-banned').waitFor({ state: 'visible', ...T });
+  assert.match(await b.page.locator('#my-status').innerText(), /1 番目/);
+  await context.close();
+});
+
+test('満員: presence が 80 ある部屋を見るだけで開くと満員表示', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  await host.evaluate((c) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].presence = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`ghost${i}`, true]));
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+  }, code);
+  const { page } = await openListener(context, code);
+  await page.locator('#screen-full').waitFor({ state: 'visible', ...T });
+  const room = await readRoom(host, code);
+  assert.equal(Object.keys(room.presence).length, 80, '満員のときは自分の presence を書かない');
+  await context.close();
+});

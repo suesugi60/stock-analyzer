@@ -216,11 +216,24 @@ h2::before { content: '▶ '; color: var(--red); }
 .controls .btn-primary { width: auto; flex: 1; }
 .box { padding: 12px 14px; margin-bottom: 14px; }
 .box h3 { margin: 0 0 8px; font-size: .95rem; }
-.queue-row, .rank-row2 { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed #c9ccdf; }
+.queue-row, .rank-row2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 0; border-bottom: 1px dashed #c9ccdf; }
+.queue-row .qacts { flex-basis: 100%; display: flex; gap: 6px; justify-content: flex-end; }
 .queue-row:last-child, .rank-row2:last-child { border-bottom: 0; }
-.queue-row .qname, .rank-row2 .qname { flex: 1; font-weight: 900; min-width: 0; overflow-wrap: anywhere; }
+.queue-row .qname, .rank-row2 .qname { flex: 1 1 60px; font-weight: 900; min-width: 40px; overflow-wrap: anywhere; }
 .queue-row .qpts, .rank-row2 .qpts { color: var(--muted); font-size: .8rem; white-space: nowrap; }
 .queue-row .offline { font-size: .7rem; color: var(--red); }
 .queue-row .btn { padding: 4px 8px; font-size: .72rem; box-shadow: 0 2px 0 var(--navy); border-width: 2px; border-radius: 8px; }
 .rank-row2 .rno { width: 1.6em; font-weight: 900; color: var(--muted); }
 .empty-note { color: var(--muted); font-size: .85rem; }
+
+/* ---- リスナー ---- */
+.mystatus { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 12px; }
+.mystatus .mytext { min-width: 0; }
+.mystatus .mybig { font-size: 1.25rem; font-weight: 900; }
+.mystatus.turn { background: var(--yellow); animation: my-turn .8s ease-in-out infinite alternate; }
+@keyframes my-turn { to { box-shadow: 0 0 0 6px rgba(255,217,61,.6), 4px 4px 0 var(--navy); } }
+.roll-btn { font-size: 1.6rem; padding: 20px; margin-bottom: 12px; }
+.arena.compact { min-height: 170px; padding: 12px 6px; margin-bottom: 12px; }
+.arena.compact .fighter .avatar { width: 64px; height: 64px; }
+.arena.compact .fighter .fname { font-size: .95rem; }
+.arena.compact .center .vs { font-size: 1.6rem; }
