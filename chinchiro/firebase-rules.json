@@ -1,0 +1,45 @@
+{
+  "rules": {
+    "rooms": {
+      "$code": {
+        ".read": true,
+        ".write": "auth != null && !data.exists() && newData.child('hostUid').val() == auth.uid && newData.hasChildren(['hostUid', 'settings', 'state'])",
+        "hostUid":   { ".write": "auth != null && !data.exists() && newData.val() == auth.uid", ".validate": "newData.isString()" },
+        "createdAt": { ".write": "auth != null && !data.exists()", ".validate": "newData.isNumber()" },
+        "settings":  { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
+        "state":     { ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid" },
+        "players": {
+          "$uid": {
+            "name":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 12" },
+            "char":     { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isString() && newData.val().matches(/^(momotaro|kintaro|urashima|kaguya|issun|akaoni|aooni|inu|saru|kiji|kappa|binbo)$/)" },
+            "joinedAt": { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isNumber()" },
+            "online":   { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isBoolean()" },
+            "points":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "wins":     { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "losses":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "drinks":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isNumber()" },
+            "hidden":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isBoolean()" },
+            "banned":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid", ".validate": "newData.isBoolean()" },
+            "$other":   { ".validate": false }
+          }
+        },
+        "presence": { "$uid": { ".write": "auth != null && $uid == auth.uid", ".validate": "newData.isBoolean()" } },
+        "queue": {
+          "$uid": {
+            ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
+            ".validate": "newData.hasChildren(['joinedAt']) && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 60000 && newData.child('joinedAt').val() <= now + 60000",
+            "$other": { ".validate": false }
+          }
+        },
+        "actions": {
+          "$uid": {
+            ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
+            ".validate": "newData.child('type').val() == 'roll' && newData.child('at').isNumber()",
+            "$other": { ".validate": "$other == 'type' || $other == 'at'" }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
