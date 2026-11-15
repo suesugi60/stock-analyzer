@@ -99,3 +99,15 @@ test('mock: onConnected は接続時に true で呼ばれ、serverTimestamp は�
   assert.equal(typeof a.serverTimestamp(), 'number');
   a.close(); b.close();
 });
+
+test('allocateRoomCode: 既にある部屋のコードは避けて別のコードを返す', async () => {
+  const { allocateRoomCode } = loadSync();
+  const { a, b } = await pair();
+  const first = roomCode(seeded(1));
+  await a.set(`rooms/${first}`, { hostUid: 'x' });
+  const code = await allocateRoomCode(a, seeded(1)); // 同じ乱数列なら最初に first が出る
+  assert.notEqual(code, first);
+  assert.match(code, /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/);
+  assert.equal(await a.get(`rooms/${code}`), null);
+  a.close(); b.close();
+});

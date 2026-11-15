@@ -7,6 +7,7 @@
   const $ = (id) => document.getElementById(id);
   const MOCK = params.get('mock') === '1';
   const ROOM_PARAM = (params.get('room') || '').toUpperCase();
+  const ROOM_OK = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(ROOM_PARAM);
   const IS_STAGE = params.get('stage') === '1';
   const QUICK = params.get('quick') === '1'; // 演出を一瞬で終える(テスト用)
   const SHARED_UID = params.get('shareduid') === '1'; // mock で uid をタブ間で共有(テスト用)
@@ -15,6 +16,7 @@
   const KEY_MUTED = 'chinchiro.muted';
   const MAX_PRESENCE = 80; // 無料枠(同時100接続)の安全装置
   const PROXY_ROLL_MS = Number(params.get('proxy')) || 20000; // 子が反応しないとき「代わりに振る」を出すまで
+  const WAIT_HOST_MS = Number(params.get('waitms')) || 6000; // 「振る」に親機が応えないとき案内を出すまで
 
   const CHARACTERS = [
     { id: 'momotaro', name: 'ももたろう' }, { id: 'kintaro', name: 'きんたろう' }, { id: 'urashima', name: 'うらしまたろう' },
@@ -150,7 +152,7 @@
 
   async function createRoom() {
     setup.name = safeName($('host-name').value) || '配信者';
-    const c = SY.roomCode();
+    const c = await SY.allocateRoomCode(backend);
     const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char };
     await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState() });
     store.set(KEY_SETUP, setup);
@@ -258,6 +260,38 @@
     return ['', ''];
   }
 
+  let confettiSeq = null;
+  function showConfetti() {
+    const box = $('confetti');
+    box.innerHTML = '';
+    const colors = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#fff'];
+    for (let i = 0; i < 50; i++) {
+      const piece = document.createElement('i');
+      piece.style.left = `${Math.random() * 100}%`;
+      piece.style.background = colors[i % colors.length];
+      piece.style.animationDelay = `${Math.random() * 1.2}s`;
+      piece.style.animationDuration = `${2.2 + Math.random() * 1.4}s`;
+      piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+      box.appendChild(piece);
+    }
+    box.hidden = false;
+  }
+
+  // 点数のカウントアップ(前回の値から動かす。QUICK や動きを減らす設定では即表示)
+  const lastNums = new WeakMap();
+  function animateNums(root) {
+    for (const el of root.querySelectorAll('.num[data-v]')) {
+      const to = Number(el.dataset.v);
+      const key = root.id || root.dataset.ref || 'x';
+      const prev = lastNums.get(root) || {};
+      const from = prev[key + el.dataset.k] ?? to;
+      prev[key + el.dataset.k] = to;
+      lastNums.set(root, prev);
+      if (QUICK || matchMedia('(prefers-reduced-motion: reduce)').matches || from === to) el.textContent = String(to);
+      else ChinchiroAnim.countUp(el, from, to, 700);
+    }
+  }
+
   function renderBoard(view, readonly) {
     if (!view.root || !room) return;
     const r = view.refs;
@@ -271,10 +305,11 @@
     if (r.record) {
       const h = st.host || {};
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`${h.points ?? 100}点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${h.points ?? 100}">${h.points ?? 100}</span>点`);
       parts.push(`${h.wins ?? 0}勝${h.losses ?? 0}敗`);
-      if (settings.mode !== 'points') parts.push(`飲んだ ${unitLabel(settings)} × ${h.drinks ?? 0}`);
-      r.record.innerHTML = `${esc(settings.hostName || '配信者')}<small>${esc(parts.join(' ・ '))}</small>`;
+      if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${h.drinks ?? 0}`);
+      r.record.innerHTML = `${esc(settings.hostName || '配信者')}<small>${parts.join(' ・ ')}</small>`;
+      animateNums(r.record);
     }
     // 対戦の場
     if (r.arena) {
@@ -299,12 +334,20 @@
         }
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
-      r.arena.innerHTML =
+      const arenaHtml =
         fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '') +
         `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
         (child
           ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
+      if (r.arena.dataset.last !== arenaHtml) { r.arena.innerHTML = arenaHtml; r.arena.dataset.last = arenaHtml; }
+    }
+    // 結果の紙吹雪(全端末。結果ごとに1回)
+    if (st.phase === 'result' && st.result && st.result.winner !== 'draw') {
+      if (confettiSeq !== st.seq) { confettiSeq = st.seq; showConfetti(); }
+    } else if (!$('confetti').hidden) {
+      $('confetti').hidden = true;
+      $('confetti').innerHTML = '';
     }
     // 順番待ち
     if (r.queue) {
@@ -327,9 +370,13 @@
     if (r.ranking && settings.mode !== 'drink') {
       const rows = Object.entries(players).filter(([, p]) => !p.hidden && !p.banned && p.points !== undefined)
         .map(([uid, p]) => ({ uid, name: p.name, points: p.points, char: p.char }));
-      rows.push({ uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? 100, char: settings.hostChar, host: true });
       rows.sort((a, b) => b.points - a.points);
-      r.ranking.innerHTML = rows.slice(0, 11).map((p, i) => `<div class="rank-row2"><span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${p.host ? '#ff4d4d' : colorFor(p.uid)}">${charArt(p.char)}</span><span class="qname">${esc(p.name || 'リスナー')}${p.host ? ' (配信者)' : ''}</span><span class="qpts">${p.points}点</span></div>`).join('');
+      const hostRow = { uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? 100, char: settings.hostChar, host: true };
+      const top = rows.slice(0, 10);
+      const all = rows.concat([hostRow]).sort((a, b) => b.points - a.points);
+      const hostRank = all.findIndex((p) => p.host) + 1;
+      const shown = top.concat([{ ...hostRow, rankNo: hostRank }]).sort((a, b) => b.points - a.points);
+      r.ranking.innerHTML = shown.map((p, i) => `<div class="rank-row2"><span class="rno">${p.rankNo || i + 1}</span><span class="avatar sm" style="--c:${p.host ? '#ff4d4d' : colorFor(p.uid)}">${charArt(p.char)}</span><span class="qname">${esc(p.name || 'リスナー')}${p.host ? ' (配信者)' : ''}</span><span class="qpts">${p.points}点</span></div>`).join('');
     }
   }
 
@@ -402,7 +449,7 @@
     const me = (r.players || {})[backend.uid];
     if (me && me.banned) { show('screen-banned'); return; }
     const presence = Object.keys(r.presence || {}).length;
-    if (!me && presence >= MAX_PRESENCE) { show('screen-full'); return; }
+    if (!me && presence > MAX_PRESENCE) { show('screen-full'); return; }
     // 接続のたび(初回と回線が戻ったとき)に presence/online を立て直し、切断時の後始末を登録し直す
     backend.onConnected(async (ok) => {
       if (!ok) return;
@@ -475,10 +522,11 @@
       setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
       $('my-avatar').hidden = false;
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`${me.points ?? 100}点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${me.points ?? 100}">${me.points ?? 100}</span>点`);
       parts.push(`${me.wins ?? 0}勝${me.losses ?? 0}敗`);
-      if (settings.mode !== 'points') parts.push(`飲んだ ${unitLabel(settings)} × ${me.drinks ?? 0}`);
-      $('my-record').textContent = `${me.name} ・ ${parts.join(' ・ ')}`;
+      if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${me.drinks ?? 0}`);
+      $('my-record').innerHTML = `${esc(me.name || 'リスナー')} ・ ${parts.join(' ・ ')}`;
+      animateNums($('my-record'));
     } else {
       $('my-avatar').hidden = true;
       $('my-record').textContent = '';
@@ -493,6 +541,8 @@
     $('leave').hidden = !(pos >= 0);
     const lastSeq = (st.lastThrow && st.lastThrow.seq) || 0;
     if (rollRequested && lastSeq > rollReqSeq) rollRequested = false;
+    if (hostAbsentSeq !== null && st.seq !== hostAbsentSeq) hostAbsentSeq = null;
+    if (hostAbsentSeq !== null) $('my-status').textContent = '配信者の画面を待っています…';
     const canRoll = inMatch && L.canThrow(st, 'child') && !playing;
     $('listener-roll').hidden = !canRoll;
     $('listener-roll').disabled = rollRequested;
@@ -502,13 +552,25 @@
   // ---------- リスナー: 振る要求 ----------
   let rollRequested = false;
   let rollReqSeq = 0;
+  let hostAbsentSeq = null; // この seq のまま親機が応えない
   async function listenerRoll() {
     if (rollRequested || !room || !L.canThrow(room.state, 'child') || room.state.match.childUid !== backend.uid) return;
     rollRequested = true;
     rollReqSeq = (room.state.lastThrow && room.state.lastThrow.seq) || 0;
+    const reqStateSeq = room.state.seq;
     renderListener();
+    // 親機の返事が来るまで、手の中でサイコロを振っている演出
+    const me = (room.players || {})[backend.uid] || {};
+    stage.showWaiting({ name: me.hidden ? '？？？' : (me.name || 'あなた'), char: me.char, color: colorFor(backend.uid) });
+    $('stage-overlay').hidden = false;
     await backend.set(`rooms/${code}/actions/${backend.uid}`, { type: 'roll', at: backend.serverTimestamp() });
-    setTimeout(() => { if (rollRequested) { rollRequested = false; if (room) renderListener(); } }, 6000); // 親機が応答しないときの保険
+    setTimeout(() => {
+      if (!rollRequested || !room || room.state.seq !== reqStateSeq) return; // もう処理された
+      rollRequested = false;
+      hostAbsentSeq = reqStateSeq;
+      if (!playing) { stage.reset(); $('stage-overlay').hidden = true; }
+      renderListener();
+    }, WAIT_HOST_MS);
   }
 
   // ---------- 投げの再生(全端末で同じ映像) ----------
@@ -601,11 +663,16 @@
       backend = await connect();
     } catch (e) {
       console.warn('接続できません', e);
-      show('screen-setup-needed');
+      if (ROOM_PARAM) { $('connect-error').textContent = String(e && e.message || e); show('screen-connect-failed'); } // リスナーには設定の話はしない
+      else { $('setup-error').textContent = String(e && e.message || e); show('screen-setup-needed'); }
       return;
     }
+    if (ROOM_PARAM && !ROOM_OK) { show('screen-notfound'); return; }
     if (ROOM_PARAM && IS_STAGE) { enterStage(ROOM_PARAM); return; }
-    if (ROOM_PARAM) { await enterListenerEntry(ROOM_PARAM); return; }
+    if (ROOM_PARAM) {
+      try { await enterListenerEntry(ROOM_PARAM); } catch (e) { console.warn(e); $('connect-error').textContent = String(e && e.message || e); show('screen-connect-failed'); }
+      return;
+    }
     const prev = store.get(KEY_HOST);
     if (prev && prev.code && prev.uid === backend.uid) { // 再読み込み: 前回の部屋へ直接戻る
       const r = await backend.get(`rooms/${prev.code}`);

@@ -159,12 +159,21 @@ const ChinchiroSync = (() => {
     };
   }
 
+  /** まだ使われていない部屋コードを選ぶ(衝突したら引き直す)。 */
+  async function allocateRoomCode(backend, rng = Math.random) {
+    for (let i = 0; i < 20; i++) {
+      const code = roomCode(rng);
+      if ((await backend.get(`rooms/${code}`)) == null) return code;
+    }
+    throw new Error('空いている部屋コードが見つかりません');
+  }
+
   async function createBackend(opts = {}) {
     if (opts.kind === 'mock') return createMock(opts);
     if (opts.kind === 'firebase') return createFirebase(opts.config);
     throw new Error('kind が不正: ' + opts.kind);
   }
 
-  return { createBackend, roomCode, getAt, setAt };
+  return { createBackend, roomCode, allocateRoomCode, getAt, setAt };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroSync;

@@ -283,9 +283,11 @@ const ChinchiroAnim = (() => {
       const run = { anims: [], timers: [], wakers: [], skipped: false };
       running = run;
       const dice = throwObj && throwObj.dice;
-      if (!validDice(dice)) { // 壊れたデータ: 演出せず「?」
+      if (!validDice(dice)) { // 壊れたデータ: 演出せず「?」を少し見せる
         el.stamp.textContent = '?';
         el.stamp.dataset.hand = 'invalid';
+        await sleep(800);
+        if (run !== running) return;
         root.classList.remove('playing');
         running = null;
         return;
@@ -361,10 +363,37 @@ const ChinchiroAnim = (() => {
       for (const a of running.anims) { a.playbackRate = 1; try { a.finish(); } catch { /* 未開始なら無視 */ } }
     }
 
+    /** 「振る」を押してから親機の返事が来るまでの待ち: 手の中でカラカラ。 */
+    function showWaiting(thrower) {
+      reset();
+      setThrower(thrower);
+      el.bubble.textContent = `${thrower && thrower.name ? thrower.name + ' さんが' : ''}振っています…`;
+      el.hand.classList.add('rattle');
+      root.classList.add('playing');
+      sounds.rattle(600);
+    }
+
     root.addEventListener('click', skip);
-    return { play, skip, reset, el };
+    return { play, skip, reset, showWaiting, el };
   }
 
-  return { createSounds, createDiceStage, mulberry32, FINAL_ROT, PIPS };
+  /** 数字を from から to まで動かして見せる(点数のカウントアップ)。 */
+  function countUp(el, from, to, ms = 600) {
+    const start = performance.now();
+    const f = Number(from) || 0;
+    const t = Number(to) || 0;
+    if (ms <= 0 || f === t) { el.textContent = String(t); return; }
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = String(Math.round(f + (t - f) * e));
+      if (k < 1) requestAnimationFrame(step);
+      else el.textContent = String(t);
+    };
+    el.textContent = String(f);
+    requestAnimationFrame(step);
+  }
+
+  return { createSounds, createDiceStage, countUp, mulberry32, FINAL_ROT, PIPS };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroAnim;

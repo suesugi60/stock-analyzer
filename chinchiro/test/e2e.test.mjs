@@ -200,18 +200,25 @@ test('親機の「ブロック」で列から消え、本人は「参加でき�
   await context.close();
 });
 
-test('満員: presence が 80 ある部屋を見るだけで開くと満員表示', async () => {
+async function injectPresence(host, code, n) {
+  await host.evaluate(([c, k]) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].presence = Object.fromEntries(Array.from({ length: k }, (_, i) => [`ghost${i}`, true]));
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+  }, [code, n]);
+}
+
+test('満員: 観戦が80人を超えたら(81人目から)満員表示。80人なら入れる', async () => {
   const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
   const code = await createRoom(host);
-  await host.evaluate((c) => {
-    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
-    db.rooms[c].presence = Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`ghost${i}`, true]));
-    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
-  }, code);
+  await injectPresence(host, code, 80);
+  const ok = await openListener(context, code);
+  await ok.page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await injectPresence(host, code, 81);
   const { page } = await openListener(context, code);
   await page.locator('#screen-full').waitFor({ state: 'visible', ...T });
   const room = await readRoom(host, code);
-  assert.equal(Object.keys(room.presence).length, 80, '満員のときは自分の presence を書かない');
+  assert.equal(Object.keys(room.presence).length, 81, '満員のときは自分の presence を書かない');
   await context.close();
 });
 
@@ -557,5 +564,133 @@ test('QR が描けないときは参加URLを大きく出す', async () => {
   await createRoom(page);
   assert.equal(await page.locator('#qr').evaluate((e) => e.hidden), true);
   assert.ok(await page.locator('#join-url.big').isVisible());
+  await context.close();
+});
+
+// ---------- 先送りしていた小さな改善 ----------
+test('結果が出ると紙吹雪が舞い、次の挑戦者で消える', async () => {
+  const { host, context, code, kids } = await setupMatch();
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  await host.locator('#confetti:not([hidden])').waitFor({ state: 'attached', ...T });
+  assert.ok((await host.locator('#confetti i').count()) > 10);
+  await kids[0].page.locator('#confetti:not([hidden])').waitFor({ state: 'attached', ...T });
+  await host.click('#next-match');
+  await host.locator('#confetti[hidden]').waitFor({ state: 'attached', ...T });
+  await context.close();
+});
+
+test('ランキング: 上位10人のほかに配信者が常に出る', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  await host.evaluate((c) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].players = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`p${i}`, { name: `人${i}`, char: 'kappa', joinedAt: 1, online: true, points: 200 + i }]));
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+    new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
+  }, code);
+  await host.locator('#ranking .rank-row2').nth(10).waitFor({ state: 'attached', ...T });
+  const rows = await host.locator('#ranking .rank-row2').allInnerTexts();
+  assert.equal(rows.length, 11);
+  assert.ok(rows[0].includes('人11'));
+  assert.ok(rows[10].includes('配信者') && rows[10].includes('100点'), rows[10]);
+  await context.close();
+});
+
+test('?room= が不正な形なら「部屋が見つかりません」', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?mock=1&room=../x');
+  await page.locator('#screen-notfound').waitFor({ state: 'visible', ...T });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リスナーのURLで接続に失敗したときは、設定の案内ではなく接続エラーを出す', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?room=ABCD');
+  await page.locator('#screen-connect-failed').waitFor({ state: 'visible', ...T });
+  assert.ok(!(await page.locator('#screen-connect-failed').innerText()).includes('firebase-config.js'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('壊れた出目の「?」は対戦中でも少しのあいだ表示される', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code);
+  await kid.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await kid.click('#join-watch');
+  await kid.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+  await host.evaluate((c) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].state.seq = 5;
+    db.rooms[c].state.lastThrow = { by: 'parent', seq: 5, throw: { dice: [9, 0, 'x'], seed: 1, shonben: false, at: 1 } };
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+    new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
+  }, code);
+  await kid.locator('#stage .result-stamp[data-hand="invalid"]').waitFor({ state: 'visible', ...T });
+  await kid.waitForTimeout(400);
+  assert.equal(await kid.locator('#stage-overlay').evaluate((e) => e.hidden), false, '400ms 後もまだ表示されている');
+  await kid.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', ...T });
+  await context.close();
+});
+
+test('リスナーが振ると、親機の返事が来るまで手の中で振る演出が出て、来なければ案内が出る', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code, '&waitms=600');
+  await kid.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await kid.locator('#join-name').fill('まつ');
+  await kid.click('#join-challenge');
+  await kid.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+  const uid = await kid.evaluate(() => sessionStorage.getItem('chinchiro.uid'));
+  await host.close(); // 親機がいない
+  await kid.evaluate(([c, u]) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    db.rooms[c].state = { seq: 2, phase: 'child', match: { childUid: u, round: 1, parent: { throws: [{ dice: [2, 2, 5], seed: 1, shonben: false, hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, at: 1 }], hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, done: true }, child: { done: false } }, host: { points: 100, wins: 0, losses: 0, drinks: 0 } };
+    delete db.rooms[c].queue;
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+    new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
+  }, [code, uid]);
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await kid.locator('#stage-overlay:not([hidden]) .hand.rattle').waitFor({ state: 'visible', ...T });
+  assert.ok((await kid.locator('#stage .bubble').innerText()).includes('振っています'));
+  await kid.locator('#my-status').filter({ hasText: '配信者の画面を待っています' }).waitFor({ state: 'visible', ...T });
+  await kid.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', ...T });
+  await context.close();
+});
+
+test('countUp: 数字が最終値まで動く', async () => {
+  const { page, context } = await newPage(null, 'index.html?mock=1');
+  const r = await page.evaluate(async () => {
+    const el = document.createElement('span'); document.body.appendChild(el);
+    ChinchiroAnim.countUp(el, 100, 130, 300);
+    const mid = el.textContent;
+    await new Promise((r) => setTimeout(r, 600));
+    return [mid, el.textContent];
+  });
+  assert.notEqual(r[0], '130');
+  assert.equal(r[1], '130');
+  await context.close();
+});
+
+test('描画: 内容が変わらない更新では対戦の場を作り直さない(勝者の跳ねが続く)', async () => {
+  const { host, context, code, kids } = await setupMatch();
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kids[0].page.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kids[0].page.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  const handle = await host.locator('#screen-host .fighter.winner').elementHandle();
+  await injectPresence(host, code, 3);
+  await host.evaluate((c) => { const db = JSON.parse(localStorage.getItem('chinchiro.mock.db')); new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db }); }, code);
+  await host.waitForTimeout(300);
+  assert.equal(await handle.evaluate((e) => e.isConnected), true);
   await context.close();
 });
