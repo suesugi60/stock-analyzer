@@ -78,3 +78,54 @@ test('不正な出目でも落ちない: dice=9,0,x → 演出を飛ばして「
   assert.deepEqual(errors, []);
   await context.close();
 });
+
+// ---------- 親機 ----------
+const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/;
+async function createRoom(page, { name = '配信者', mode = 'points', unit = '10', drink = 'sip' } = {}) {
+  await page.locator('#screen-host-entry').waitFor({ state: 'visible', ...T });
+  await page.locator('#host-name').fill(name);
+  await page.click(`[data-mode="${mode}"]`);
+  await page.click(`[data-unit="${unit}"]`);
+  await page.click(`[data-drink="${drink}"]`);
+  await page.click('#create-room');
+  await page.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  return (await page.locator('#room-code').innerText()).trim();
+}
+const readRoom = (page, code) => page.evaluate((c) => JSON.parse(localStorage.getItem('chinchiro.mock.db')).rooms[c], code);
+
+test('親機: 名前とモードを選んで部屋を作ると、4文字のコードと参加URLが出る', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(page, { mode: 'both', unit: '20', drink: 'half' });
+  assert.match(code, CODE_RE);
+  assert.ok((await page.locator('#join-url').innerText()).includes(`room=${code}`));
+  assert.match(await page.locator('#host-record').innerText(), /100/);
+  const room = await readRoom(page, code);
+  assert.equal(room.state.phase, 'lobby');
+  assert.deepEqual(room.settings, { mode: 'both', unit: 20, drinkUnit: 'half', hostName: '配信者', hostChar: 'momotaro' });
+  assert.ok(room.hostUid);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('表示専用: ?room=CODE&stage=1 を開くと同じ部屋の状態が見え、ボタンが無い', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(page);
+  const stagePage = await context.newPage();
+  await stagePage.goto(`${url}/index.html?mock=1&room=${code}&stage=1`);
+  await stagePage.locator('#screen-stage').waitFor({ state: 'visible', ...T });
+  assert.ok((await stagePage.locator('#screen-stage').innerText()).includes(code));
+  assert.equal(await stagePage.locator('#screen-stage button').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('親機: 再読み込みすると「前回の部屋を続ける」で同じコードに戻る', async () => {
+  const { page, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(page);
+  await page.reload();
+  await page.locator('#resume-room').waitFor({ state: 'visible', ...T });
+  await page.click('#resume-room');
+  await page.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  assert.equal((await page.locator('#room-code').innerText()).trim(), code);
+  await context.close();
+});
