@@ -17,7 +17,7 @@
   <div class="notice panel">
     <b>まだ Firebase の設定がありません。</b><br>
     <code>chinchiro/firebase-config.js</code> に Firebase の設定を貼ると動きます。手順は <a href="https://github.com/suesugi60/stock-analyzer/blob/main/chinchiro/README.md">README</a> の「Firebase の準備」を見てください。<br>
-    演出だけ見るなら <a href="?demo=1&dice=4,5,6&seed=7">デモ</a>、同じ端末の別タブだけで試すなら <a href="?mock=1">お試しモード</a>(お試し専用。他の端末とはつながりません)。
+    <small id="setup-error"></small><br>演出だけ見るなら <a href="?demo=1&dice=4,5,6&seed=7">デモ</a>、同じ端末の別タブだけで試すなら <a href="?mock=1">お試しモード</a>(お試し専用。他の端末とはつながりません)。
   </div>
 </section>
 
@@ -115,6 +115,10 @@
 <section id="screen-banned" class="screen" hidden>
   <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
   <div class="notice panel"><b>この部屋には参加できません。</b></div>
+</section>
+<section id="screen-connect-failed" class="screen" hidden>
+  <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>
+  <div class="notice panel"><b>接続できませんでした。</b>電波の良いところで再読み込みしてみてください。<br><small id="connect-error"></small></div>
 </section>
 <section id="screen-host-busy" class="screen" hidden>
   <h1 class="title small">🎲 <span class="stroke">チンチロ対決</span></h1>

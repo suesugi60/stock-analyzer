@@ -23,8 +23,6 @@ body::before { content: ''; position: fixed; inset: 0; z-index: -2; pointer-even
 @keyframes drift { to { background-position-x: -640px; } }
 .screen { max-width: 960px; margin: 0 auto; padding: 16px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
 [hidden] { display: none !important; }
-.cat-start { --cat: var(--c-start); } .cat-goal { --cat: var(--c-goal); } .cat-rest { --cat: var(--c-rest); }
-.cat-self { --cat: var(--c-self); } .cat-pick { --cat: var(--c-pick); } .cat-all { --cat: var(--c-all); } .cat-chug { --cat: var(--c-chug); }
 svg { display: block; }
 
 /* ---- 共通パーツ(太い縁取り + ずらし影) ---- */
@@ -66,7 +64,6 @@ h2::before { content: '▶ '; color: var(--red); }
 .player-row input::placeholder { color: #b0b2c8; }
 .player-row .btn { padding: 9px 12px; }
 .hint-text { font-size: .75rem; color: var(--muted); margin: -2px 0 10px 2px; }
-#add-player { width: 100%; margin-top: 4px; }
 .notice { font-size: .8rem; padding: 10px 12px; margin: 18px 0; line-height: 1.6; }
 .banner { padding: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .banner span { flex: 1; font-weight: 900; }
@@ -82,47 +79,14 @@ h2::before { content: '▶ '; color: var(--red); }
 .pick.selected { background: var(--yellow); transform: translateY(4px); box-shadow: none; }
 .pick:disabled { opacity: .35; cursor: default; }
 
-/* ---- 指令カード(メッセージ窓) ---- */
+/* ---- オーバーレイ・紙吹雪 ---- */
 .overlay { position: fixed; inset: 0; background: rgba(43,45,92,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; overflow-y: auto; }
-.card { width: min(480px, 100%); background: var(--cream); border: 4px solid var(--navy); border-radius: 20px; box-shadow: 6px 6px 0 var(--navy);
   overflow: hidden; animation: bounce-in .35s cubic-bezier(.2,1.4,.5,1); position: relative; }
-@keyframes bounce-in { from { transform: scale(.7); opacity: 0; } }
-.card-band { background: var(--cat, var(--c-rest)); padding: 8px 12px; display: flex; align-items: center; justify-content: center; gap: 10px; border-bottom: 4px solid var(--navy); }
-.card-band .icon svg { width: 44px; height: 44px; }
-.card-band .cat { font-size: 1.5rem; font-weight: 900; letter-spacing: .08em; }
-.card-body { padding: 14px 18px 20px; text-align: center; }
-.card .speaker { display: flex; justify-content: center; margin: 2px 0 8px; }
-.card .who { font-size: .9rem; color: var(--muted); }
-.card .sub { font-size: .95rem; color: var(--red); font-weight: 900; margin-top: 4px; min-height: 1.2em; }
-.card .text { font-size: 1.35rem; font-weight: 900; line-height: 1.5; margin: 10px 0 18px; overflow-wrap: anywhere; position: relative;
   background: #fff; border: 3px solid var(--navy); border-radius: 16px; padding: 14px 14px; }
-.card .text::before { content: ''; position: absolute; top: -12px; left: 50%; width: 18px; height: 18px; background: #fff; border-left: 3px solid var(--navy); border-top: 3px solid var(--navy);
   transform: translateX(-50%) rotate(45deg); }
-.card .extra { margin-bottom: 14px; }
-.card .extra .btn { display: inline-flex; align-items: center; gap: 10px; }
-.card .extra .result { font-size: 1.4rem; font-weight: 900; min-height: 1.4em; margin-top: 10px; }
 .confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 21; }
 .confetti i { position: absolute; top: -12px; width: 10px; height: 14px; border-radius: 2px; animation: fall 2.8s linear forwards; }
 @keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: .8; } }
-/* ---- 結果 ---- */
-.podium { display: flex; align-items: flex-end; justify-content: center; gap: 10px; margin: 6px 0 18px; }
-.podium .spot { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 31%; }
-.podium .spot .pname { font-weight: 900; font-size: .9rem; text-align: center; overflow-wrap: anywhere; line-height: 1.2; }
-.podium .block { width: 100%; border: 3px solid var(--navy); border-radius: 10px 10px 0 0; box-shadow: 4px 4px 0 var(--navy); display: flex; align-items: center; justify-content: center; font-size: 1.7rem; }
-.podium .p1 .block { height: 88px; background: linear-gradient(#ffe978, #ffd93d); }
-.podium .p2 .block { height: 66px; background: linear-gradient(#fff, #dfe3f0); }
-.podium .p3 .block { height: 50px; background: linear-gradient(#f3c28f, #e8a86b); }
-.podium .p1 .avatar { width: 64px; height: 64px; }
-.rank-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 10px; background: #fff; }
-.rank-row .medal { font-size: 1rem; width: 2.2em; text-align: center; color: var(--muted); }
-.rank-row .name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.rank-row .name b { font-weight: 900; font-size: 1.05rem; overflow-wrap: anywhere; }
-.rank-row .note { font-size: .78rem; color: var(--red); }
-.rank-row.last { border-color: var(--red); box-shadow: 4px 4px 0 var(--red); }
-.last-note { text-align: center; font-weight: 900; color: var(--red); margin: 4px 0 10px; }
-.actions { display: grid; gap: 12px; margin-top: 18px; }
-.actions .btn { width: 100%; }
-
 /* ---- サイコロの場面(器 + 3つの立体サイコロ) ---- */
 .stage { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; user-select: none; -webkit-user-select: none; cursor: pointer; }
 .stage .thrower { display: flex; align-items: center; gap: 10px; min-height: 56px; }
@@ -182,7 +146,7 @@ h2::before { content: '▶ '; color: var(--red); }
 .stage .hint { color: #fff; font-size: .8rem; opacity: .85; }
 .stage.playing .hint { visibility: visible; } .stage .hint { visibility: hidden; }
 #stage-overlay { z-index: 30; }
-@media (prefers-reduced-motion: reduce) { .card, .clouds, .confetti i, .stage .result-stamp, .stage .thrower .hand.rattle .mini { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .clouds, .confetti i, .stage .result-stamp, .stage .thrower .hand.rattle .mini, .fighter.winner .avatar { animation: none; } }
 
 /* ---- 親機・表示専用 ---- */
 .screen.wide { max-width: 1200px; }
