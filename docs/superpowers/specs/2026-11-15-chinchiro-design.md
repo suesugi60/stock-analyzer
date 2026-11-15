@@ -88,6 +88,7 @@
 3. 対戦: 左に配信者のキャラ、右に挑戦者のキャラ、真ん中に器。手番の側が光る。「振る」ボタン(親の番だけ)。子の番は「○○さんが振るのを待っています」+ 20秒たつと「代わりに振る」ボタン(リスナーが離脱したとき用)。
 4. 結果: 役名と倍率を大きく、点数の増減・飲む量、紙吹雪(勝った側のキャラが跳ねる)。「次の挑戦者」「同じ人ともう一回」。
 5. 常時: 右上に配信者の成績(○勝○敗、持ち点、飲んだ累計)と消音ボタン。ランキング(点数モード時)。
+6. 順番待ちの各行に「飛ばす」「非表示」「ブロック」。ブロックした人は以後参加できない。
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -113,6 +114,18 @@
 
 参加しなくても `?room=CODE` を開けば対戦の様子が見える(読み取りのみ)。
 
+### 表示専用(配信ソース用)
+
+`?room=CODE&stage=1` は親機と同じ横長レイアウトから操作ボタンを除いた**表示専用**の画面(読み取りのみ、音なし)。
+OBS の「ブラウザソース」などで直接開いて配信に乗せられる。操作は配信者が手元のブラウザ(親機)で行う。
+親機の画面をそのまま画面キャプチャして映してもよい(その場合この画面は不要)。
+
+### 同時接続の上限
+
+想定は多くても数十人。無料枠の上限(同時100接続)に近づかないよう、観戦(`?room=` を開いただけの人)が
+**80人を超えたら「満員です。配信画面で見てね」と表示して接続しない**。挑戦者(列に並ぶ人)はこの制限の対象外。
+接続数は `rooms/{CODE}/presence/{uid}` の数で数える(各端末が自分の分を書き、`onDisconnect` で消す)。
+
 ## 同期の仕組み(Firebase Realtime Database)
 
 ### 認証と識別
@@ -127,7 +140,9 @@ rooms/{CODE}
   hostUid: string
   createdAt: number
   settings: { mode: 'points'|'drink'|'both', unit: 10|20|50, drinkUnit: 'sip'|'half'|'glass', hostName, hostChar }
-  players/{uid}: { name, char, joinedAt, online: bool, points: number, wins, losses, drinks }
+  players/{uid}: { name, char, joinedAt, online: bool, points: number, wins, losses, drinks,
+                   hidden: bool, banned: bool }     // hidden/banned は親機だけが書く(荒らし対策)
+  presence/{uid}: true                                 // 接続中の端末。onDisconnect で消す(人数制限用)
   queue/{uid}: { joinedAt }
   actions/{uid}: { type: 'roll', at }          // リスナーの「振る」要求。親機が処理して削除
   state:
@@ -150,6 +165,8 @@ Hand  = { type: 'pinzoro'|'zoro'|'shigoro'|'me'|'none'|'hifumi'|'shonben', value
 - リスナーは `players/{自分}`・`queue/{自分}`・`actions/{自分}` だけ書ける。
 - 親機は `actions/{uid}` を監視し、手番の子からの `roll` が来たら出目を決めて `state` を更新し、`actions/{uid}` を消す。手番でない人の要求は捨てる。
 - 点数は `players/{uid}.points` と `state.host.points` に親機が書く(リスナーは自分の `points` を書けない)。
+- 荒らし対策: 親機は `players/{uid}.hidden`(名前を「？？？」で表示し、列・ランキングから隠す)と `banned`(列から外し、
+  以後「挑戦する」を受け付けない。本人の画面には「参加できません」)を書ける。どちらも全画面が尊重する。
 
 ### セキュリティルール(Realtime Database)
 
@@ -172,6 +189,7 @@ Hand  = { type: 'pinzoro'|'zoro'|'shigoro'|'me'|'none'|'hifumi'|'shonben', value
             "$other":   { ".write": "auth != null && data.parent().parent().parent().child('hostUid').val() == auth.uid" }
           }
         },
+        "presence": { "$uid": { ".write": "auth != null && $uid == auth.uid" } },
         "queue":   { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } },
         "actions": { "$uid": { ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)" } }
       }
@@ -243,6 +261,12 @@ Hand  = { type: 'pinzoro'|'zoro'|'shigoro'|'me'|'none'|'hifumi'|'shonben', value
 6. `main` に反映すると `https://suesugi60.github.io/stock-analyzer/chinchiro/` で動く。
 
 無料枠(Spark)の範囲: 同時接続 100、転送 10GB/月。この用途では十分。
+
+## レビューで決めたこと(2026-11-15)
+
+- 配信への映し方: 配信者が操作するブラウザをそのまま映す前提。加えて OBS ブラウザソース用の表示専用画面(`&stage=1`)を用意する。
+- 同時接続: 想定は数十人。観戦者が80人を超えたら満員表示にして接続しない(無料枠100接続の安全装置)。
+- 荒らし対策: 親機から「非表示」「ブロック」ができる(`hidden` / `banned`)。
 
 ## 作り手に任せること
 
