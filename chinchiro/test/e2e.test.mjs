@@ -86,10 +86,11 @@ test('不正な出目でも落ちない: dice=9,0,x → 演出を飛ばして「
 
 // ---------- 親機 ----------
 const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/;
-async function createRoom(page, { name = '配信者', mode = 'points', unit = '10', drink = 'sip' } = {}) {
+async function createRoom(page, { name = '配信者', mode = 'points', unit = '10', drink = 'sip', start = null } = {}) {
   await page.locator('#screen-host-entry').waitFor({ state: 'visible', ...T });
   await page.locator('#host-name').fill(name);
   await page.click(`[data-mode="${mode}"]`);
+  if (start) await page.click(`[data-start="${start}"]`);
   await page.click(`[data-unit="${unit}"]`);
   await page.click(`[data-drink="${drink}"]`);
   await page.click('#create-room');
@@ -853,5 +854,88 @@ test('持ち点が未設定の古い部屋は 100 点として表示される', 
   await host.locator('#host-record').waitFor(T);
   assert.ok((await host.locator('#host-record').innerText()).includes('100点'));
   assert.deepEqual(errors, []);
+  await context.close();
+});
+
+// ---------- ルール表・履歴 ----------
+/** 出目を指定した Math.random の列(fixDice 用): 各投げ = [ションベン判定, 目×3, seed]。 */
+const diceSeq = (...throws) => JSON.stringify(throws.flatMap((d) => [0.5, ...d.map((x) => (x - 0.5) / 6), 0.5]));
+
+test('ルール表: 親機とスマホで開いて閉じられ、役・倍率・この部屋の持ち点が書いてある', async () => {
+  const { host, kids, context, errors } = await setupMatch([['うさ', 'kappa']], { start: '300' });
+  const kid = kids[0].page;
+  await host.locator('#rules-btn').click();
+  await host.locator('#rules:not([hidden])').waitFor(T);
+  const text = await host.locator('#rules-body').innerText();
+  for (const s of ['ピンゾロ', '×5', 'ヒフミ', '持ち点 300', '1戦 10点']) assert.ok(text.includes(s), s);
+  await host.keyboard.press('Escape');
+  await host.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  await kid.locator('#rules-btn-l').click();
+  await kid.locator('#rules:not([hidden])').waitFor(T);
+  assert.ok((await kid.locator('#rules-body').innerText()).includes('シゴロ'));
+  await kid.locator('#rules-close').click();
+  await kid.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  // 背景タップでも閉じる
+  await kid.locator('#rules-btn-l').click();
+  await kid.locator('#rules:not([hidden])').waitFor(T);
+  await kid.locator('#rules').click({ position: { x: 5, y: 5 } });
+  await kid.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('ルール表: 参加画面(名前入力)からも開ける', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page } = await openListener(context, code, '&quick=1');
+  await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await page.locator('#rules-link').click();
+  await page.locator('#rules:not([hidden])').waitFor(T);
+  assert.ok((await page.locator('#rules-body').innerText()).includes('ピンゾロ'));
+  await context.close();
+});
+
+test('履歴: 対戦中はアリーナに各側の投げが並び、決着すると両画面の「対戦の記録」に1行出る', async () => {
+  const { host, kids, context, code, errors } = await setupMatch();
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([2, 4, 6], [4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('.fighter.host .throws .throw').first().waitFor({ state: 'visible', ...T });
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('.fighter.host .throws .throw').nth(1).waitFor({ state: 'visible', ...T });
+  const th = await host.locator('.fighter.host .throws').innerText();
+  assert.ok(th.includes('目なし') && th.includes('6の目'), th);
+  assert.equal(await host.locator('.fighter.host .throws .mdice[data-n="4"]').count(), 3);
+  assert.ok((await host.locator('#screen-host [data-ref="log"]').innerText()).includes('まだ対戦がありません'));
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('#screen-host [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  const row = await host.locator('#screen-host [data-ref="log"]').innerText();
+  for (const s of ['#1', '6の目', 'うさ', 'ヒフミ', '親の勝ち', '×2', '+20点']) assert.ok(row.includes(s), s);
+  await kid.locator('#screen-listener [data-ref="log"] .log-row.mine').waitFor({ state: 'visible', ...T });
+  assert.ok((await kid.locator('.fighter.child .throws').innerText()).includes('ヒフミ'));
+  assert.ok((await host.locator('#screen-host [data-ref="legend"]').innerText()).includes('ピンゾロ ×5'));
+  assert.equal((await readRoom(host, code)).state.log.length, 1);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('履歴: 非表示にした人は記録でも？？？', async () => {
+  const { host, kids, context } = await setupMatch();
+  const kid = kids[0].page;
+  await host.locator('#queue .queue-row').first().locator('[data-act="hide"]').click();
+  await host.locator('#queue .queue-row .qname').filter({ hasText: '？？？' }).waitFor({ state: 'visible', ...T });
+  await fixDice(host, diceSeq([1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('#screen-host [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  const row = await host.locator('#screen-host [data-ref="log"]').innerText();
+  assert.ok(row.includes('？？？') && !row.includes('うさ'), row);
+  assert.ok(row.includes('(振らず)') && row.includes('-20点'));
+  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
   await context.close();
 });

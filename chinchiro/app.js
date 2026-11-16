@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const L = ChinchiroLogic;
+  const W = ChinchiroWidgets;
   const SY = ChinchiroSync;
   const params = new URLSearchParams(location.search);
   const $ = (id) => document.getElementById(id);
@@ -279,11 +280,11 @@
 
   function unitLabel(settings) { return (L.DRINK_UNITS[settings.drinkUnit] || L.DRINK_UNITS.sip).label; }
 
-  function fighterHtml(cls, char, color, name, sub, handText, handSub, turn, extraCls = '') {
+  function fighterHtml(cls, char, color, name, sub, handText, handSub, turn, extraCls = '', throwsHtml = '') {
     return `<div class="fighter ${cls} ${turn ? 'turn' : ''} ${extraCls}">
       <span class="avatar" data-char="${validChar(char) ? char : ''}" style="--c:${esc(color)}">${charArt(char)}</span>
       <div class="fname">${esc(name)}</div><div class="fsub">${esc(sub)}</div>
-      <div class="fhand">${esc(handText)}${handSub ? `<small>${esc(handSub)}</small>` : ''}</div></div>`;
+      <div class="fhand">${esc(handText)}${handSub ? `<small>${esc(handSub)}</small>` : ''}</div>${throwsHtml}</div>`;
   }
 
   function sideText(side) {
@@ -369,12 +370,17 @@
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
       const arenaHtml =
-        fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '') +
+        fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '', W.throwsHtml(m && m.parent.throws)) +
         `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
         (child
-          ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
+          ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '', W.throwsHtml(m && m.child.throws))
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
       if (r.arena.dataset.last !== arenaHtml) { r.arena.innerHTML = arenaHtml; r.arena.dataset.last = arenaHtml; }
+    }
+    if (r.legend && !r.legend.innerHTML) r.legend.innerHTML = W.legendHtml();
+    if (r.log) {
+      const logHtml = W.logHtml(st.log, { meUid: backend.uid, players, settings });
+      if (r.log.dataset.last !== logHtml) { r.log.innerHTML = logHtml; r.log.dataset.last = logHtml; }
     }
     // 結果の紙吹雪(全端末。結果ごとに1回)
     if (st.phase === 'result' && st.result && st.result.winner !== 'draw') {
@@ -667,7 +673,8 @@
     const st = room.state;
     if (!L.canThrow(st, by)) return;
     const roll = L.rollDice(Math.random);
-    const { state, result } = L.applyThrow(st, by, roll, room.settings);
+    const cp = st.match ? (room.players || {})[st.match.childUid] || {} : {};
+    const { state, result } = L.applyThrow(st, by, roll, room.settings, Date.now(), { childName: cp.name || '' });
     if (!result) { await writeState(state); return; }
     // 結果の書き込みと子の点数の更新を1回で(途中で親機が落ちても食い違わない)
     const p = (room.players || {})[result.childUid] || {};
@@ -736,6 +743,17 @@
   });
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + SY.explainError(e))));
+  // ルール表(オーバーレイ)。部屋があればその設定、無ければ設定画面の値で作る
+  function openRules() {
+    const settings = room && room.settings ? room.settings : { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
+    $('rules-body').innerHTML = W.rulesHtml(settings);
+    $('rules').hidden = false;
+  }
+  function closeRules() { $('rules').hidden = true; }
+  for (const id of ['rules-btn', 'rules-btn-l', 'rules-link']) $(id).addEventListener('click', (ev) => { ev.preventDefault(); openRules(); });
+  $('rules-close').addEventListener('click', closeRules);
+  $('rules').addEventListener('click', (ev) => { if (ev.target === $('rules')) closeRules(); });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('rules').hidden) closeRules(); });
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
   document.addEventListener('pointerdown', () => sounds.unlock()); // iOS: 最初のタップで音を使えるようにする
   renderMute();

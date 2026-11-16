@@ -64,6 +64,9 @@ h2::before { content: '▶ '; color: var(--red); }
 .player-row input::placeholder { color: #b0b2c8; }
 .player-row .btn { padding: 9px 12px; }
 .hint-text { font-size: .75rem; color: var(--muted); margin: -2px 0 10px 2px; }
+.hint-text.center { text-align: center; margin-top: 12px; }
+.hint-text a { color: var(--navy); font-weight: 900; }
+#rules { z-index: 40; }
 .notice { font-size: .8rem; padding: 10px 12px; margin: 18px 0; line-height: 1.6; }
 .banner { padding: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .banner span { flex: 1; font-weight: 900; }

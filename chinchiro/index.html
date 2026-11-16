@@ -65,12 +65,14 @@
     <div class="record" id="host-record" data-ref="record"></div>
     <div class="hostbar-buttons">
       <button id="mute" class="btn mute" aria-label="音の切り替え">🔊</button>
+      <button id="rules-btn" class="btn btn-ghost">📖 ルール</button>
       <button id="close-room" class="btn btn-ghost">部屋を閉じる</button>
     </div>
   </header>
   <div class="host-main">
     <div>
       <div class="arena panel" data-ref="arena"></div>
+      <div class="legend panel" data-ref="legend"></div>
       <div class="controls" id="host-controls">
         <button id="start-match" class="btn btn-primary" hidden>対決スタート</button>
         <button id="host-roll" class="btn btn-primary" hidden>🎲 振る</button>
@@ -82,6 +84,7 @@
     <div class="side">
       <section class="panel box"><h3>順番待ち</h3><div id="queue" data-ref="queue"></div></section>
       <section class="panel box" data-ref="ranking-box"><h3>ランキング</h3><div id="ranking" data-ref="ranking"></div></section>
+      <section class="panel box"><h3>対戦の記録</h3><div data-ref="log"></div></section>
     </div>
   </div>
 </section>
@@ -95,6 +98,7 @@
   </div>
   <button id="join-challenge" class="btn btn-primary">挑戦する(順番待ちに並ぶ)</button>
   <button id="join-watch" class="btn" style="margin-top:10px;width:100%">見るだけ</button>
+  <p class="hint-text center"><a href="#" id="rules-link">📖 ルールを見る</a></p>
 </section>
 
 <section id="screen-listener" class="screen" hidden>
@@ -107,8 +111,10 @@
   <div class="controls">
     <button id="requeue" class="btn btn-primary" hidden>もう一回並ぶ</button>
     <button id="leave" class="btn" hidden>列から抜ける</button>
+    <button id="rules-btn-l" class="btn btn-ghost">📖 ルール</button>
   </div>
   <section class="panel box"><h3>順番待ち</h3><div data-ref="queue"></div></section>
+  <section class="panel box"><h3>対戦の記録</h3><div data-ref="log"></div></section>
   <p class="hint-text">🔊 音が出ないときは、スマホの消音スイッチ(マナーモード)をオフにしてね</p>
 </section>
 
@@ -138,6 +144,9 @@
 </section>
 </main>
 
+<div id="rules" class="overlay" hidden>
+  <div class="rules panel"><div id="rules-body"></div><button id="rules-close" class="btn btn-primary">閉じる</button></div>
+</div>
 <div id="stage-overlay" class="overlay" hidden>
   <div id="stage"></div>
 </div>
