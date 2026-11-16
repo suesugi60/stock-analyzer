@@ -1240,3 +1240,62 @@ test('ドアップ: リーチの溜め中は最後の1個が 2.5 倍以上に寄
   assert.deepEqual(errors, []);
   await context.close();
 });
+
+// ---------- 対決スタートの演出 ----------
+test('対決スタート: 両者のキャラと名前が左右から出て「VS」が叩き込まれ、終わると親の番になる(全端末)', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host, { name: 'おやま' });
+  const { page: kid } = await joinAs(context, code, 'うさ', 'kappa');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await host.click('#start-match');
+  await host.locator('#stage-overlay:not([hidden]) .intro').waitFor({ state: 'visible', ...T });
+  const text = await host.locator('#stage .intro').innerText();
+  for (const t of ['おやま', 'うさ', 'VS', '対決スタート']) assert.ok(text.includes(t), text);
+  assert.equal(await host.locator('#stage .intro .fighter-card').count(), 2);
+  await kid.locator('#stage-overlay:not([hidden]) .intro').waitFor({ state: 'visible', ...T });
+  await host.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 8000 });
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  assert.equal(await host.locator('#stage .intro').count(), 0, '終わったら消える');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('対決スタート: quick では一瞬で終わり、引き分けの再戦では出ない。デモ(intro=1)で確認できる', async () => {
+  const { host, kids, context, code } = await setupMatch();
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([4, 4, 6], [6, 2, 2]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('#screen-host .arena .status').filter({ hasText: '引き分け' }).waitFor({ state: 'visible', ...T });
+  await host.waitForTimeout(300);
+  assert.equal(await host.locator('#stage .intro').count(), 0, '再戦では出ない');
+  assert.equal(await phaseOf(host, code), 'parent');
+  await context.close();
+  const d = await newPage(null, 'index.html?demo=1&intro=1');
+  await d.page.locator('#stage .intro').waitFor({ state: 'visible', ...T });
+  assert.ok((await d.page.locator('#stage .intro').innerText()).includes('VS'));
+  await d.context.close();
+});
+
+test('音: 効果音の揺らぎは Math.random を使わない(出目の乱数を乱さない)', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(FAKE_AUDIO);
+  await context.addInitScript(() => { window.__allow = true; });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?mock=1`);
+  const r = await page.evaluate(async () => {
+    const s = ChinchiroAnim.createSounds();
+    s.unlock();
+    await new Promise((r) => setTimeout(r, 50));
+    window.__rnd = 0; Math.random = () => { window.__rnd++; return 0.5; };
+    s.clack(); s.rattle(120); s.whoosh(); s.boom(); s.hit();
+    await new Promise((r) => setTimeout(r, 300));
+    return { rnd: window.__rnd, started: window.__started };
+  });
+  assert.ok(r.started > 0, '音は鳴っている');
+  assert.equal(r.rnd, 0, 'Math.random を呼ばない');
+  await context.close();
+});

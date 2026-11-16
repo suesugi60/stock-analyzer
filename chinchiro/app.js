@@ -82,6 +82,11 @@
     let hand = null;
     try { hand = shonben ? { ...L.SHONBEN } : L.evaluate(dice); } catch { hand = null; }
     if (!hand && !shonben && remaining === 0) hand = { ...L.NONE };
+    if (params.get('intro') === '1') { // 対決スタートの演出だけ見る
+      stage.playIntro({ name: '配信者', char: 'momotaro', color: '#ff4d4d' }, { name: 'リスナー', char: 'kappa', color: '#3b8cff' }, { reduced: QUICK });
+      window.ChinchiroDemo = { stage };
+      return;
+    }
     const reach = params.get('reach'); // デモだけ: リーチの強さを固定(0〜3)
     stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining, reduced: QUICK, forceReach: reach === null ? undefined : Number(reach) });
     if (params.get('skip') === '1') stage.skip();
@@ -107,8 +112,9 @@
     code = c;
     unsubRoom = backend.watch(`rooms/${c}`, (r) => {
       room = r ? { ...r, state: L.normalizeState(r.state) } : r;
+      const intro = room ? maybePlayIntro() : false;     // 対決スタートの登場シーン
       const started = room ? maybePlayThrow() : false; // 新しい投げは演出が終わるまで画面を更新しない
-      if (!started && !playing) shown = room;
+      if (!intro && !started && !playing) shown = room;
       render();
     });
   }
@@ -634,6 +640,27 @@
   let playedSeq = null;   // 再生済みの lastThrow.seq
   let playing = false;
   let pendingThrow = null;
+  let pendingIntro = null;
+  let introKey = null;    // 登場シーンを出した対戦(childUid:開始時の seq)
+  let introInit = false;
+  /** 新しい対戦が始まった(親の1投目の前)なら登場シーンを予約する。途中から開いた端末は出さない。 */
+  function maybePlayIntro() {
+    const st = room.state;
+    const m = st && st.match;
+    const fresh = !!(m && st.phase === 'parent' && m.round === 1 && m.parent.throws.length === 0);
+    const key = fresh ? `${m.childUid}:${st.seq}` : null;
+    if (!introInit) { introInit = true; introKey = key; return false; }
+    if (!fresh || key === introKey) return false;
+    introKey = key;
+    const settings = room.settings || {};
+    const child = (room.players || {})[m.childUid];
+    pendingIntro = {
+      parent: { name: settings.hostName || '配信者', char: settings.hostChar, color: '#ff4d4d' },
+      child: { name: child ? (child.hidden ? '？？？' : (child.name || 'リスナー')) : '挑戦者', char: child && validChar(child.char) ? child.char : 'binbo', color: colorFor(m.childUid) },
+    };
+    runPlayback();
+    return true;
+  }
   function maybePlayThrow() {
     const st = room.state;
     const lt = st && st.lastThrow;
@@ -656,7 +683,14 @@
     if (playing) { stage.skip(); return; } // 新しい投げが来たら今のを飛ばして次へ
     playing = true;
     renderControlsOnly();
-    while (pendingThrow) {
+    while (pendingIntro || pendingThrow) {
+      if (pendingIntro) {
+        const i = pendingIntro;
+        pendingIntro = null;
+        $('stage-overlay').hidden = false;
+        try { await stage.playIntro(i.parent, i.child, { reduced: QUICK }); } catch (e) { console.warn('登場シーンに失敗', e); }
+        continue;
+      }
       const t = pendingThrow;
       pendingThrow = null;
       $('stage-overlay').hidden = false;
