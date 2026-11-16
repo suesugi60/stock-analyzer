@@ -14,6 +14,8 @@ after(async () => { await browser?.close(); await srv?.close(); });
 async function newPage(ctx, path, viewport = { width: 390, height: 844 }) {
   const context = ctx || await browser.newContext({ viewport });
   context.setDefaultTimeout(T.timeout);
+  // テストでは Firebase の設定を無効にする(本番の設定ファイルがあっても外に接続しない)
+  await context.route('**/firebase-config.js', (route) => route.fulfill({ contentType: 'text/javascript', body: 'window.FIREBASE_CONFIG = null;' }));
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
