@@ -1041,3 +1041,61 @@ test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らな
   assert.equal(await loopPlays(stagePage), 0);
   await context.close();
 });
+
+// ---------- リーチ演出 ----------
+test('リーチ: 1,1,1 を reach=3 で投げると「激アツ」のカットインと暗転・ズームの後にピンゾロ', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok((await page.locator('#stage .cutin').innerText()).includes('激アツ'));
+  assert.equal(await page.locator('#stage .table.reach.zoom.reach-l3').count(), 1);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 1);
+  assert.equal(await page.locator('#stage .result-stamp').innerText(), ''); // 溜め中は結果なし
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .table.reach').count(), 0);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」の後にヒフミ', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,2,3&seed=7&reach=2');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok((await page.locator('#stage .cutin').innerText()).includes('大ピンチ'));
+  assert.equal(await page.locator('#stage .table.reach.pinch').count(), 1);
+  await page.locator('#stage .result-stamp[data-hand="hifumi"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: 溜め中にタップすると即結果で、カットイン・暗転・溜めが残らない', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  const t0 = Date.now();
+  await page.locator('#stage').click();
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  assert.ok(Date.now() - t0 < 1500, 'すぐ結果');
+  assert.equal(await page.locator('#stage .cutin').count(), 0);
+  assert.equal(await page.locator('#stage .table.reach').count(), 0);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 0);
+  // 続けて別の投げを始めても、前のリーチの残骸がない(play を直接呼ぶ)
+  await page.evaluate(() => { ChinchiroDemo.stage.play({ dice: [3, 3, 5], seed: 5, shonben: false, hand: { type: 'me', value: 5 } }, { remaining: 0, forceReach: 1 }); });
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .cutin').count(), 1);
+  assert.equal(await page.locator('#stage .cube').count(), 3);
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: quick=1 と reach=0 ではリーチなし(.cutin が出ない)', async () => {
+  const a = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&quick=1');
+  await a.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  assert.equal(await a.page.locator('#stage .cutin').count(), 0);
+  await a.context.close();
+  const b = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=0');
+  await b.page.locator('#stage .table.zoom').waitFor({ state: 'attached', timeout: 10000 });
+  await b.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await b.page.locator('#stage .cutin').count(), 0);
+  assert.deepEqual(b.errors, []);
+  await b.context.close();
+});

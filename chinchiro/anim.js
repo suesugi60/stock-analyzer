@@ -316,6 +316,25 @@ const ChinchiroAnim = (() => {
       rumble(ms = 900) { const n = Math.floor(ms / 45); for (let i = 0; i < n; i++) setTimeout(() => lowNoise(0.05, 0.35 * (1 - i / n)), i * 45); },
       /** 強い役の「ドン!」。 */
       boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
+      /** リーチの鼓動(レベルが高いほど速く・多く。激アツは上昇音つき)。{ stop() } を返す。 */
+      heartbeat(level) {
+        const beat = () => { tone(60, 0.25, 0.9, 'sine'); lowNoise(0.08, 0.6); };
+        const times = level >= 3 ? [0, 500, 900, 1250, 1550, 1800, 2000, 2150] : level === 2 ? [0, 350, 700, 1050] : [0, 450];
+        const timers = times.map((t) => setTimeout(beat, t));
+        if (level >= 3) timers.push(setTimeout(() => sweep(200, 1800, 1.2, 0.35), 1600));
+        return { stop() { for (const t of timers) clearTimeout(t); } };
+      },
+      /** ピンチの低い唸り。{ stop() } を返す。 */
+      drone() {
+        const hum = () => tone(55, 1.2, 0.3, 'sawtooth');
+        hum();
+        const id = setInterval(hum, 600);
+        return { stop() { clearInterval(id); } };
+      },
+      /** 着地のヒットストップの一撃。 */
+      hit() { noise(0.09, 2000, 1.2, 1.2); tone(2600, 0.12, 0.3); lowNoise(0.25, 1.0); },
+      /** リーチが外れたときの「ずっこけ」。 */
+      sad() { sweep(400, 150, 0.6, 0.3); },
       /**
        * 役名をコールする。voiceFiles[key] があればその音声ファイル(人の声)を再生し、
        * 無ければ端末の読み上げ(いちばん自然な日本語の声を自動で選ぶ)。どちらも無ければ何もしない。
@@ -402,7 +421,7 @@ const ChinchiroAnim = (() => {
       el.stamp.dataset.hand = '';
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing');
+      root.classList.remove('playing', 'reaching');
     }
 
     function setThrower(t) {
@@ -542,7 +561,7 @@ const ChinchiroAnim = (() => {
       }
     }
 
-    function showResult(throwObj, opts, dies, rnd, skipped) {
+    function showResult(throwObj, opts, dies, rnd, skipped, plan = NO_REACH()) {
       const { text, key } = stampFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand, opts.remaining ?? 0);
       el.stamp.textContent = text;
       el.stamp.dataset.hand = key;
@@ -568,11 +587,39 @@ const ChinchiroAnim = (() => {
     }
 
     /** 投げる。opts: { thrower:{name,char,color}, remaining, reduced }。タップで skip。 */
+    // ---- リーチの飾り(カットイン・ランプ・ストライプ・稲妻・スポットライト) ----
+    const BOLT = '<svg viewBox="0 0 60 160" xmlns="http://www.w3.org/2000/svg"><path d="M36 0 L6 78 L30 78 L18 160 L56 60 L32 60 Z" fill="#ffe978" stroke="#2b2d5c" stroke-width="5" stroke-linejoin="round"/></svg>';
+    function cutinText(plan, level) {
+      if (plan.pinch) return level >= 2 ? '大ピンチ!!' : 'ピンチ…';
+      const base = level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
+      return plan.kind === 'pinzoro' ? `ピンゾロ${base}` : base;
+    }
+    function fxReach(plan, level) {
+      const spot = document.createElement('div'); spot.className = 'spot'; el.fx.appendChild(spot);
+      const c = document.createElement('div');
+      c.className = `cutin l${level}${plan.pinch ? ' pinch' : ''}`;
+      c.textContent = cutinText(plan, level);
+      el.fx.appendChild(c);
+      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.fx.appendChild(l); }
+      if (level >= 3) {
+        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.fx.appendChild(st); }
+        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.fx.appendChild(bolt); }
+      }
+    }
+    function clearReach() {
+      for (const n of el.fx.querySelectorAll('.cutin, .lamps, .stripes, .bolt, .spot')) n.remove();
+      el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit');
+      for (const n of el.dice.querySelectorAll('.hold')) n.classList.remove('hold');
+      root.classList.remove('reaching');
+    }
+    function stopAll(run) { for (const st of run.stops) { try { st.stop(); } catch { /* 無視 */ } } run.stops = []; }
+
+    /** 投げる。opts: { thrower:{name,char,color}, remaining, reduced, forceReach }。タップで skip。 */
     async function play(throwObj, opts = {}) {
       reset();
       setThrower(opts.thrower);
       root.classList.add('playing');
-      const run = { anims: [], timers: [], wakers: [], skipped: false };
+      const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
       running = run;
       const dice = throwObj && throwObj.dice;
       if (!validDice(dice)) { // 壊れたデータ: 演出せず「?」を少し見せる
@@ -588,6 +635,10 @@ const ChinchiroAnim = (() => {
       const reduced = opts.reduced || reducedMotion();
       const outIdx = throwObj.shonben ? Math.floor(rnd() * 3) : -1;
       const spots = landingSpots(rnd);
+      // リーチ: 最後に止める1個と強さ(seed から。quick/動きを減らす/ションベンでは無し)
+      const plan = outIdx < 0 ? reachPlan(dice, false, throwObj.seed, opts.forceReach) : NO_REACH();
+      const level = reduced ? 0 : plan.level;
+      const decider = outIdx < 0 ? plan.lastIdx : -1;
       const dies = [];
       for (let i = 0; i < 3; i++) {
         const d = makeDie();
@@ -608,40 +659,81 @@ const ChinchiroAnim = (() => {
       // 投げ込み〜跳ねる〜止まる(飛ばされていたら一瞬で終える)
       const quick = reduced || run.skipped;
       const D = quick ? 1 : 1500;
-      const decider = outIdx < 0 ? 2 : -1; // 最後の1個は毎回スロー+ズームで溜める
       const finished = [];
       if (!quick) { sounds.whoosh(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
+      // 投げる順: 最後の1個(decider)以外を先に(0 / 90ms)、decider は 180ms
+      const order = [0, 1, 2].filter((i) => i !== decider).concat(decider >= 0 ? [decider] : []);
+      const delayOf = (i) => (quick ? 0 : order.indexOf(i) * 90);
+      const HOLD_OFF = 0.58, REL_RATE = 0.6, SLOW_OFF = 0.76, SLOW_RATE = 0.5, LAND_OFF = 0.86;
+      const secondLandAt = Math.max(...[0, 1, 2].filter((i) => i !== decider && i !== outIdx).map((i) => delayOf(i) + D * LAND_OFF), 0);
+      const bounceFx = (k) => { sounds.clack(1 - k.off * 0.5); fxDust(k.p.x, k.p.y, rnd, k.off < 0.5 ? 8 : 5); fxShake(k.off < 0.5); };
+      const later = (fn, ms) => run.timers.push(setTimeout(() => { if (!run.skipped && run === running) fn(); }, ms));
       dies.forEach((d, i) => {
         const out = i === outIdx;
         const path = pathFor(rnd, i, spots[i], out);
         const { wrapF, cubeF, shadowF } = buildFrames(path, dice[i], rnd, out);
-        const delay = quick ? 0 : i * 90;
+        const delay = delayOf(i);
         const o = { duration: D, delay, fill: 'forwards' };
-        const a1 = d.wrap.animate(wrapF, o); const a2 = d.cube.animate(cubeF, o); const a3 = d.shadow.animate(shadowF, o);
-        run.anims.push(a1, a2, a3);
-        finished.push(a1.finished.catch(() => {}));
-        if (!quick) {
-          for (const k of path) {
-            if (k.h === 0 && k.off > 0 && k.off < 1) run.timers.push(setTimeout(() => {
-              sounds.clack(1 - k.off * 0.5);
-              fxDust(k.p.x, k.p.y, rnd, k.off < 0.5 ? 6 : 4);
-              fxShake(k.off < 0.5);
-            }, delay + D * k.off));
-          }
-          if (out) run.timers.push(setTimeout(() => { d.wrap.classList.add('out'); d.cube.classList.add('out'); el.fx.appendChild(d.wrap); }, delay + D * 0.42));
-          if (i === decider) run.timers.push(setTimeout(() => {
-            if (run.skipped) return;
-            for (const a of [a1, a2, a3]) a.playbackRate = 0.35;
+        const anims = [d.wrap.animate(wrapF, o), d.cube.animate(cubeF, o), d.shadow.animate(shadowF, o)];
+        run.anims.push(...anims);
+        finished.push(anims[0].finished.catch(() => {}));
+        if (quick) return;
+        if (out) later(() => { d.wrap.classList.add('out'); d.cube.classList.add('out'); el.fx.appendChild(d.wrap); }, delay + D * 0.42);
+        const bounces = path.filter((k) => k.h === 0 && k.off > 0 && k.off < 1);
+        if (i !== decider) { for (const k of bounces) later(() => bounceFx(k), delay + D * k.off); return; }
+        if (level === 0) {
+          // 軽いスロー+ズームで止まる
+          for (const k of bounces) if (k.off <= SLOW_OFF) later(() => bounceFx(k), delay + D * k.off);
+          later(() => {
+            for (const a of anims) a.playbackRate = SLOW_RATE;
             el.table.classList.add('zoom');
-            sounds.rattle(700);
-          }, delay + D * 0.68));
+            sounds.rattle(500);
+            for (const k of bounces) if (k.off > SLOW_OFF) later(() => bounceFx(k), (k.off - SLOW_OFF) * D / SLOW_RATE);
+          }, delay + D * SLOW_OFF);
+          return;
         }
+        // リーチ: 空中で止めて溜め、2個目が止まったらカットイン、溜めが明けたら落としてヒットストップ
+        for (const k of bounces) if (k.off <= HOLD_OFF) later(() => bounceFx(k), delay + D * k.off);
+        const holdPoint = path.find((k) => k.off === HOLD_OFF) || path[Math.floor(path.length / 2)];
+        later(() => {
+          for (const a of anims) a.pause();
+          d.wrap.classList.add('hold'); d.cube.classList.add('hold');
+          el.table.classList.add('reach', 'zoom', `reach-l${level}`);
+          if (plan.pinch) el.table.classList.add('pinch');
+          el.table.style.setProperty('--spot-x', `${240 + holdPoint.p.x}px`);
+          el.table.style.setProperty('--spot-y', `${160 + holdPoint.p.y - holdPoint.h}px`);
+          root.classList.add('reaching');
+        }, delay + D * HOLD_OFF);
+        const hold = REACH_HOLD_MS[level] || REACH_HOLD_MS[1];
+        later(() => {
+          fxReach(plan, level);
+          run.stops.push(plan.pinch ? sounds.drone() : sounds.heartbeat(level));
+          if (level >= 3) later(() => { el.table.classList.add('dark2'); stopAll(run); }, hold - 400);
+          later(() => {
+            stopAll(run);
+            el.table.classList.remove('dark2');
+            d.wrap.classList.remove('hold'); d.cube.classList.remove('hold');
+            for (const a of anims) { a.playbackRate = REL_RATE; a.play(); }
+            for (const k of bounces) if (k.off > HOLD_OFF) {
+              const at = (k.off - HOLD_OFF) * D / REL_RATE;
+              if (k.off === LAND_OFF) later(() => {
+                for (const a of anims) a.pause(); // ヒットストップ(最後の1個だけ。他は止まっている)
+                el.table.classList.add('hit');
+                fxFlash('white', 220); fxShake(true); sounds.hit(); fxDust(k.p.x, k.p.y, rnd, 10);
+                later(() => { for (const a of anims) a.play(); el.table.classList.remove('hit'); }, 120);
+              }, at);
+              else later(() => bounceFx(k), at);
+            }
+          }, hold);
+        }, Math.max(secondLandAt, delay + D * HOLD_OFF) + 60);
       });
       await Promise.all(finished);
       if (run !== running) return;
+      stopAll(run);
       el.table.classList.remove('zoom');
+      clearReach();
       dies.forEach((d, i) => { d.cube.dataset.face = dice[i]; if (i === outIdx) { d.wrap.classList.add('out'); d.cube.classList.add('out'); } });
-      showResult(throwObj, opts, dies, rnd, run.skipped || quick);
+      showResult(throwObj, opts, dies, rnd, run.skipped || quick, { ...plan, level });
       await sleep(run.skipped || quick ? 250 : 1100);
       if (run === running) { root.classList.remove('playing'); running = null; }
     }
@@ -652,11 +744,13 @@ const ChinchiroAnim = (() => {
       running.skipped = true;
       for (const t of running.timers) clearTimeout(t);
       running.timers = [];
+      stopAll(running);
       for (const w of running.wakers) w();
       running.wakers = [];
       el.hand.classList.remove('rattle');
       el.table.classList.remove('zoom');
-      for (const a of running.anims) { a.playbackRate = 1; try { a.finish(); } catch { /* 未開始なら無視 */ } }
+      clearReach();
+      for (const a of running.anims) { a.playbackRate = 1; try { if (a.playState === 'paused') a.play(); a.finish(); } catch { /* 未開始なら無視 */ } }
     }
 
     /** 「振る」を押してから親機の返事が来るまでの待ち: 手の中でカラカラ。 */

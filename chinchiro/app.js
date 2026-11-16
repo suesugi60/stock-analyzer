@@ -82,8 +82,10 @@
     let hand = null;
     try { hand = shonben ? { ...L.SHONBEN } : L.evaluate(dice); } catch { hand = null; }
     if (!hand && !shonben && remaining === 0) hand = { ...L.NONE };
-    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining });
+    const reach = params.get('reach'); // デモだけ: リーチの強さを固定(0〜3)
+    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining, forceReach: reach === null ? undefined : Number(reach) });
     if (params.get('skip') === '1') stage.skip();
+    window.ChinchiroDemo = { stage }; // デモ画面のコンソールから投げ直せる
     return;
   }
 

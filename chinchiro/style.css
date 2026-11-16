@@ -106,7 +106,42 @@ h2::before { content: '▶ '; color: var(--red); }
 @keyframes rattle { from { transform: translate(-3px, -2px) rotate(-18deg); } to { transform: translate(3px, 2px) rotate(16deg); } }
 .stage .scaler { width: 480px; height: 300px; transform-origin: top center; }
 .stage .table { position: relative; width: 480px; height: 300px; transition: transform .35s ease, filter .3s; }
-.stage .table.zoom { transform: scale(1.14) translateY(-6px); }
+.stage .table.zoom { transform: scale(1.08) translateY(-4px); }
+/* リーチ: 最後の1個へ寄るズーム・ビネット・スポットライト・溜めの回転・ヒットストップ */
+.stage .table.reach { transition: transform .6s cubic-bezier(.2,.8,.3,1), filter .3s; }
+.stage .table.reach.zoom { transform: scale(1.3) translate(calc((240px - var(--spot-x, 240px)) * .4), calc((150px - var(--spot-y, 150px)) * .4 - 6px)); }
+.stage .table.reach::after { content: ''; position: absolute; inset: -80px; z-index: 5; pointer-events: none;
+  background: radial-gradient(circle at calc(var(--spot-x, 240px) + 80px) calc(var(--spot-y, 150px) + 80px), transparent 56px, rgba(10,10,40,.55) 130px, rgba(10,10,40,.88) 260px); }
+.stage .table.reach.pinch::after { background: radial-gradient(circle at calc(var(--spot-x, 240px) + 80px) calc(var(--spot-y, 150px) + 80px), transparent 50px, rgba(60,0,0,.6) 120px, rgba(20,0,0,.92) 260px); }
+.stage .table.dark2::after { background: rgba(4,4,16,.94); transition: background .3s; }
+.stage .table.hit { filter: brightness(1.9) contrast(1.25); transition: none; }
+.stage .die-wrap.hold .cube-tilt { animation: hold-spin 1.4s linear infinite; }
+@keyframes hold-spin { from { transform: rotateX(22deg) rotateY(0deg) translateY(0); } 50% { transform: rotateX(22deg) rotateY(180deg) translateY(-8px); } to { transform: rotateX(22deg) rotateY(360deg) translateY(0); } }
+.stage .spot { position: absolute; left: var(--spot-x, 240px); top: var(--spot-y, 150px); width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%; z-index: 4; pointer-events: none;
+  background: radial-gradient(circle, rgba(255,255,220,.5), transparent 70%); animation: spot-breathe .8s ease-in-out infinite alternate; }
+@keyframes spot-breathe { to { transform: scale(1.25); } }
+.stage .cutin { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 9; font-size: 3.2rem; font-weight: 900; white-space: nowrap; pointer-events: none;
+  color: #fff; -webkit-text-stroke: 6px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy), 0 0 24px rgba(255,255,255,.55);
+  animation: cutin-in .35s cubic-bezier(.2,1.5,.5,1), cutin-shake .12s .35s infinite alternate; }
+.stage .cutin.l2 { color: var(--yellow); text-shadow: 0 5px 0 var(--navy), 0 0 30px #ffd93d; }
+.stage .cutin.l3 { color: #ff2d2d; font-size: 3.8rem; -webkit-text-stroke: 7px #2a0000; text-shadow: 0 6px 0 #2a0000, 0 0 34px #ffd93d; animation: cutin-in .35s cubic-bezier(.2,1.5,.5,1), cutin-pulse .22s .35s infinite alternate; }
+.stage .cutin.pinch { color: #e6e8f5; -webkit-text-stroke: 6px #000; text-shadow: 0 5px 0 #000, 0 0 22px #ff2d2d; }
+@keyframes cutin-in { from { transform: translate(-50%, -50%) scale(3) rotate(-8deg); opacity: 0; } }
+@keyframes cutin-shake { from { transform: translate(-51%, -50%) rotate(-1deg); } to { transform: translate(-49%, -50%) rotate(1deg); } }
+@keyframes cutin-pulse { from { transform: translate(-50%, -50%) scale(1); } to { transform: translate(-50%, -50%) scale(1.12); } }
+.stage .lamps { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.stage .lamps i { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: #ff4d4d; border: 3px solid var(--navy); box-shadow: 0 0 18px #ff4d4d; animation: lamp .18s infinite alternate; }
+.stage .lamps i:nth-child(1) { left: 6px; top: 40px; } .stage .lamps i:nth-child(2) { right: 6px; top: 40px; animation-delay: .09s; }
+.stage .lamps i:nth-child(3) { left: 6px; top: 200px; animation-delay: .09s; } .stage .lamps i:nth-child(4) { right: 6px; top: 200px; }
+@keyframes lamp { from { opacity: .25; transform: scale(.8); } to { opacity: 1; transform: scale(1.15); } }
+.stage .stripes { position: absolute; left: -40px; right: -40px; height: 18px; z-index: 8; pointer-events: none; border: 3px solid var(--navy);
+  background: repeating-linear-gradient(-45deg, #ff2d2d 0 16px, #111 16px 32px); animation: stripes-move .4s linear infinite; }
+.stage .stripes.top { top: -34px; } .stage .stripes.bottom { bottom: -34px; }
+@keyframes stripes-move { to { background-position-x: 45px; } }
+.stage .bolt { position: absolute; z-index: 8; width: 60px; height: 160px; pointer-events: none; animation: bolt-flicker .22s infinite; }
+.stage .bolt svg { width: 100%; height: 100%; }
+.stage .bolt.left { left: 14px; top: -24px; } .stage .bolt.right { right: 14px; top: -14px; animation-delay: .11s; }
+@keyframes bolt-flicker { 0%, 100% { opacity: 1; } 50% { opacity: .1; } }
 .stage .table.dark { filter: brightness(.55); }
 .stage .bowl-back { position: absolute; left: 40px; right: 40px; top: 56px; height: 214px; border-radius: 50% 50% 46% 46% / 36% 36% 64% 64%; background: linear-gradient(#f6f1e6, #cdc4b0); border: 4px solid var(--navy); box-shadow: 0 8px 0 var(--navy); }
 .stage .bowl-back::before { content: ''; position: absolute; left: 8px; right: 8px; top: -2px; height: 84px; border-radius: 50%; background: radial-gradient(ellipse at 50% 70%, #6a5e52 0, #8a7e6f 50%, #b9ae9b 100%); border: 4px solid var(--navy); }
