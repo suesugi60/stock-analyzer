@@ -18,6 +18,7 @@
   const MAX_PRESENCE = 80; // 無料枠(同時100接続)の安全装置
   const PROXY_ROLL_MS = Number(params.get('proxy')) || 20000; // 子が反応しないとき「代わりに振る」を出すまで
   const WAIT_HOST_MS = Number(params.get('waitms')) || 6000; // 「振る」に親機が応えないとき案内を出すまで
+  const WATCH_MS = Number(params.get('watchms')) || 15000;    // 親機が演出を見終わった印(state.watched)が来ないとき、諦めて振れるようにするまで
 
   const CHARACTERS = [
     { id: 'momotaro', name: 'ももたろう' }, { id: 'kintaro', name: 'きんたろう' }, { id: 'urashima', name: 'うらしまたろう' },
@@ -471,8 +472,9 @@
       return;
     }
     if (!shown) shown = room;
-    if (role === 'host') hostQueue = hostQueue.then(processActions).catch((e) => console.warn('要求の処理に失敗', e));
-    if (role === 'host') { renderBoard(hostView, false); renderHostControls(); }
+    // リスナーの「振る」要求は、親機が自分の演出を見終わってから処理する(演出の途中で相手の番にならない)
+    if (role === 'host' && !playing) hostQueue = hostQueue.then(processActions).catch((e) => console.warn('要求の処理に失敗', e));
+    if (role === 'host') { renderBoard(hostView, false); renderHostControls(); markWatched(); }
     if (role === 'stage') renderBoard(stageView, true);
     if (role === 'listener') { renderBoard(listenerView, true); renderListener(); }
   }
@@ -605,10 +607,20 @@
     if (rollRequested && lastSeq > rollReqSeq) rollRequested = false;
     if (hostAbsentSeq !== null && st.seq !== hostAbsentSeq) hostAbsentSeq = null;
     if (hostAbsentSeq !== null) $('my-status').textContent = '配信者の画面を待っています…';
-    const canRoll = inMatch && L.canThrow(st, 'child') && !playing;
+    // 親機が演出を見終わる(state.watched が seq に追いつく)まで振れない。親機が落ちたときは WATCH_MS で諦める
+    const hostDone = (st.watched || 0) >= st.seq || waitedTooLong(st.seq);
+    const myTurnNow = inMatch && L.canThrow(st, 'child') && !playing;
+    if (myTurnNow && !hostDone && hostAbsentSeq === null) $('my-status').textContent = '配信者の画面の演出中…';
+    const canRoll = myTurnNow && hostDone;
     $('listener-roll').hidden = !canRoll;
     $('listener-roll').disabled = rollRequested;
     $('listener-roll').textContent = rollRequested ? '振っています…' : '🎲 振る';
+  }
+
+  let seqSeen = { seq: null, at: 0 };
+  function waitedTooLong(seq) {
+    if (seqSeen.seq !== seq) { seqSeen = { seq, at: Date.now() }; setTimeout(() => { if (room && room.state.seq === seq) renderListener(); }, WATCH_MS + 50); }
+    return Date.now() - seqSeen.at > WATCH_MS;
   }
 
   // ---------- リスナー: 振る要求 ----------
@@ -738,6 +750,15 @@
     playing = false;
     shown = room; // 止まったので最新を見せる
     render();
+  }
+  /** 親機: 今の state(seq)まで演出を見終わったことを書く。リスナーはこれを待ってから振れる。 */
+  let watchedSent = null;
+  function markWatched() {
+    if (role !== 'host' || !room || !room.state || playing || pendingIntro || pendingThrow || pendingResult) return;
+    const seq = room.state.seq;
+    if ((room.state.watched || 0) >= seq || watchedSent === seq) return;
+    watchedSent = seq;
+    backend.update(`rooms/${code}/state`, { watched: seq }).catch((e) => { watchedSent = null; console.warn('watched の書き込みに失敗', e); });
   }
   function renderControlsOnly() {
     if (role === 'host') renderHostControls();
