@@ -106,7 +106,7 @@ test('親機: 名前とモードを選んで部屋を作ると、4文字のコ�
   assert.match(await page.locator('#host-record').innerText(), /100/);
   const room = await readRoom(page, code);
   assert.equal(room.state.phase, 'lobby');
-  assert.deepEqual(room.settings, { mode: 'both', unit: 20, drinkUnit: 'half', hostName: '配信者', hostChar: 'momotaro' });
+  assert.deepEqual(room.settings, { mode: 'both', unit: 20, drinkUnit: 'half', hostName: '配信者', hostChar: 'momotaro', startPoints: 100 });
   assert.ok(room.hostUid);
   assert.deepEqual(errors, []);
   await context.close();
@@ -801,5 +801,57 @@ test('voice/ に音声ファイルがあれば起動時に見つけて、その�
   await page.locator('#stage .result-stamp[data-hand="shigoro"]').waitFor({ state: 'visible', ...T });
   await page.waitForFunction(() => window.__played.includes('voice/shigoro.m4a'), null, { timeout: 5000 });
   assert.deepEqual(await page.evaluate(() => window.__spoken), []);
+  await context.close();
+});
+
+// ---------- 持ち点 ----------
+test('持ち点: 300 を選んで部屋を作ると、親の成績・参加者・ランキングが 300 点から', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  await host.locator('#host-name').fill('親');
+  await host.locator('#start-choices .choice[data-start="300"]').click();
+  await host.locator('#create-room').click();
+  await host.locator('#room-code').waitFor(T);
+  assert.ok((await host.locator('#host-record').innerText()).includes('300点'));
+  const code = (await host.locator('#room-code').innerText()).trim();
+  assert.equal((await readRoom(host, code)).settings.startPoints, 300);
+  const { page: kid } = await joinAs(context, code, 'たろう');
+  await kid.locator('#my-record').waitFor(T);
+  assert.ok((await kid.locator('#my-record').innerText()).includes('300点'));
+  await host.locator('#queue .queue-row').first().waitFor(T);
+  assert.ok((await host.locator('#queue').innerText()).includes('300点'));
+  assert.ok((await host.locator('#ranking').innerText()).includes('300点'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('持ち点: 自由入力は 1〜99999 の整数だけ。空・0・負・小数・大きすぎは 100', async () => {
+  for (const [typed, want] of [['777', '777点'], ['0', '100点'], ['-5', '100点'], ['12.5', '100点'], ['', '100点'], ['123456', '100点']]) {
+    const { page: host, context } = await newPage(null, 'index.html?mock=1&quick=1');
+    await host.locator('#start-choices .choice[data-start="custom"]').click();
+    await host.locator('#start-custom').waitFor({ state: 'visible', ...T });
+    await host.locator('#start-custom').fill(typed);
+    await host.locator('#create-room').click();
+    await host.locator('#room-code').waitFor(T);
+    assert.ok((await host.locator('#host-record').innerText()).includes(want), `${typed} → ${want}`);
+    await context.close();
+  }
+});
+
+test('持ち点が未設定の古い部屋は 100 点として表示される', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  await host.locator('#start-choices .choice[data-start="1000"]').click();
+  const code = await createRoom(host);
+  assert.ok((await host.locator('#host-record').innerText()).includes('1000点'));
+  // 旧バージョンの部屋の形にする(startPoints も log も host.points も無い)
+  await host.evaluate((c) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    delete db.rooms[c].settings.startPoints; delete db.rooms[c].state.log; delete db.rooms[c].state.host;
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+  }, code);
+  await host.reload();
+  await host.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  await host.locator('#host-record').waitFor(T);
+  assert.ok((await host.locator('#host-record').innerText()).includes('100点'));
+  assert.deepEqual(errors, []);
   await context.close();
 });

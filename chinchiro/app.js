@@ -29,7 +29,8 @@
   const charArt = (id) => (validChar(id) ? SugorokuArt.CHAR_ART[id]() : SugorokuArt.CHAR_ART.binbo());
   const charName = (id) => (validChar(id) ? CHAR_NAME[id] : '');
   const COLORS = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#4dd4e8', '#ff7bd2'];
-  const MODE_LABEL = { points: { label: '点数', hint: '持ち点100から' }, drink: { label: '飲み', hint: '負けたら飲む' }, both: { label: '両方', hint: '点数も飲みも' } };
+  const MODE_LABEL = { points: { label: '点数', hint: '持ち点から増減' }, drink: { label: '飲み', hint: '負けたら飲む' }, both: { label: '両方', hint: '点数も飲みも' } };
+  const startPts = (settings) => L.startPoints(settings); // 部屋の持ち点(古い部屋は 100)
 
   const store = {
     get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
@@ -131,7 +132,13 @@
   }
 
   // ---------- 親機: 入口 ----------
-  let setup = { name: '', char: 'momotaro', mode: 'points', unit: 10, drinkUnit: 'sip' };
+  let setup = { name: '', char: 'momotaro', mode: 'points', unit: 10, drinkUnit: 'sip', startPoints: 100, customStart: '' };
+  /** 設定画面の持ち点(自由入力は 1〜99999 の整数だけ採用、それ以外は 100)。 */
+  function chosenStart() {
+    if (setup.startPoints !== 'custom') return L.startPoints({ startPoints: setup.startPoints });
+    const raw = String($('start-custom').value ?? '').trim();
+    return L.startPoints({ startPoints: /^\d+$/.test(raw) ? Number(raw) : NaN });
+  }
 
   function renderChoices(el, items, current, onPick) {
     el.innerHTML = '';
@@ -150,7 +157,9 @@
   function renderEntry() {
     setAvatar($('host-avatar'), setup.char, '#ff4d4d');
     if ($('host-name').value !== setup.name) $('host-name').value = setup.name;
-    renderChoices($('mode-choices'), Object.entries(MODE_LABEL).map(([k, v]) => ({ attr: 'mode', value: k, label: v.label, hint: v.hint })), setup.mode, (v) => { setup.mode = v; });
+    renderChoices($('mode-choices'), Object.entries(MODE_LABEL).map(([k, v]) => ({ attr: 'mode', value: k, label: v.label, hint: k === 'points' ? `持ち点${chosenStart()}から` : v.hint })), setup.mode, (v) => { setup.mode = v; });
+    renderChoices($('start-choices'), L.START_POINTS.map((p) => ({ attr: 'start', value: p, label: `${p}点`, hint: 'みんなこの点から' })).concat([{ attr: 'start', value: 'custom', label: '自由', hint: '好きな点' }]), setup.startPoints, (v) => { setup.startPoints = v === 'custom' ? 'custom' : Number(v); });
+    $('start-custom-row').hidden = setup.startPoints !== 'custom';
     renderChoices($('unit-choices'), L.POINT_UNITS.map((u) => ({ attr: 'unit', value: u, label: `${u}点`, hint: '×倍率' })), setup.unit, (v) => { setup.unit = Number(v); });
     renderChoices($('drink-choices'), Object.entries(L.DRINK_UNITS).map(([k, v]) => ({ attr: 'drink', value: k, label: v.label, hint: '×倍率' })), setup.drinkUnit, (v) => { setup.drinkUnit = v; });
   }
@@ -163,8 +172,11 @@
       if (MODE_LABEL[saved.mode]) setup.mode = saved.mode;
       if (L.POINT_UNITS.includes(saved.unit)) setup.unit = saved.unit;
       if (L.DRINK_UNITS[saved.drinkUnit]) setup.drinkUnit = saved.drinkUnit;
+      if (L.START_POINTS.includes(saved.startPoints) || saved.startPoints === 'custom') setup.startPoints = saved.startPoints;
+      if (typeof saved.customStart === 'string') { setup.customStart = saved.customStart; $('start-custom').value = saved.customStart; }
     }
     renderEntry();
+    $('start-custom').addEventListener('input', () => { setup.customStart = $('start-custom').value; renderEntry(); });
     const prev = store.get(KEY_HOST);
     $('resume-banner').hidden = !(prev && prev.code && prev.uid === backend.uid);
     show('screen-host-entry');
@@ -173,8 +185,9 @@
   async function createRoom() {
     setup.name = safeName($('host-name').value) || '配信者';
     const c = await SY.allocateRoomCode(backend);
-    const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char };
-    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState() });
+    const start = chosenStart();
+    const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char, startPoints: start };
+    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState(start) });
     store.set(KEY_SETUP, setup);
     store.set(KEY_HOST, { code: c, uid: backend.uid });
     await enterHost(c);
@@ -326,7 +339,7 @@
     if (r.record) {
       const h = st.host || {};
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${h.points ?? 100}">${h.points ?? 100}</span>点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${h.points ?? startPts(settings)}">${h.points ?? startPts(settings)}</span>点`);
       parts.push(`${h.wins ?? 0}勝${h.losses ?? 0}敗`);
       if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${h.drinks ?? 0}`);
       r.record.innerHTML = `${esc(settings.hostName || '配信者')}<small>${parts.join(' ・ ')}</small>`;
@@ -379,7 +392,7 @@
         const row = document.createElement('div');
         row.className = 'queue-row';
         row.dataset.uid = uid;
-        const pts = settings.mode !== 'drink' ? `${p.points ?? 100}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
+        const pts = settings.mode !== 'drink' ? `${p.points ?? startPts(settings)}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
         row.innerHTML = `<span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${colorFor(uid)}">${charArt(p.char)}</span>` +
           `<span class="qname">${p.hidden ? '？？？' : esc(p.name || 'リスナー')}${p.online === false ? ' <span class="offline">オフライン</span>' : ''}</span><span class="qpts">${esc(pts)}</span>`;
         if (!readonly) row.insertAdjacentHTML('beforeend', `<span class="qacts"><button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button></span>`);
@@ -392,7 +405,7 @@
       const rows = Object.entries(players).filter(([, p]) => !p.hidden && !p.banned && p.points !== undefined)
         .map(([uid, p]) => ({ uid, name: p.name, points: p.points, char: p.char }));
       rows.sort((a, b) => b.points - a.points);
-      const hostRow = { uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? 100, char: settings.hostChar, host: true };
+      const hostRow = { uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? startPts(settings), char: settings.hostChar, host: true };
       const top = rows.slice(0, 10);
       const all = rows.concat([hostRow]).sort((a, b) => b.points - a.points);
       const hostRank = all.findIndex((p) => p.host) + 1;
@@ -546,7 +559,7 @@
       setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
       $('my-avatar').hidden = false;
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${me.points ?? 100}">${me.points ?? 100}</span>点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${me.points ?? startPts(settings)}">${me.points ?? startPts(settings)}</span>点`);
       parts.push(`${me.wins ?? 0}勝${me.losses ?? 0}敗`);
       if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${me.drinks ?? 0}`);
       $('my-record').innerHTML = `${esc(me.name || 'リスナー')} ・ ${parts.join(' ・ ')}`;
@@ -661,7 +674,7 @@
     const d = result.deltas.child;
     await backend.update(`rooms/${code}`, {
       state,
-      [`players/${result.childUid}/points`]: (p.points ?? 100) + d.points,
+      [`players/${result.childUid}/points`]: (p.points ?? startPts(room.settings)) + d.points,
       [`players/${result.childUid}/wins`]: (p.wins ?? 0) + d.wins,
       [`players/${result.childUid}/losses`]: (p.losses ?? 0) + d.losses,
       [`players/${result.childUid}/drinks`]: (p.drinks ?? 0) + d.drinks,

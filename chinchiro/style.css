@@ -157,6 +157,9 @@ h2::before { content: '▶ '; color: var(--red); }
 /* ---- 親機・表示専用 ---- */
 .screen.wide { max-width: 1200px; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }
+.choices.five { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 480px) { .choices.five { grid-template-columns: repeat(3, 1fr); } }
+#start-custom-row { margin-top: 10px; }
 .hostbar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; flex-wrap: wrap; }
 .room-info { display: flex; align-items: center; gap: 14px; }
 .room-info .rlabel { display: block; font-size: .7rem; color: var(--muted); }
