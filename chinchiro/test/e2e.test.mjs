@@ -884,14 +884,15 @@ test('ルール表: 親機とスマホで開いて閉じられ、役・倍率・
   await context.close();
 });
 
-test('ルール表: 参加画面(名前入力)からも開ける', async () => {
+test('ルール表: 参加画面(名前入力)からも開け、その部屋の設定(持ち点・単位)が出る', async () => {
   const { page: host, context } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
-  const code = await createRoom(host);
+  const code = await createRoom(host, { start: '300', unit: '20' });
   const { page } = await openListener(context, code, '&quick=1');
   await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
   await page.locator('#rules-link').click();
   await page.locator('#rules:not([hidden])').waitFor(T);
-  assert.ok((await page.locator('#rules-body').innerText()).includes('ピンゾロ'));
+  const text = await page.locator('#rules-body').innerText();
+  for (const t of ['ピンゾロ', '持ち点 300', '1戦 20点']) assert.ok(text.includes(t), t);
   await context.close();
 });
 
@@ -1131,5 +1132,53 @@ test('派手さ: 投げ込みで光の筋が走り、砂煙は 8 個以上。リ
   assert.ok((await page.locator('#stage .fx-layer .dust').count()) >= 8, '砂煙');
   assert.equal(await page.locator('#stage .result-stamp[data-fail="1"]').count(), 1, 'リーチ外れ');
   assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('音: 操作の外の unlock では読み上げを解錠済みにせず、<audio> の解錠に失敗したら次の操作でやり直す', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(() => {
+    window.__spoken = []; window.__played = []; window.__reject = true;
+    window.speechSynthesis.speak = (u) => { window.__spoken.push(u.text); };
+    window.Audio = class {
+      constructor(src) { this.src = src || ''; this.dataset = {}; this.paused = true; this.loop = false; }
+      addEventListener() {} setAttribute() {} removeAttribute(k) { if (k === 'src') this.src = ''; } pause() { this.paused = true; }
+      play() { window.__played.push(this.src); if (window.__reject) return Promise.reject(new Error('NotAllowedError')); this.paused = false; return Promise.resolve(); }
+    };
+  });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?mock=1`);
+  const r = await page.evaluate(async () => {
+    const wait = () => new Promise((r) => setTimeout(r, 20));
+    const s = ChinchiroAnim.createSounds();
+    s.unlock(false); await wait();                       // タブ復帰など、操作の外(play は拒否される)
+    const afterNonGesture = { spoken: window.__spoken.length };
+    s.unlock(); await wait();                            // 操作の中。まだ拒否 → 次でやり直せるように戻す
+    window.__reject = false;
+    s.unlock(); await wait();                            // 許可された操作 → 解錠
+    s.unlock(); await wait();                            // 解錠済み → 増えない
+    return { afterNonGesture, spoken: window.__spoken, played: window.__played.filter((x) => String(x).startsWith('data:audio/wav')).length };
+  });
+  assert.equal(r.afterNonGesture.spoken, 0, '操作の外では読み上げを解錠しない');
+  assert.deepEqual(r.spoken, [' '], '操作の中で一度だけ');
+  assert.equal(r.played, 3, '拒否された分はやり直し、解錠できたら増えない');
+  await context.close();
+});
+
+test('音: 溜め中に reset() すると鼓動・唸りのタイマーも止まる', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(FAKE_AUDIO);
+  await context.addInitScript(() => { window.__allow = true; });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?demo=1&dice=1,2,3&seed=7&reach=2`);
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  const r = await page.evaluate(async () => {
+    ChinchiroDemo.stage.reset();
+    await new Promise((r) => setTimeout(r, 250));
+    const before = window.__started;
+    await new Promise((r) => setTimeout(r, 1500));
+    return { before, after: window.__started };
+  });
+  assert.equal(r.after, r.before, '唸りが続いている');
   await context.close();
 });

@@ -492,11 +492,13 @@
     if ($('join-name').value !== join.name) $('join-name').value = join.name;
   }
 
+  let joinSettings = null; // 参加画面(まだ room を購読していない)でルール表に使う、その部屋の設定
   async function enterListenerEntry(c) {
     role = 'listener';
     code = c;
     const r = await backend.get(`rooms/${c}`);
     if (!r || !r.hostUid) { show('screen-notfound'); return; }
+    joinSettings = r.settings || null;
     const me = (r.players || {})[backend.uid];
     if (me && me.banned) { show('screen-banned'); return; }
     const presence = Object.keys(r.presence || {}).length;
@@ -757,7 +759,7 @@
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + SY.explainError(e))));
   // ルール表(オーバーレイ)。部屋があればその設定、無ければ設定画面の値で作る
   function openRules() {
-    const settings = room && room.settings ? room.settings : { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
+    const settings = room && room.settings ? room.settings : joinSettings || { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
     $('rules-body').innerHTML = W.rulesHtml(settings);
     $('rules').hidden = false;
   }
@@ -771,7 +773,7 @@
   document.addEventListener('pointerdown', () => sounds.unlock());
   document.addEventListener('touchend', () => sounds.unlock());
   document.addEventListener('keydown', () => sounds.unlock());
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(false); });
   renderMute();
   $('start-match').addEventListener('click', () => { $('start-match').hidden = true; hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }); });
   $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });

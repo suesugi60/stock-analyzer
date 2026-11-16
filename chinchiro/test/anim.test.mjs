@@ -66,3 +66,14 @@ test('reachPlan: レベルの分布(信頼度)', () => {
   assert.deepEqual(A.REACH_HOLD_MS, { 1: 900, 2: 1800, 3: 2800 });
   assert.deepEqual(Object.keys(A.REACH_WEIGHTS).sort(), ['hifumi', 'me', 'nonePinch', 'noneShigoro', 'pinzoro', 'shigoro', 'zoro']);
 });
+
+test('freezeAnims/thawAnims: 終わったアニメは止めず、止めたものだけ再開する(巻き戻し防止)', () => {
+  const mk = (st) => ({ playState: st, paused: 0, played: 0, pause() { this.playState = 'paused'; this.paused++; }, play() { this.playState = 'running'; this.played++; } });
+  const run = mk('running'); const fin = mk('finished');
+  const frozen = A.freezeAnims([run, fin]);
+  assert.deepEqual([run.paused, fin.paused], [1, 0]);
+  fin.play = () => { throw new Error('finished を play すると巻き戻る'); };
+  A.thawAnims(frozen);
+  assert.equal(run.played, 1);
+  assert.equal(A.freezeAnims([]).length, 0);
+});
