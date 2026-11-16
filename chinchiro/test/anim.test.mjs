@@ -26,3 +26,43 @@ test('VOICE_KEYS: 役ごとの音声ファイル名と文言が揃っている',
   assert.equal(A.voiceKeyFor({ type: 'shonben' }), 'shonben');
   assert.equal(A.voiceKeyFor(null), 'none');
 });
+
+test('reachPlan: 最後の1個の選び方と見える形', () => {
+  const plans = (dice) => Array.from({ length: 400 }, (_, s) => A.reachPlan(dice, false, s));
+  // 2つ同じ+1つ違う: 違う1つが最後のとき(ゾロ目リーチ)と、先のときがどちらもある
+  const me = plans([3, 3, 5]);
+  assert.ok(me.some((p) => p.lastIdx === 2 && p.kind === 'zoro'));
+  assert.ok(me.some((p) => p.lastIdx !== 2 && p.kind === null)); // 5・3 が先 → 形なし
+  assert.ok(me.every((p) => (p.lastIdx === 2 ? p.kind === 'zoro' : p.kind === null)));
+  const me2 = plans([4, 4, 5]);
+  assert.ok(me2.some((p) => p.lastIdx !== 2 && p.kind === 'shigoro')); // 5・4 が先 → シゴロリーチ → 外れて5の目
+  assert.ok(plans([1, 4, 1]).some((p) => p.kind === 'pinzoro'));
+  // バラバラ: 多数派が先(シゴロリーチ / ピンチ)のときと、混ざった2つが先(形なし)のときがある
+  const none = plans([4, 2, 6]);
+  assert.ok(none.some((p) => p.lastIdx === 1 && p.kind === 'shigoro'));
+  assert.ok(none.some((p) => p.lastIdx !== 1 && p.kind === null));
+  const none2 = plans([5, 1, 2]);
+  assert.ok(none2.some((p) => p.lastIdx === 0 && p.kind === 'pinch' && p.pinch));
+  assert.ok(none2.every((p) => p.level <= 2));
+  assert.deepEqual(A.reachPlan([2, 3, 5], true, 1), { lastIdx: 2, kind: null, level: 0, pinch: false }); // ションベン
+  assert.deepEqual(A.reachPlan([9, 0, 'x'], false, 1), { lastIdx: 2, kind: null, level: 0, pinch: false }); // 不正
+  assert.ok(plans([4, 5, 6]).every((p) => p.kind === 'shigoro'));
+  assert.ok(plans([1, 2, 3]).every((p) => p.kind === 'pinch' && p.pinch && p.level <= 2));
+  assert.ok(plans([6, 6, 6]).every((p) => p.kind === 'zoro'));
+  assert.ok(plans([1, 1, 1]).every((p) => p.kind === 'pinzoro'));
+  assert.ok(plans([6, 6, 6]).some((p) => p.lastIdx === 0) && plans([6, 6, 6]).some((p) => p.lastIdx === 2));
+  assert.deepEqual(A.reachPlan([6, 6, 6], false, 42), A.reachPlan([6, 6, 6], false, 42)); // 同じ seed なら同じ
+  assert.equal(A.reachPlan([2, 4, 6], false, 1, 3).level, 3);     // 強制
+  assert.equal(A.reachPlan([2, 4, 6], false, 1, 0).level, 0);
+  assert.ok(plans([2, 4, 6]).every((p) => p.kind !== null || p.level === 0)); // 形なしならレベル0
+});
+
+test('reachPlan: レベルの分布(信頼度)', () => {
+  const dist = (dice) => { const c = [0, 0, 0, 0]; for (let s = 0; s < 3000; s++) c[A.reachPlan(dice, false, s).level]++; return c.map((x) => x / 3000); };
+  const pz = dist([1, 1, 1]); assert.ok(pz[3] > 0.6 && pz[0] === 0, JSON.stringify(pz));
+  const me = dist([3, 3, 5]); assert.ok(me[0] > 0.75 && me[3] < 0.05, JSON.stringify(me)); // 半分は形なし(L0)なので L0 が多い
+  const hf = dist([1, 2, 3]); assert.equal(hf[3], 0); assert.ok(hf[2] > 0.5, JSON.stringify(hf));
+  const sg = dist([4, 5, 6]); assert.ok(sg[0] === 0 && sg[3] > 0.2, JSON.stringify(sg));
+  assert.deepEqual(A.REACH_HOLD_MS, { 1: 900, 2: 1800, 3: 2800 });
+  assert.deepEqual(Object.keys(A.REACH_WEIGHTS).sort(), ['hifumi', 'me', 'nonePinch', 'noneShigoro', 'pinzoro', 'shigoro', 'zoro']);
+});

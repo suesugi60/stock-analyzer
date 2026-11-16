@@ -66,17 +66,85 @@ const ChinchiroAnim = (() => {
     return ja.map((v, i) => ({ v, i, s: score(v) })).sort((a, b) => b.s - a.s || a.i - b.i)[0].v;
   }
 
+  // ---------- リーチ(最後の1個をどれにするか・演出の強さ) ----------
+  /** レベル 0〜3(なし/ノーマル/スーパー/激アツ)の重み。結果ごとに引くので「強い役ほど激アツが出やすいが確定ではない」。 */
+  const REACH_WEIGHTS = { pinzoro: [0, 5, 25, 70], zoro: [0, 20, 45, 35], shigoro: [0, 25, 45, 30], me: [70, 22, 6, 2], noneShigoro: [75, 18, 5, 2], hifumi: [10, 30, 60, 0], nonePinch: [80, 15, 5, 0] };
+  /** 溜めの長さ(2 個目が止まってから最後の 1 個を落とすまで)。 */
+  const REACH_HOLD_MS = { 1: 900, 2: 1800, 3: 2800 };
+  const NO_REACH = () => ({ lastIdx: 2, kind: null, level: 0, pinch: false });
+  const hi = (x) => x >= 4;
+  const lo = (x) => x <= 3;
+  /** 先に止まる 2 個だけから見える形(結果は見ない)。 */
+  function visibleKind(a, b) {
+    if (a === b) return a === 1 ? 'pinzoro' : 'zoro';
+    if (hi(a) && hi(b)) return 'shigoro';
+    if (lo(a) && lo(b)) return 'pinch';
+    return null;
+  }
+  function outcomeOf(d) {
+    const s = d.slice().sort((x, y) => x - y);
+    if (s[0] === s[1] && s[1] === s[2]) return s[0] === 1 ? 'pinzoro' : 'zoro';
+    if (s[0] === 4 && s[1] === 5 && s[2] === 6) return 'shigoro';
+    if (s[0] === 1 && s[1] === 2 && s[2] === 3) return 'hifumi';
+    if (s[0] === s[1] || s[1] === s[2]) return 'me';
+    return 'none';
+  }
+  /**
+   * 最後に止めるサイコロとリーチの強さを seed から決める(全端末で同じ)。
+   * 止まる順は「形が見える順」と「見えない順」を混ぜ、順番そのものが結果を確定させないようにする。
+   * @returns {{ lastIdx: number, kind: 'pinzoro'|'zoro'|'shigoro'|'pinch'|null, level: 0|1|2|3, pinch: boolean }}
+   */
+  function reachPlan(dice, shonben, seed, force) {
+    if (shonben || !validDice(dice)) return NO_REACH();
+    const rnd = mulberry32(((Number(seed) || 0) ^ 0x9e3779b9) >>> 0);
+    const flip = rnd() < 0.5; // 順番の表裏
+    const pick = rnd();       // 候補からの選択
+    const roll = rnd();       // レベル
+    const out = outcomeOf(dice);
+    let candidates;
+    if (out === 'me') {
+      const odd = dice[0] === dice[1] ? 2 : dice[0] === dice[2] ? 1 : 0;
+      candidates = flip ? [odd] : [0, 1, 2].filter((i) => i !== odd); // 表: 違う1つが最後(ゾロ目リーチ) / 裏: ペアの片方が最後
+    } else if (out === 'none') {
+      const his = [0, 1, 2].filter((i) => hi(dice[i]));
+      const majority = his.length === 2 ? his : [0, 1, 2].filter((i) => lo(dice[i]));
+      const minority = [0, 1, 2].filter((i) => !majority.includes(i));
+      candidates = flip ? minority : majority; // 表: 多数派が先(シゴロリーチ/ピンチ) / 裏: 混ざった2つが先
+    } else {
+      candidates = [0, 1, 2];
+    }
+    const lastIdx = candidates[Math.min(candidates.length - 1, Math.floor(pick * candidates.length))];
+    const [a, b] = [0, 1, 2].filter((i) => i !== lastIdx).map((i) => dice[i]);
+    const kind = visibleKind(a, b);
+    let level = 0;
+    if (kind) {
+      const w = REACH_WEIGHTS[out === 'none' ? (kind === 'pinch' ? 'nonePinch' : 'noneShigoro') : out];
+      const total = w.reduce((t, x) => t + x, 0);
+      let acc = 0;
+      level = 3;
+      for (let i = 0; i < 4; i++) { acc += w[i]; if (roll * total < acc) { level = i; break; } }
+    }
+    if (Number.isInteger(force) && force >= 0 && force <= 3) level = force;
+    if (kind === 'pinch') level = Math.min(level, 2);
+    return { lastIdx, kind, level, pinch: kind === 'pinch' };
+  }
+
   // ---------- 音(その場で合成) ----------
+  /** 0.5 秒の無音 WAV。ループ再生して iOS にページを「再生中」と思わせ、消音スイッチでも Web Audio を鳴らす。 */
+  const SILENT_LOOP = 'data:audio/wav;base64,UklGRsQPAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAPAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
   /** 約50msの無音 WAV。iOS で <audio> をユーザー操作中に一度鳴らして「解錠」するために使う。 */
   const SILENT_WAV = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 
   /**
-   * @param {{voiceFiles?: Record<string,string>}} [opts]
+   * @param {{voiceFiles?: Record<string,string>, voiceReady?: Promise<any>}} [opts]
    *   voiceFiles: VOICE_LINES のキー → 音声ファイルURL。あればそれを再生し、無いキーは端末の読み上げに切り替える。
    *   (後から同じオブジェクトに追加しても反映される)
+   *   voiceReady: voiceFiles の調査が終わる Promise。最初のコールがこれより早いときは最大 400ms 待つ(ファイルがあるのに読み上げない)。
    */
   function createSounds(opts = {}) {
     const voiceFiles = (opts && opts.voiceFiles) || {};
+    let voiceReady = opts && opts.voiceReady && typeof opts.voiceReady.then === 'function' ? opts.voiceReady : null;
+    if (voiceReady) voiceReady.then(() => { voiceReady = null; }, () => { voiceReady = null; });
     const voiceMissing = new Set();
     let voiceEl = null;      // 音声ファイル再生用に使い回す <audio>(iOS の解錠を保つため1つだけ)
     let voiceText = null;    // 再生に失敗したとき読み上げに切り替える文言
@@ -135,15 +203,56 @@ const ChinchiroAnim = (() => {
     let ctx = null;
     let muted = false;
     let unlocked = false;
+    let keepAlive = false;   // 無音ループを回すか(親機は常時、スマホは自分の対戦中だけ)
+    let loopEl = null;
+    let speechWarm = false;
+    const readyCbs = [];
+    const isReady = () => !!ctx && ctx.state === 'running';
+    const notify = () => { const r = isReady(); for (const f of readyCbs) { try { f(r); } catch { /* 画面側の都合 */ } } };
     const ac = () => {
       try {
-        ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
+        if (!ctx) {
+          ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (typeof ctx.addEventListener === 'function') ctx.addEventListener('statechange', notify);
+        }
         return ctx;
       } catch { return null; }
     };
-    function noise(dur, freq, q, vol) {
-      const c = ac(); if (!c || muted) return;
+    const tryResume = (c) => { let p; try { p = c.resume(); } catch { p = null; } return Promise.resolve(p); };
+    /**
+     * 鳴らす直前の保険。running ならすぐ鳴らす。違えば resume() を試し、300ms 以内に起きたら鳴らす。
+     * 起きなければその音は捨てる(あとでまとめて鳴らない)。resume() はユーザー操作の外では拒まれることがある。
+     */
+    function ensure(fn) {
+      if (muted) return;
+      const c = ac(); if (!c) return;
+      if (c.state === 'running') { fn(c); return; }
+      let late = false;
+      const timer = setTimeout(() => { late = true; }, 300);
+      tryResume(c).then(() => { clearTimeout(timer); if (!late && c.state === 'running' && !muted) fn(c); notify(); }, () => {});
+    }
+    function startLoop() {
+      if (typeof window === 'undefined' || typeof window.Audio !== 'function') return;
+      try {
+        if (!loopEl) {
+          loopEl = new window.Audio();
+          loopEl.loop = true;
+          if (typeof loopEl.setAttribute === 'function') loopEl.setAttribute('playsinline', '');
+          loopEl.src = SILENT_LOOP;
+        }
+        if (loopEl.paused !== false) { const p = loopEl.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch { /* 再生できなければ次の操作で */ }
+    }
+    function stopLoop() { if (loopEl) { try { loopEl.pause(); } catch { /* 無視 */ } } }
+    /** iOS は最初の読み上げもユーザー操作が要るので、操作の中で無音の発話を 1 回流しておく。 */
+    function warmSpeech() {
+      if (speechWarm) return;
+      const s = synth(); if (!s || typeof SpeechSynthesisUtterance === 'undefined') return;
+      speechWarm = true;
+      try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; s.speak(u); } catch { /* 読み上げ不可 */ }
+    }
+    function noise(dur, freq, q, vol) { ensure((c) => noiseAt(c, dur, freq, q, vol)); }
+    function noiseAt(c, dur, freq, q, vol) {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
@@ -153,15 +262,15 @@ const ChinchiroAnim = (() => {
       const g = c.createGain(); g.gain.value = vol;
       src.connect(bp).connect(g).connect(c.destination); src.start();
     }
-    function tone(freq, dur, vol, type = 'triangle') {
-      const c = ac(); if (!c || muted) return;
+    function tone(freq, dur, vol, type = 'triangle') { ensure((c) => toneAt(c, freq, dur, vol, type)); }
+    function toneAt(c, freq, dur, vol, type) {
       const t = c.currentTime;
       const o = c.createOscillator(); o.type = type; o.frequency.value = freq;
       const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
       o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
     }
-    function lowNoise(dur, vol) {
-      const c = ac(); if (!c || muted) return;
+    function lowNoise(dur, vol) { ensure((c) => lowNoiseAt(c, dur, vol)); }
+    function lowNoiseAt(c, dur, vol) {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
@@ -171,8 +280,8 @@ const ChinchiroAnim = (() => {
       const g = c.createGain(); g.gain.value = vol;
       src.connect(lp).connect(g).connect(c.destination); src.start();
     }
-    function sweep(from, to, dur, vol) {
-      const c = ac(); if (!c || muted) return;
+    function sweep(from, to, dur, vol) { ensure((c) => sweepAt(c, from, to, dur, vol)); }
+    function sweepAt(c, from, to, dur, vol) {
       const t = c.currentTime;
       const o = c.createOscillator(); o.type = 'sawtooth';
       o.frequency.setValueAtTime(from, t); o.frequency.exponentialRampToValueAtTime(to, t + dur);
@@ -183,11 +292,23 @@ const ChinchiroAnim = (() => {
     return {
       /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
       unlock() {
-        const c = ac(); if (c) unlocked = true;
+        const c = ac();
+        if (c) {
+          unlocked = true;
+          if (c.state !== 'running') tryResume(c).then(notify, () => {});
+        }
         // <audio> も同じ操作の中で一度鳴らしておく(iOS は操作外の play() を拒むため)
         const a = audioEl();
         if (a && !a.src) { try { a.src = SILENT_WAV; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch { /* 無視 */ } }
+        if (keepAlive) startLoop();
+        warmSpeech();
       },
+      /** 効果音を今すぐ鳴らせるか(AudioContext が running)。 */
+      get ready() { return isReady(); },
+      /** ready が変わったかもしれないときに呼ばれる(statechange と resume の後)。 */
+      onReadyChange(cb) { if (typeof cb === 'function') readyCbs.push(cb); },
+      /** 無音ループで iOS を「再生中」にするか。true にすると次の操作(と解錠済みなら今)から回り、false で止める。 */
+      setKeepAlive(b) { keepAlive = !!b; if (keepAlive) { if (unlocked) startLoop(); } else stopLoop(); },
       get unlocked() { return unlocked; },
       /** 着地: 高い「カッ」+ 低い「ドッ」。 */
       clack(vol = 1) { noise(0.07, 1800 + Math.random() * 900, 1.2, 0.8 * vol); tone(2400 + Math.random() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
@@ -198,15 +319,39 @@ const ChinchiroAnim = (() => {
       rumble(ms = 900) { const n = Math.floor(ms / 45); for (let i = 0; i < n; i++) setTimeout(() => lowNoise(0.05, 0.35 * (1 - i / n)), i * 45); },
       /** 強い役の「ドン!」。 */
       boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
+      /** リーチの鼓動(レベルが高いほど速く・多く。激アツは上昇音つき)。{ stop() } を返す。 */
+      heartbeat(level) {
+        const beat = () => { tone(60, 0.25, 0.9, 'sine'); lowNoise(0.08, 0.6); };
+        const times = level >= 3 ? [0, 500, 900, 1250, 1550, 1800, 2000, 2150] : level === 2 ? [0, 350, 700, 1050] : [0, 450];
+        const timers = times.map((t) => setTimeout(beat, t));
+        if (level >= 3) timers.push(setTimeout(() => sweep(200, 1800, 1.2, 0.35), 1600));
+        return { stop() { for (const t of timers) clearTimeout(t); } };
+      },
+      /** ピンチの低い唸り。{ stop() } を返す。 */
+      drone() {
+        const hum = () => tone(55, 1.2, 0.3, 'sawtooth');
+        hum();
+        const id = setInterval(hum, 600);
+        return { stop() { clearInterval(id); } };
+      },
+      /** 着地のヒットストップの一撃。 */
+      hit() { noise(0.09, 2000, 1.2, 1.2); tone(2600, 0.12, 0.3); lowNoise(0.25, 1.0); },
+      /** リーチが外れたときの「ずっこけ」。 */
+      sad() { sweep(400, 150, 0.6, 0.3); },
       /**
        * 役名をコールする。voiceFiles[key] があればその音声ファイル(人の声)を再生し、
        * 無ければ端末の読み上げ(いちばん自然な日本語の声を自動で選ぶ)。どちらも無ければ何もしない。
        */
       voice(text, key) {
         if (muted || typeof window === 'undefined') return;
-        const url = key && !voiceMissing.has(key) && Object.hasOwn(voiceFiles, key) ? voiceFiles[key] : null;
-        if (url && playFile(url, key, text)) return;
-        speak(text);
+        const go = () => {
+          if (muted) return;
+          const url = key && !voiceMissing.has(key) && Object.hasOwn(voiceFiles, key) ? voiceFiles[key] : null;
+          if (url && playFile(url, key, text)) return;
+          speak(text);
+        };
+        if (voiceReady) Promise.race([voiceReady, new Promise((r) => setTimeout(r, 400))]).then(go, go);
+        else go();
       },
       /** 読み上げに使う声(テスト/設定表示用)。 */
       get voiceName() { const v = chosenVoice(); return v ? v.name : null; },
@@ -282,9 +427,11 @@ const ChinchiroAnim = (() => {
       el.fx.innerHTML = '';
       el.stamp.textContent = '';
       el.stamp.dataset.hand = '';
+      delete el.stamp.dataset.fail;
+      root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing');
+      root.classList.remove('playing', 'reaching');
     }
 
     function setThrower(t) {
@@ -382,6 +529,24 @@ const ChinchiroAnim = (() => {
         ], { duration: 420 + rnd() * 200, easing: 'ease-out', fill: 'forwards' });
       }
     }
+    /** 回る光線(強い役の背景)。 */
+    function fxRays(kind) {
+      const r = document.createElement('div'); r.className = `rays ${kind}`; el.fx.appendChild(r);
+      after(() => r.remove(), 1700);
+    }
+    /** 集中線(ドン!)。 */
+    function fxImpact() {
+      const im = document.createElement('div'); im.className = 'impact'; el.fx.appendChild(im);
+      after(() => im.remove(), 700);
+    }
+    /** 投げ込みのとき器の上を走る光の筋。 */
+    function fxStreak() {
+      const st = document.createElement('div'); st.className = 'streak'; el.fx.appendChild(st);
+      st.animate([{ transform: 'translateX(-160px) skewX(-20deg)', opacity: 0 }, { opacity: .9, offset: .4 }, { transform: 'translateX(520px) skewX(-20deg)', opacity: 0 }], { duration: 520, easing: 'ease-in-out', fill: 'forwards' });
+      after(() => st.remove(), 700);
+    }
+    /** 演出中のあと処理(次の投げで reset されたら実行されない)。 */
+    const after = (fn, ms) => { const id = setTimeout(fn, ms); if (running) running.timers.push(id); return id; };
     function fxShake(strong) {
       el.table.classList.remove('shake', 'shake2');
       void el.table.offsetWidth; // アニメを再始動
@@ -424,25 +589,32 @@ const ChinchiroAnim = (() => {
       }
     }
 
-    function showResult(throwObj, opts, dies, rnd, skipped) {
+    function showResult(throwObj, opts, dies, rnd, skipped, plan = NO_REACH()) {
       const { text, key } = stampFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand, opts.remaining ?? 0);
       el.stamp.textContent = text;
       el.stamp.dataset.hand = key;
+      const fail = plan.level >= 1 && !plan.pinch && (key === 'me' || key === 'none'); // リーチが外れた
+      if (fail) el.stamp.dataset.fail = '1'; else delete el.stamp.dataset.fail;
       const vkey = voiceKeyFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand);
       setTimeout(() => sounds.voice(VOICE_LINES[vkey], vkey), skipped ? 0 : (key === 'pinzoro' || key === 'zoro' ? 250 : 120));
       if (skipped) return;
       const colors = ['#ffd93d', '#ff4d4d', '#2ec27e', '#3b8cff', '#b56cff', '#fff'];
       switch (key) {
-        case 'pinzoro': fxFlash('gold', 1100); fxRing('gold'); fxParticles(rnd, 44, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); fxShake(true); sounds.boom(); sounds.chime('gold'); break;
-        case 'zoro': fxFlash('white', 500); fxRing('rainbow'); fxParticles(rnd, 24, colors, true); fxShake(true); sounds.boom(); sounds.chime('rainbow'); break;
-        case 'shigoro': fxFlash('blue', 700); fxRing('blue'); fxParticles(rnd, 20, ['#8ed0ff', '#fff', '#3b8cff'], false); fxShake(false); sounds.chime('blue'); break;
+        case 'pinzoro':
+          fxRays('gold'); fxImpact(); fxFlash('gold', 1100); after(() => fxFlash('gold', 900), 350); fxRing('gold');
+          fxParticles(rnd, 60, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); fxShake(true);
+          root.classList.add('bigwin-gold'); after(() => root.classList.remove('bigwin-gold'), 950);
+          sounds.boom(); sounds.chime('gold'); after(() => sounds.chime('gold'), 400); break;
+        case 'zoro': fxRays('rainbow'); fxImpact(); fxFlash('white', 500); fxRing('rainbow'); fxParticles(rnd, 36, colors, true); fxShake(true); sounds.boom(); sounds.chime('rainbow'); break;
+        case 'shigoro': fxRays('blue'); fxFlash('blue', 700); fxRing('blue'); fxParticles(rnd, 24, ['#8ed0ff', '#fff', '#3b8cff'], false); fxShake(false); sounds.chime('blue'); break;
         case 'me': {
           const d = throwObj.dice; const odd = d[0] === d[1] ? 2 : d[0] === d[2] ? 1 : 0;
           if (dies[odd]) dies[odd].cube.classList.add('pulse');
           fxParticles(rnd, 8, ['#fff', '#ffd93d'], false);
-          sounds.roll(); break;
+          if (fail) sounds.sad(); else sounds.roll();
+          break;
         }
-        case 'none': sounds.thud(); break;
+        case 'none': if (fail) sounds.sad(); else sounds.thud(); break;
         case 'hifumi': el.table.classList.add('dark'); fxFlash('white', 120); fxShake(true); sounds.thunder(); break;
         case 'shonben': fxShake(false); sounds.thud(); break;
         default: break;
@@ -450,11 +622,39 @@ const ChinchiroAnim = (() => {
     }
 
     /** 投げる。opts: { thrower:{name,char,color}, remaining, reduced }。タップで skip。 */
+    // ---- リーチの飾り(カットイン・ランプ・ストライプ・稲妻・スポットライト) ----
+    const BOLT = '<svg viewBox="0 0 60 160" xmlns="http://www.w3.org/2000/svg"><path d="M36 0 L6 78 L30 78 L18 160 L56 60 L32 60 Z" fill="#ffe978" stroke="#2b2d5c" stroke-width="5" stroke-linejoin="round"/></svg>';
+    function cutinText(plan, level) {
+      if (plan.pinch) return level >= 2 ? '大ピンチ!!' : 'ピンチ…';
+      const base = level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
+      return plan.kind === 'pinzoro' ? `ピンゾロ${base}` : base;
+    }
+    function fxReach(plan, level) {
+      const spot = document.createElement('div'); spot.className = 'spot'; el.fx.appendChild(spot);
+      const c = document.createElement('div');
+      c.className = `cutin l${level}${plan.pinch ? ' pinch' : ''}`;
+      c.textContent = cutinText(plan, level);
+      el.fx.appendChild(c);
+      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.fx.appendChild(l); }
+      if (level >= 3) {
+        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.fx.appendChild(st); }
+        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.fx.appendChild(bolt); }
+      }
+    }
+    function clearReach() {
+      for (const n of el.fx.querySelectorAll('.cutin, .lamps, .stripes, .bolt, .spot')) n.remove();
+      el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit');
+      for (const n of el.dice.querySelectorAll('.hold')) n.classList.remove('hold');
+      root.classList.remove('reaching');
+    }
+    function stopAll(run) { for (const st of run.stops) { try { st.stop(); } catch { /* 無視 */ } } run.stops = []; }
+
+    /** 投げる。opts: { thrower:{name,char,color}, remaining, reduced, forceReach }。タップで skip。 */
     async function play(throwObj, opts = {}) {
       reset();
       setThrower(opts.thrower);
       root.classList.add('playing');
-      const run = { anims: [], timers: [], wakers: [], skipped: false };
+      const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
       running = run;
       const dice = throwObj && throwObj.dice;
       if (!validDice(dice)) { // 壊れたデータ: 演出せず「?」を少し見せる
@@ -470,6 +670,10 @@ const ChinchiroAnim = (() => {
       const reduced = opts.reduced || reducedMotion();
       const outIdx = throwObj.shonben ? Math.floor(rnd() * 3) : -1;
       const spots = landingSpots(rnd);
+      // リーチ: 最後に止める1個と強さ(seed から。quick/動きを減らす/ションベンでは無し)
+      const plan = outIdx < 0 ? reachPlan(dice, false, throwObj.seed, opts.forceReach) : NO_REACH();
+      const level = reduced ? 0 : plan.level;
+      const decider = outIdx < 0 ? plan.lastIdx : -1;
       const dies = [];
       for (let i = 0; i < 3; i++) {
         const d = makeDie();
@@ -490,40 +694,81 @@ const ChinchiroAnim = (() => {
       // 投げ込み〜跳ねる〜止まる(飛ばされていたら一瞬で終える)
       const quick = reduced || run.skipped;
       const D = quick ? 1 : 1500;
-      const decider = outIdx < 0 ? 2 : -1; // 最後の1個は毎回スロー+ズームで溜める
       const finished = [];
-      if (!quick) { sounds.whoosh(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
+      if (!quick) { sounds.whoosh(); fxStreak(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
+      // 投げる順: 最後の1個(decider)以外を先に(0 / 90ms)、decider は 180ms
+      const order = [0, 1, 2].filter((i) => i !== decider).concat(decider >= 0 ? [decider] : []);
+      const delayOf = (i) => (quick ? 0 : order.indexOf(i) * 90);
+      const HOLD_OFF = 0.58, REL_RATE = 0.6, SLOW_OFF = 0.76, SLOW_RATE = 0.5, LAND_OFF = 0.86;
+      const secondLandAt = Math.max(...[0, 1, 2].filter((i) => i !== decider && i !== outIdx).map((i) => delayOf(i) + D * LAND_OFF), 0);
+      const bounceFx = (k) => { sounds.clack(1 - k.off * 0.5); fxDust(k.p.x, k.p.y, rnd, k.off < 0.5 ? 8 : 5); fxShake(k.off < 0.5); };
+      const later = (fn, ms) => run.timers.push(setTimeout(() => { if (!run.skipped && run === running) fn(); }, ms));
       dies.forEach((d, i) => {
         const out = i === outIdx;
         const path = pathFor(rnd, i, spots[i], out);
         const { wrapF, cubeF, shadowF } = buildFrames(path, dice[i], rnd, out);
-        const delay = quick ? 0 : i * 90;
+        const delay = delayOf(i);
         const o = { duration: D, delay, fill: 'forwards' };
-        const a1 = d.wrap.animate(wrapF, o); const a2 = d.cube.animate(cubeF, o); const a3 = d.shadow.animate(shadowF, o);
-        run.anims.push(a1, a2, a3);
-        finished.push(a1.finished.catch(() => {}));
-        if (!quick) {
-          for (const k of path) {
-            if (k.h === 0 && k.off > 0 && k.off < 1) run.timers.push(setTimeout(() => {
-              sounds.clack(1 - k.off * 0.5);
-              fxDust(k.p.x, k.p.y, rnd, k.off < 0.5 ? 6 : 4);
-              fxShake(k.off < 0.5);
-            }, delay + D * k.off));
-          }
-          if (out) run.timers.push(setTimeout(() => { d.wrap.classList.add('out'); d.cube.classList.add('out'); el.fx.appendChild(d.wrap); }, delay + D * 0.42));
-          if (i === decider) run.timers.push(setTimeout(() => {
-            if (run.skipped) return;
-            for (const a of [a1, a2, a3]) a.playbackRate = 0.35;
+        const anims = [d.wrap.animate(wrapF, o), d.cube.animate(cubeF, o), d.shadow.animate(shadowF, o)];
+        run.anims.push(...anims);
+        finished.push(anims[0].finished.catch(() => {}));
+        if (quick) return;
+        if (out) later(() => { d.wrap.classList.add('out'); d.cube.classList.add('out'); el.fx.appendChild(d.wrap); }, delay + D * 0.42);
+        const bounces = path.filter((k) => k.h === 0 && k.off > 0 && k.off < 1);
+        if (i !== decider) { for (const k of bounces) later(() => bounceFx(k), delay + D * k.off); return; }
+        if (level === 0) {
+          // 軽いスロー+ズームで止まる
+          for (const k of bounces) if (k.off <= SLOW_OFF) later(() => bounceFx(k), delay + D * k.off);
+          later(() => {
+            for (const a of anims) a.playbackRate = SLOW_RATE;
             el.table.classList.add('zoom');
-            sounds.rattle(700);
-          }, delay + D * 0.68));
+            sounds.rattle(500);
+            for (const k of bounces) if (k.off > SLOW_OFF) later(() => bounceFx(k), (k.off - SLOW_OFF) * D / SLOW_RATE);
+          }, delay + D * SLOW_OFF);
+          return;
         }
+        // リーチ: 空中で止めて溜め、2個目が止まったらカットイン、溜めが明けたら落としてヒットストップ
+        for (const k of bounces) if (k.off <= HOLD_OFF) later(() => bounceFx(k), delay + D * k.off);
+        const holdPoint = path.find((k) => k.off === HOLD_OFF) || path[Math.floor(path.length / 2)];
+        later(() => {
+          for (const a of anims) a.pause();
+          d.wrap.classList.add('hold'); d.cube.classList.add('hold');
+          el.table.classList.add('reach', 'zoom', `reach-l${level}`);
+          if (plan.pinch) el.table.classList.add('pinch');
+          el.table.style.setProperty('--spot-x', `${240 + holdPoint.p.x}px`);
+          el.table.style.setProperty('--spot-y', `${160 + holdPoint.p.y - holdPoint.h}px`);
+          root.classList.add('reaching');
+        }, delay + D * HOLD_OFF);
+        const hold = REACH_HOLD_MS[level] || REACH_HOLD_MS[1];
+        later(() => {
+          fxReach(plan, level);
+          run.stops.push(plan.pinch ? sounds.drone() : sounds.heartbeat(level));
+          if (level >= 3) later(() => { el.table.classList.add('dark2'); stopAll(run); }, hold - 400);
+          later(() => {
+            stopAll(run);
+            el.table.classList.remove('dark2');
+            d.wrap.classList.remove('hold'); d.cube.classList.remove('hold');
+            for (const a of anims) { a.playbackRate = REL_RATE; a.play(); }
+            for (const k of bounces) if (k.off > HOLD_OFF) {
+              const at = (k.off - HOLD_OFF) * D / REL_RATE;
+              if (k.off === LAND_OFF) later(() => {
+                for (const a of anims) a.pause(); // ヒットストップ(最後の1個だけ。他は止まっている)
+                el.table.classList.add('hit');
+                fxFlash('white', 220); fxShake(true); sounds.hit(); fxDust(k.p.x, k.p.y, rnd, 10);
+                later(() => { for (const a of anims) a.play(); el.table.classList.remove('hit'); }, 120);
+              }, at);
+              else later(() => bounceFx(k), at);
+            }
+          }, hold);
+        }, Math.max(secondLandAt, delay + D * HOLD_OFF) + 60);
       });
       await Promise.all(finished);
       if (run !== running) return;
+      stopAll(run);
       el.table.classList.remove('zoom');
+      clearReach();
       dies.forEach((d, i) => { d.cube.dataset.face = dice[i]; if (i === outIdx) { d.wrap.classList.add('out'); d.cube.classList.add('out'); } });
-      showResult(throwObj, opts, dies, rnd, run.skipped || quick);
+      showResult(throwObj, opts, dies, rnd, run.skipped || quick, { ...plan, level });
       await sleep(run.skipped || quick ? 250 : 1100);
       if (run === running) { root.classList.remove('playing'); running = null; }
     }
@@ -534,11 +779,13 @@ const ChinchiroAnim = (() => {
       running.skipped = true;
       for (const t of running.timers) clearTimeout(t);
       running.timers = [];
+      stopAll(running);
       for (const w of running.wakers) w();
       running.wakers = [];
       el.hand.classList.remove('rattle');
       el.table.classList.remove('zoom');
-      for (const a of running.anims) { a.playbackRate = 1; try { a.finish(); } catch { /* 未開始なら無視 */ } }
+      clearReach();
+      for (const a of running.anims) { a.playbackRate = 1; try { if (a.playState === 'paused') a.play(); a.finish(); } catch { /* 未開始なら無視 */ } }
     }
 
     /** 「振る」を押してから親機の返事が来るまでの待ち: 手の中でカラカラ。 */
@@ -572,6 +819,6 @@ const ChinchiroAnim = (() => {
     requestAnimationFrame(step);
   }
 
-  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, FINAL_ROT, PIPS };
+  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, reachPlan, REACH_WEIGHTS, REACH_HOLD_MS, FINAL_ROT, PIPS };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroAnim;

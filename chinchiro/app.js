@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const L = ChinchiroLogic;
+  const W = ChinchiroWidgets;
   const SY = ChinchiroSync;
   const params = new URLSearchParams(location.search);
   const $ = (id) => document.getElementById(id);
@@ -29,7 +30,8 @@
   const charArt = (id) => (validChar(id) ? SugorokuArt.CHAR_ART[id]() : SugorokuArt.CHAR_ART.binbo());
   const charName = (id) => (validChar(id) ? CHAR_NAME[id] : '');
   const COLORS = ['#ff4d4d', '#3b8cff', '#2ec27e', '#ffd93d', '#b56cff', '#ff9f1c', '#4dd4e8', '#ff7bd2'];
-  const MODE_LABEL = { points: { label: '点数', hint: '持ち点100から' }, drink: { label: '飲み', hint: '負けたら飲む' }, both: { label: '両方', hint: '点数も飲みも' } };
+  const MODE_LABEL = { points: { label: '点数', hint: '持ち点から増減' }, drink: { label: '飲み', hint: '負けたら飲む' }, both: { label: '両方', hint: '点数も飲みも' } };
+  const startPts = (settings) => L.startPoints(settings); // 部屋の持ち点(古い部屋は 100)
 
   const store = {
     get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } },
@@ -42,9 +44,7 @@
   // 役名のコール: voice/<キー>.mp3(または .m4a)があればその声、無ければ端末の読み上げ。
   // ファイルは起動時に一度だけ調べ、あったものだけ登録する(同じオブジェクトを渡すので後から増やせる)。
   const voiceFiles = {};
-  const sounds = ChinchiroAnim.createSounds({ voiceFiles });
-  sounds.setMuted(store.get(KEY_MUTED) === true);
-  (async () => {
+  const voiceReady = (async () => {
     if (typeof fetch !== 'function' || location.protocol === 'file:') return;
     await Promise.all(Object.keys(ChinchiroAnim.VOICE_LINES).map(async (key) => {
       const found = await Promise.all(['mp3', 'm4a'].map(async (ext) => {
@@ -55,6 +55,8 @@
       if (url) voiceFiles[key] = url;
     }));
   })();
+  const sounds = ChinchiroAnim.createSounds({ voiceFiles, voiceReady });
+  sounds.setMuted(store.get(KEY_MUTED) === true);
   const stage = ChinchiroAnim.createDiceStage($('stage'), sounds);
 
   function show(id) {
@@ -80,8 +82,10 @@
     let hand = null;
     try { hand = shonben ? { ...L.SHONBEN } : L.evaluate(dice); } catch { hand = null; }
     if (!hand && !shonben && remaining === 0) hand = { ...L.NONE };
-    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining });
+    const reach = params.get('reach'); // デモだけ: リーチの強さを固定(0〜3)
+    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining, forceReach: reach === null ? undefined : Number(reach) });
     if (params.get('skip') === '1') stage.skip();
+    window.ChinchiroDemo = { stage }; // デモ画面のコンソールから投げ直せる
     return;
   }
 
@@ -131,7 +135,13 @@
   }
 
   // ---------- 親機: 入口 ----------
-  let setup = { name: '', char: 'momotaro', mode: 'points', unit: 10, drinkUnit: 'sip' };
+  let setup = { name: '', char: 'momotaro', mode: 'points', unit: 10, drinkUnit: 'sip', startPoints: 100, customStart: '' };
+  /** 設定画面の持ち点(自由入力は 1〜99999 の整数だけ採用、それ以外は 100)。 */
+  function chosenStart() {
+    if (setup.startPoints !== 'custom') return L.startPoints({ startPoints: setup.startPoints });
+    const raw = String($('start-custom').value ?? '').trim();
+    return L.startPoints({ startPoints: /^\d+$/.test(raw) ? Number(raw) : NaN });
+  }
 
   function renderChoices(el, items, current, onPick) {
     el.innerHTML = '';
@@ -150,7 +160,9 @@
   function renderEntry() {
     setAvatar($('host-avatar'), setup.char, '#ff4d4d');
     if ($('host-name').value !== setup.name) $('host-name').value = setup.name;
-    renderChoices($('mode-choices'), Object.entries(MODE_LABEL).map(([k, v]) => ({ attr: 'mode', value: k, label: v.label, hint: v.hint })), setup.mode, (v) => { setup.mode = v; });
+    renderChoices($('mode-choices'), Object.entries(MODE_LABEL).map(([k, v]) => ({ attr: 'mode', value: k, label: v.label, hint: k === 'points' ? `持ち点${chosenStart()}から` : v.hint })), setup.mode, (v) => { setup.mode = v; });
+    renderChoices($('start-choices'), L.START_POINTS.map((p) => ({ attr: 'start', value: p, label: `${p}点`, hint: 'みんなこの点から' })).concat([{ attr: 'start', value: 'custom', label: '自由', hint: '好きな点' }]), setup.startPoints, (v) => { setup.startPoints = v === 'custom' ? 'custom' : Number(v); });
+    $('start-custom-row').hidden = setup.startPoints !== 'custom';
     renderChoices($('unit-choices'), L.POINT_UNITS.map((u) => ({ attr: 'unit', value: u, label: `${u}点`, hint: '×倍率' })), setup.unit, (v) => { setup.unit = Number(v); });
     renderChoices($('drink-choices'), Object.entries(L.DRINK_UNITS).map(([k, v]) => ({ attr: 'drink', value: k, label: v.label, hint: '×倍率' })), setup.drinkUnit, (v) => { setup.drinkUnit = v; });
   }
@@ -163,8 +175,11 @@
       if (MODE_LABEL[saved.mode]) setup.mode = saved.mode;
       if (L.POINT_UNITS.includes(saved.unit)) setup.unit = saved.unit;
       if (L.DRINK_UNITS[saved.drinkUnit]) setup.drinkUnit = saved.drinkUnit;
+      if (L.START_POINTS.includes(saved.startPoints) || saved.startPoints === 'custom') setup.startPoints = saved.startPoints;
+      if (typeof saved.customStart === 'string') { setup.customStart = saved.customStart; $('start-custom').value = saved.customStart; }
     }
     renderEntry();
+    $('start-custom').addEventListener('input', () => { setup.customStart = $('start-custom').value; renderEntry(); });
     const prev = store.get(KEY_HOST);
     $('resume-banner').hidden = !(prev && prev.code && prev.uid === backend.uid);
     show('screen-host-entry');
@@ -173,8 +188,9 @@
   async function createRoom() {
     setup.name = safeName($('host-name').value) || '配信者';
     const c = await SY.allocateRoomCode(backend);
-    const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char };
-    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState() });
+    const start = chosenStart();
+    const settings = { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, hostName: setup.name, hostChar: setup.char, startPoints: start };
+    await backend.set(`rooms/${c}`, { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings, state: L.createState(start) });
     store.set(KEY_SETUP, setup);
     store.set(KEY_HOST, { code: c, uid: backend.uid });
     await enterHost(c);
@@ -201,6 +217,13 @@
     });
   }
 
+  /** ミュートでないのに効果音を鳴らせない(AudioContext が起きていない)間だけ「タップで音をオン」を出す。 */
+  function updateAudioBadge() {
+    const el = $('audio-badge'); if (!el) return;
+    el.hidden = sounds.muted || sounds.ready || !(role === 'host' || role === 'listener');
+  }
+  sounds.onReadyChange(updateAudioBadge);
+
   async function enterHost(c) {
     if (!(await acquireHostLock(c))) {
       $('busy-code').textContent = c;
@@ -208,6 +231,7 @@
       return;
     }
     role = 'host';
+    sounds.setKeepAlive(true);
     bind(hostView, $('screen-host'));
     subscribe(c);
     show('screen-host');
@@ -266,11 +290,11 @@
 
   function unitLabel(settings) { return (L.DRINK_UNITS[settings.drinkUnit] || L.DRINK_UNITS.sip).label; }
 
-  function fighterHtml(cls, char, color, name, sub, handText, handSub, turn, extraCls = '') {
+  function fighterHtml(cls, char, color, name, sub, handText, handSub, turn, extraCls = '', throwsHtml = '') {
     return `<div class="fighter ${cls} ${turn ? 'turn' : ''} ${extraCls}">
       <span class="avatar" data-char="${validChar(char) ? char : ''}" style="--c:${esc(color)}">${charArt(char)}</span>
       <div class="fname">${esc(name)}</div><div class="fsub">${esc(sub)}</div>
-      <div class="fhand">${esc(handText)}${handSub ? `<small>${esc(handSub)}</small>` : ''}</div></div>`;
+      <div class="fhand">${esc(handText)}${handSub ? `<small>${esc(handSub)}</small>` : ''}</div>${throwsHtml}</div>`;
   }
 
   function sideText(side) {
@@ -326,7 +350,7 @@
     if (r.record) {
       const h = st.host || {};
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${h.points ?? 100}">${h.points ?? 100}</span>点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${h.points ?? startPts(settings)}">${h.points ?? startPts(settings)}</span>点`);
       parts.push(`${h.wins ?? 0}勝${h.losses ?? 0}敗`);
       if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${h.drinks ?? 0}`);
       r.record.innerHTML = `${esc(settings.hostName || '配信者')}<small>${parts.join(' ・ ')}</small>`;
@@ -356,12 +380,17 @@
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
       const arenaHtml =
-        fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '') +
+        fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '', W.throwsHtml(m && m.parent.throws)) +
         `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
         (child
-          ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '')
+          ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '', W.throwsHtml(m && m.child.throws))
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
       if (r.arena.dataset.last !== arenaHtml) { r.arena.innerHTML = arenaHtml; r.arena.dataset.last = arenaHtml; }
+    }
+    if (r.legend && !r.legend.innerHTML) r.legend.innerHTML = W.legendHtml();
+    if (r.log) {
+      const logHtml = W.logHtml(st.log, { meUid: backend.uid, players, settings });
+      if (r.log.dataset.last !== logHtml) { r.log.innerHTML = logHtml; r.log.dataset.last = logHtml; }
     }
     // 結果の紙吹雪(全端末。結果ごとに1回)
     if (st.phase === 'result' && st.result && st.result.winner !== 'draw') {
@@ -379,7 +408,7 @@
         const row = document.createElement('div');
         row.className = 'queue-row';
         row.dataset.uid = uid;
-        const pts = settings.mode !== 'drink' ? `${p.points ?? 100}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
+        const pts = settings.mode !== 'drink' ? `${p.points ?? startPts(settings)}点` : `${p.wins ?? 0}勝${p.losses ?? 0}敗`;
         row.innerHTML = `<span class="rno">${i + 1}</span><span class="avatar sm" style="--c:${colorFor(uid)}">${charArt(p.char)}</span>` +
           `<span class="qname">${p.hidden ? '？？？' : esc(p.name || 'リスナー')}${p.online === false ? ' <span class="offline">オフライン</span>' : ''}</span><span class="qpts">${esc(pts)}</span>`;
         if (!readonly) row.insertAdjacentHTML('beforeend', `<span class="qacts"><button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button></span>`);
@@ -392,7 +421,7 @@
       const rows = Object.entries(players).filter(([, p]) => !p.hidden && !p.banned && p.points !== undefined)
         .map(([uid, p]) => ({ uid, name: p.name, points: p.points, char: p.char }));
       rows.sort((a, b) => b.points - a.points);
-      const hostRow = { uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? 100, char: settings.hostChar, host: true };
+      const hostRow = { uid: 'host', name: settings.hostName || '配信者', points: (st.host || {}).points ?? startPts(settings), char: settings.hostChar, host: true };
       const top = rows.slice(0, 10);
       const all = rows.concat([hostRow]).sort((a, b) => b.points - a.points);
       const hostRank = all.findIndex((p) => p.host) + 1;
@@ -429,7 +458,7 @@
     $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
   }
 
-  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); }
+  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); updateAudioBadge(); }
 
   function render() {
     if (!room) {
@@ -531,6 +560,8 @@
       .sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0)).map(([uid]) => uid);
     const pos = queue.indexOf(backend.uid);
     const inMatch = st.match && st.match.childUid === backend.uid;
+    sounds.setKeepAlive(!!inMatch); // 自分の対戦中だけ無音ループ(見ているだけの人の音楽を止めない)
+    updateAudioBadge();
     let status = '見るだけ';
     if (inMatch) status = st.phase === 'child' ? 'あなたの番!' : st.phase === 'parent' ? (st.match.round > 1 && st.match.parent.throws.length === 0 ? '引き分け! もう一度。親が振っています…' : '親が振っています…') : '結果';
     else if (pos >= 0) status = `あなたは ${pos + 1} 番目`;
@@ -546,7 +577,7 @@
       setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
       $('my-avatar').hidden = false;
       const parts = [];
-      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${me.points ?? 100}">${me.points ?? 100}</span>点`);
+      if (settings.mode !== 'drink') parts.push(`<span class="num" data-v="${me.points ?? startPts(settings)}">${me.points ?? startPts(settings)}</span>点`);
       parts.push(`${me.wins ?? 0}勝${me.losses ?? 0}敗`);
       if (settings.mode !== 'points') parts.push(`飲んだ ${esc(unitLabel(settings))} × ${me.drinks ?? 0}`);
       $('my-record').innerHTML = `${esc(me.name || 'リスナー')} ・ ${parts.join(' ・ ')}`;
@@ -654,14 +685,15 @@
     const st = room.state;
     if (!L.canThrow(st, by)) return;
     const roll = L.rollDice(Math.random);
-    const { state, result } = L.applyThrow(st, by, roll, room.settings);
+    const cp = st.match ? (room.players || {})[st.match.childUid] || {} : {};
+    const { state, result } = L.applyThrow(st, by, roll, room.settings, Date.now(), { childName: cp.name || '' });
     if (!result) { await writeState(state); return; }
     // 結果の書き込みと子の点数の更新を1回で(途中で親機が落ちても食い違わない)
     const p = (room.players || {})[result.childUid] || {};
     const d = result.deltas.child;
     await backend.update(`rooms/${code}`, {
       state,
-      [`players/${result.childUid}/points`]: (p.points ?? 100) + d.points,
+      [`players/${result.childUid}/points`]: (p.points ?? startPts(room.settings)) + d.points,
       [`players/${result.childUid}/wins`]: (p.wins ?? 0) + d.wins,
       [`players/${result.childUid}/losses`]: (p.losses ?? 0) + d.losses,
       [`players/${result.childUid}/drinks`]: (p.drinks ?? 0) + d.drinks,
@@ -723,8 +755,23 @@
   });
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + SY.explainError(e))));
+  // ルール表(オーバーレイ)。部屋があればその設定、無ければ設定画面の値で作る
+  function openRules() {
+    const settings = room && room.settings ? room.settings : { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
+    $('rules-body').innerHTML = W.rulesHtml(settings);
+    $('rules').hidden = false;
+  }
+  function closeRules() { $('rules').hidden = true; }
+  for (const id of ['rules-btn', 'rules-btn-l', 'rules-link']) $(id).addEventListener('click', (ev) => { ev.preventDefault(); openRules(); });
+  $('rules-close').addEventListener('click', closeRules);
+  $('rules').addEventListener('click', (ev) => { if (ev.target === $('rules')) closeRules(); });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('rules').hidden) closeRules(); });
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
-  document.addEventListener('pointerdown', () => sounds.unlock()); // iOS: 最初のタップで音を使えるようにする
+  // 音の解錠と再開: 最初のタップ(iOS)、キー操作、タブに戻ったとき(電話などの割り込み後)
+  document.addEventListener('pointerdown', () => sounds.unlock());
+  document.addEventListener('touchend', () => sounds.unlock());
+  document.addEventListener('keydown', () => sounds.unlock());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(); });
   renderMute();
   $('start-match').addEventListener('click', () => { $('start-match').hidden = true; hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }); });
   $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });

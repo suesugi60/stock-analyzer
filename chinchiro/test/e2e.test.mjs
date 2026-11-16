@@ -86,10 +86,11 @@ test('不正な出目でも落ちない: dice=9,0,x → 演出を飛ばして「
 
 // ---------- 親機 ----------
 const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/;
-async function createRoom(page, { name = '配信者', mode = 'points', unit = '10', drink = 'sip' } = {}) {
+async function createRoom(page, { name = '配信者', mode = 'points', unit = '10', drink = 'sip', start = null } = {}) {
   await page.locator('#screen-host-entry').waitFor({ state: 'visible', ...T });
   await page.locator('#host-name').fill(name);
   await page.click(`[data-mode="${mode}"]`);
+  if (start) await page.click(`[data-start="${start}"]`);
   await page.click(`[data-unit="${unit}"]`);
   await page.click(`[data-drink="${drink}"]`);
   await page.click('#create-room');
@@ -106,7 +107,7 @@ test('親機: 名前とモードを選んで部屋を作ると、4文字のコ�
   assert.match(await page.locator('#host-record').innerText(), /100/);
   const room = await readRoom(page, code);
   assert.equal(room.state.phase, 'lobby');
-  assert.deepEqual(room.settings, { mode: 'both', unit: 20, drinkUnit: 'half', hostName: '配信者', hostChar: 'momotaro' });
+  assert.deepEqual(room.settings, { mode: 'both', unit: 20, drinkUnit: 'half', hostName: '配信者', hostChar: 'momotaro', startPoints: 100 });
   assert.ok(room.hostUid);
   assert.deepEqual(errors, []);
   await context.close();
@@ -801,5 +802,334 @@ test('voice/ に音声ファイルがあれば起動時に見つけて、その�
   await page.locator('#stage .result-stamp[data-hand="shigoro"]').waitFor({ state: 'visible', ...T });
   await page.waitForFunction(() => window.__played.includes('voice/shigoro.m4a'), null, { timeout: 5000 });
   assert.deepEqual(await page.evaluate(() => window.__spoken), []);
+  await context.close();
+});
+
+// ---------- 持ち点 ----------
+test('持ち点: 300 を選んで部屋を作ると、親の成績・参加者・ランキングが 300 点から', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  await host.locator('#host-name').fill('親');
+  await host.locator('#start-choices .choice[data-start="300"]').click();
+  await host.locator('#create-room').click();
+  await host.locator('#room-code').waitFor(T);
+  assert.ok((await host.locator('#host-record').innerText()).includes('300点'));
+  const code = (await host.locator('#room-code').innerText()).trim();
+  assert.equal((await readRoom(host, code)).settings.startPoints, 300);
+  const { page: kid } = await joinAs(context, code, 'たろう');
+  await kid.locator('#my-record').waitFor(T);
+  assert.ok((await kid.locator('#my-record').innerText()).includes('300点'));
+  await host.locator('#queue .queue-row').first().waitFor(T);
+  assert.ok((await host.locator('#queue').innerText()).includes('300点'));
+  assert.ok((await host.locator('#ranking').innerText()).includes('300点'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('持ち点: 自由入力は 1〜99999 の整数だけ。空・0・負・小数・大きすぎは 100', async () => {
+  for (const [typed, want] of [['777', '777点'], ['0', '100点'], ['-5', '100点'], ['12.5', '100点'], ['', '100点'], ['123456', '100点']]) {
+    const { page: host, context } = await newPage(null, 'index.html?mock=1&quick=1');
+    await host.locator('#start-choices .choice[data-start="custom"]').click();
+    await host.locator('#start-custom').waitFor({ state: 'visible', ...T });
+    await host.locator('#start-custom').fill(typed);
+    await host.locator('#create-room').click();
+    await host.locator('#room-code').waitFor(T);
+    assert.ok((await host.locator('#host-record').innerText()).includes(want), `${typed} → ${want}`);
+    await context.close();
+  }
+});
+
+test('持ち点が未設定の古い部屋は 100 点として表示される', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  await host.locator('#start-choices .choice[data-start="1000"]').click();
+  const code = await createRoom(host);
+  assert.ok((await host.locator('#host-record').innerText()).includes('1000点'));
+  // 旧バージョンの部屋の形にする(startPoints も log も host.points も無い)
+  await host.evaluate((c) => {
+    const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
+    delete db.rooms[c].settings.startPoints; delete db.rooms[c].state.log; delete db.rooms[c].state.host;
+    localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
+  }, code);
+  await host.reload();
+  await host.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  await host.locator('#host-record').waitFor(T);
+  assert.ok((await host.locator('#host-record').innerText()).includes('100点'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+// ---------- ルール表・履歴 ----------
+/** 出目を指定した Math.random の列(fixDice 用): 各投げ = [ションベン判定, 目×3, seed]。 */
+const diceSeq = (...throws) => JSON.stringify(throws.flatMap((d) => [0.5, ...d.map((x) => (x - 0.5) / 6), 0.5]));
+
+test('ルール表: 親機とスマホで開いて閉じられ、役・倍率・この部屋の持ち点が書いてある', async () => {
+  const { host, kids, context, errors } = await setupMatch([['うさ', 'kappa']], { start: '300' });
+  const kid = kids[0].page;
+  await host.locator('#rules-btn').click();
+  await host.locator('#rules:not([hidden])').waitFor(T);
+  const text = await host.locator('#rules-body').innerText();
+  for (const s of ['ピンゾロ', '×5', 'ヒフミ', '持ち点 300', '1戦 10点']) assert.ok(text.includes(s), s);
+  await host.keyboard.press('Escape');
+  await host.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  await kid.locator('#rules-btn-l').click();
+  await kid.locator('#rules:not([hidden])').waitFor(T);
+  assert.ok((await kid.locator('#rules-body').innerText()).includes('シゴロ'));
+  await kid.locator('#rules-close').click();
+  await kid.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  // 背景タップでも閉じる
+  await kid.locator('#rules-btn-l').click();
+  await kid.locator('#rules:not([hidden])').waitFor(T);
+  await kid.locator('#rules').click({ position: { x: 5, y: 5 } });
+  await kid.locator('#rules[hidden]').waitFor({ state: 'attached', ...T });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('ルール表: 参加画面(名前入力)からも開ける', async () => {
+  const { page: host, context } = await newPage(null, 'index.html?mock=1&quick=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page } = await openListener(context, code, '&quick=1');
+  await page.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await page.locator('#rules-link').click();
+  await page.locator('#rules:not([hidden])').waitFor(T);
+  assert.ok((await page.locator('#rules-body').innerText()).includes('ピンゾロ'));
+  await context.close();
+});
+
+test('履歴: 対戦中はアリーナに各側の投げが並び、決着すると両画面の「対戦の記録」に1行出る', async () => {
+  const { host, kids, context, code, errors } = await setupMatch();
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([2, 4, 6], [4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('.fighter.host .throws .throw').first().waitFor({ state: 'visible', ...T });
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('.fighter.host .throws .throw').nth(1).waitFor({ state: 'visible', ...T });
+  const th = await host.locator('.fighter.host .throws').innerText();
+  assert.ok(th.includes('目なし') && th.includes('6の目'), th);
+  assert.equal(await host.locator('.fighter.host .throws .mdice[data-n="4"]').count(), 3);
+  assert.ok((await host.locator('#screen-host [data-ref="log"]').innerText()).includes('まだ対戦がありません'));
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('#screen-host [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  const row = await host.locator('#screen-host [data-ref="log"]').innerText();
+  for (const s of ['#1', '6の目', 'うさ', 'ヒフミ', '親の勝ち', '×2', '+20点']) assert.ok(row.includes(s), s);
+  await kid.locator('#screen-listener [data-ref="log"] .log-row.mine').waitFor({ state: 'visible', ...T });
+  assert.ok((await kid.locator('.fighter.child .throws').innerText()).includes('ヒフミ'));
+  assert.ok((await host.locator('#screen-host [data-ref="legend"]').innerText()).includes('ピンゾロ ×5'));
+  assert.equal((await readRoom(host, code)).state.log.length, 1);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('履歴: 非表示にした人は記録でも？？？', async () => {
+  const { host, kids, context } = await setupMatch();
+  const kid = kids[0].page;
+  await host.locator('#queue .queue-row').first().locator('[data-act="hide"]').click();
+  await host.locator('#queue .queue-row .qname').filter({ hasText: '？？？' }).waitFor({ state: 'visible', ...T });
+  await fixDice(host, diceSeq([1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('#screen-host [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  const row = await host.locator('#screen-host [data-ref="log"]').innerText();
+  assert.ok(row.includes('？？？') && !row.includes('うさ'), row);
+  assert.ok(row.includes('(振らず)') && row.includes('-20点'));
+  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  await context.close();
+});
+
+// ---------- 音の確実化(AudioContext と Audio を差し替えて振る舞いを見る) ----------
+const FAKE_AUDIO = () => {
+  window.__resumes = 0; window.__started = 0; window.__allow = false; window.__played = []; window.__audios = [];
+  const node = () => { const n = { connect() { return n; }, start() { window.__started++; }, stop() {}, gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, buffer: null, type: '', Q: { value: 0 } }; return n; };
+  window.AudioContext = class {
+    constructor() { this.state = 'suspended'; this.currentTime = 0; this.sampleRate = 48000; this.destination = {}; this._cbs = []; window.__ctx = this; }
+    resume() { window.__resumes++; return new Promise((r) => { if (window.__allow) { this.state = 'running'; this._cbs.forEach((f) => f()); r(); } }); }
+    addEventListener(k, f) { if (k === 'statechange') this._cbs.push(f); }
+    createBuffer() { return { getChannelData() { return new Float32Array(16); } }; }
+    createBufferSource() { return node(); } createOscillator() { return node(); } createGain() { return node(); } createBiquadFilter() { return node(); }
+  };
+  window.webkitAudioContext = window.AudioContext;
+  window.Audio = class {
+    constructor(src) { this.src = src || ''; this.paused = true; this.loop = false; this.dataset = {}; window.__audios.push(this); }
+    addEventListener() {} setAttribute() {}
+    play() { this.paused = false; window.__played.push({ src: this.src, loop: this.loop }); return Promise.resolve(); }
+    pause() { this.paused = true; }
+  };
+};
+const loopPlays = (page) => page.evaluate(() => window.__played.filter((p) => p.loop && String(p.src).startsWith('data:audio/wav')).length);
+
+test('音: まだ触っていない(suspended)間は resume を試し、300ms 以内に running にならなければその音は捨てる', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?mock=1`);
+  const r1 = await page.evaluate(async () => {
+    const s = ChinchiroAnim.createSounds(); window.__s = s;
+    s.clack();
+    await new Promise((r) => setTimeout(r, 450));
+    return { resumes: window.__resumes, started: window.__started, ready: s.ready };
+  });
+  assert.ok(r1.resumes >= 1, 'resume を試す');
+  assert.equal(r1.started, 0, '鳴らせないときは捨てる');
+  assert.equal(r1.ready, false);
+  const r2 = await page.evaluate(async () => {
+    window.__allow = true;
+    window.__s.clack();
+    await new Promise((r) => setTimeout(r, 100));
+    return { started: window.__started, ready: window.__s.ready };
+  });
+  assert.ok(r2.started >= 1, '許可されたら鳴る');
+  assert.equal(r2.ready, true);
+  await context.close();
+});
+
+test('音: 親機は最初のタップで無音ループが回り、AudioContext が running になるとバッジが消える', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  await createRoom(host);
+  await host.locator('#audio-badge:not([hidden])').waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#audio-badge').innerText()).includes('タップで音をオン'));
+  await host.evaluate(() => { window.__allow = true; });
+  await host.mouse.click(600, 600);
+  await host.locator('#audio-badge[hidden]').waitFor({ state: 'attached', ...T });
+  assert.ok((await loopPlays(host)) >= 1, '無音ループ');
+  await context.close();
+});
+
+test('音: スマホは自分の対戦中だけ無音ループが回り、決着したら止まる', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  const code = await createRoom(host);
+  const { page: kid } = await joinAs(context, code, 'うさ');
+  await kid.evaluate(() => { window.__allow = true; });
+  await kid.mouse.click(200, 700);
+  await kid.waitForTimeout(100);
+  assert.equal(await loopPlays(kid), 0, '見ているだけの間は回さない');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await fixDice(host, diceSeq([4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  assert.ok((await loopPlays(kid)) >= 1, '自分の対戦中に回る');
+  assert.equal(await kid.evaluate(() => window.__audios.find((a) => a.loop).paused), false, '結果を見ている間はまだ回る');
+  await host.click('#next-match');
+  await kid.locator('#requeue').waitFor({ state: 'visible', ...T });
+  assert.equal(await kid.evaluate(() => window.__audios.find((a) => a.loop).paused), true, '決着したら止まる');
+  await context.close();
+});
+
+test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らない', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  const code = await createRoom(host);
+  const stagePage = await context.newPage();
+  await stagePage.goto(`${url}/index.html?mock=1&room=${code}&stage=1`);
+  await stagePage.locator('#screen-stage').waitFor({ state: 'visible', ...T });
+  await stagePage.evaluate(() => { window.__allow = true; });
+  await stagePage.mouse.click(600, 600);
+  await stagePage.waitForTimeout(100);
+  assert.equal(await stagePage.locator('#audio-badge').evaluate((e) => e.hidden), true);
+  assert.equal(await loopPlays(stagePage), 0);
+  await context.close();
+});
+
+// ---------- リーチ演出 ----------
+test('リーチ: 1,1,1 を reach=3 で投げると「激アツ」のカットインと暗転・ズームの後にピンゾロ', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok((await page.locator('#stage .cutin').innerText()).includes('激アツ'));
+  assert.equal(await page.locator('#stage .table.reach.zoom.reach-l3').count(), 1);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 1);
+  assert.equal(await page.locator('#stage .result-stamp').innerText(), ''); // 溜め中は結果なし
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .table.reach').count(), 0);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 0);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」の後にヒフミ', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,2,3&seed=7&reach=2');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok((await page.locator('#stage .cutin').innerText()).includes('大ピンチ'));
+  assert.equal(await page.locator('#stage .table.reach.pinch').count(), 1);
+  await page.locator('#stage .result-stamp[data-hand="hifumi"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: 溜め中にタップすると即結果で、カットイン・暗転・溜めが残らない', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  const t0 = Date.now();
+  await page.locator('#stage').click();
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  assert.ok(Date.now() - t0 < 1500, 'すぐ結果');
+  assert.equal(await page.locator('#stage .cutin').count(), 0);
+  assert.equal(await page.locator('#stage .table.reach').count(), 0);
+  assert.equal(await page.locator('#stage .cube.hold').count(), 0);
+  // 続けて別の投げを始めても、前のリーチの残骸がない(play を直接呼ぶ)
+  await page.evaluate(() => { ChinchiroDemo.stage.play({ dice: [3, 3, 5], seed: 5, shonben: false, hand: { type: 'me', value: 5 } }, { remaining: 0, forceReach: 1 }); });
+  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .cutin').count(), 1);
+  assert.equal(await page.locator('#stage .cube').count(), 3);
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('リーチ: quick=1 と reach=0 ではリーチなし(.cutin が出ない)', async () => {
+  const a = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&quick=1');
+  await a.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  assert.equal(await a.page.locator('#stage .cutin').count(), 0);
+  await a.context.close();
+  const b = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=0');
+  await b.page.locator('#stage .table.zoom').waitFor({ state: 'attached', timeout: 10000 });
+  await b.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await b.page.locator('#stage .cutin').count(), 0);
+  assert.deepEqual(b.errors, []);
+  await b.context.close();
+});
+
+// ---------- 結果の派手さ ----------
+test('派手さ: ピンゾロは金の光線・集中線・画面全体の金フラッシュ・粒子 60 個以上', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=0');
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await page.locator('#stage .fx-layer .rays.gold').count(), '光線');
+  assert.ok(await page.locator('#stage .fx-layer .impact').count(), '集中線');
+  assert.ok(await page.locator('#stage.bigwin-gold').count(), '画面全体の金フラッシュ');
+  assert.ok((await page.locator('#stage .fx-layer .particle').count()) >= 60, '粒子');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('派手さ: ゾロ目は虹の光線、シゴロは青の光線', async () => {
+  const a = await newPage(null, 'index.html?demo=1&dice=6,6,6&seed=7&reach=0');
+  await a.page.locator('#stage .result-stamp[data-hand="zoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await a.page.locator('#stage .fx-layer .rays.rainbow').count());
+  assert.ok(await a.page.locator('#stage .fx-layer .impact').count());
+  await a.context.close();
+  const b = await newPage(null, 'index.html?demo=1&dice=4,5,6&seed=7&reach=0');
+  await b.page.locator('#stage .result-stamp[data-hand="shigoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await b.page.locator('#stage .fx-layer .rays.blue').count());
+  await b.context.close();
+});
+
+test('派手さ: 投げ込みで光の筋が走り、砂煙は 8 個以上。リーチが外れた目はしょんぼり表示', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=3,3,5&seed=5&reach=1');
+  await page.locator('#stage .fx-layer .streak').waitFor({ state: 'attached', timeout: 10000 });
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 12000 });
+  assert.ok((await page.locator('#stage .fx-layer .dust').count()) >= 8, '砂煙');
+  assert.equal(await page.locator('#stage .result-stamp[data-fail="1"]').count(), 1, 'リーチ外れ');
+  assert.deepEqual(errors, []);
   await context.close();
 });

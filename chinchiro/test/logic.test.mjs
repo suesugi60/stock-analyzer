@@ -96,7 +96,7 @@ const roll = (dice, shonben = false) => ({ dice, seed: 1, shonben });
 
 test('createState: ロビー、持ち点100、seq 0', () => {
   assert.deepEqual(L.createState(), {
-    seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null,
+    seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null, log: [],
   });
 });
 
@@ -230,4 +230,47 @@ test('startMatch: 対戦中(parent/child)には始められず、lobby と resul
   s = L.applyThrow(s, 'child', roll([6, 6, 6]), SETTINGS).state;
   assert.equal(s.phase, 'result');
   assert.equal(L.startMatch(s, 'k1').phase, 'parent', 'result からは同じ人ともう一回できる');
+});
+
+test('持ち点: startPoints は 1〜99999 の整数だけ採用、それ以外は 100', () => {
+  assert.equal(L.startPoints({ startPoints: 300 }), 300);
+  for (const v of [undefined, 0, -5, 1.5, 100000, '300', null]) assert.equal(L.startPoints({ startPoints: v }), 100, String(v));
+  assert.equal(L.startPoints(null), 100);
+  assert.deepEqual(L.START_POINTS, [50, 100, 300, 1000]);
+  assert.equal(L.createState(300).host.points, 300);
+  assert.equal(L.createState().host.points, 100);
+  assert.deepEqual(L.createState().log, []);
+  assert.deepEqual(L.normalizeState({ seq: 1, phase: 'lobby' }).log, []);
+  assert.equal(L.normalizeState({ seq: 1, phase: 'lobby', host: { points: 250 } }).host.points, 250);
+});
+
+test('記録: 結果が出ると state.log の先頭に1件入り、30件で切れる', () => {
+  const settings = { mode: 'points', unit: 10 };
+  let st = L.startMatch(L.createState(), 'u1');
+  st = L.applyThrow(st, 'parent', { dice: [4, 4, 6], seed: 1 }, settings, 1000).state;
+  const { state, result } = L.applyThrow(st, 'child', { dice: [1, 2, 3], seed: 2 }, settings, 2000, { childName: 'たろう' });
+  assert.equal(result.winner, 'parent');
+  const e = state.log[0];
+  assert.equal(state.log.length, 1);
+  assert.deepEqual({ n: e.n, at: e.at, uid: e.uid, name: e.name, round: e.round, w: e.w, m: e.m, pt: e.pt, dr: e.dr }, { n: 1, at: 2000, uid: 'u1', name: 'たろう', round: 1, w: 'parent', m: 2, pt: 20, dr: 0 });
+  assert.deepEqual(e.p, { dice: [4, 4, 6], hand: { type: 'me', value: 6, label: '6の目' } });
+  assert.deepEqual(e.c, { dice: [1, 2, 3], hand: { type: 'hifumi', value: 0, label: 'ヒフミ' } });
+  // 親がヒフミで即決着 → c は null、n は 2
+  let s2 = L.startMatch(L.nextMatch(state), 'u2');
+  s2 = L.applyThrow(s2, 'parent', { dice: [1, 2, 3], seed: 3 }, settings, 3000, { childName: 'はなこ' }).state;
+  assert.equal(s2.log[0].n, 2); assert.equal(s2.log[0].c, null); assert.equal(s2.log[0].w, 'child'); assert.equal(s2.log[0].pt, -20);
+  assert.equal(s2.log[1].n, 1);
+  // 30 件で切れる
+  let s3 = s2;
+  for (let i = 0; i < 40; i++) { s3 = L.startMatch(L.nextMatch(s3), 'u3'); s3 = L.applyThrow(s3, 'parent', { dice: [1, 2, 3], seed: i }, settings, 4000 + i).state; }
+  assert.equal(s3.log.length, L.LOG_MAX); assert.equal(L.LOG_MAX, 30); assert.equal(s3.log[0].n, 42);
+  // 飲みモードでは dr に負けた側の飲む回数
+  let s4 = L.startMatch(L.createState(), 'u1');
+  s4 = L.applyThrow(s4, 'parent', { dice: [1, 2, 3], seed: 1 }, { mode: 'drink', drinkUnit: 'sip' }, 1).state;
+  assert.equal(s4.log[0].dr, 2);
+  // 引き分けでは記録しない
+  let s5 = L.startMatch(L.createState(), 'u1');
+  s5 = L.applyThrow(s5, 'parent', { dice: [4, 4, 6], seed: 1 }, settings, 1).state;
+  s5 = L.applyThrow(s5, 'child', { dice: [6, 2, 2], seed: 1 }, settings, 2).state;
+  assert.equal(s5.phase, 'parent'); assert.deepEqual(s5.log, []);
 });
