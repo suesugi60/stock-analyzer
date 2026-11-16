@@ -35,6 +35,7 @@ const ChinchiroAnim = (() => {
     none: '目なし',
     hifumi: 'ヒフミ…',
     shonben: 'ションベン！',
+    win_parent: '親の勝ち！', win_child: '挑戦者の勝ち！', draw: '引き分け！',
   };
   /** 役(logic の hand。ションベンは {type:'shonben'})→ VOICE_LINES のキー。 */
   function voiceKeyFor(hand) {
@@ -855,6 +856,72 @@ const ChinchiroAnim = (() => {
       sounds.rattle(600);
     }
 
+    /** 登場・結果シーンのカード(キャラ・名前・肩書き。結果では出目と役も)。名前は textContent なのでそのまま渡してよい。 */
+    function fighterCard(f, side, label, extra) {
+      const c = document.createElement('div'); c.className = `fighter-card ${side}`;
+      const av = document.createElement('span'); av.className = 'avatar lg'; av.style.setProperty('--c', (f && f.color) || '#2b2d5c');
+      if (f && f.char && typeof SugorokuArt !== 'undefined' && Object.hasOwn(SugorokuArt.CHAR_ART, f.char)) av.innerHTML = SugorokuArt.CHAR_ART[f.char]();
+      const name = document.createElement('b'); name.textContent = (f && f.name) || (side === 'left' ? '配信者' : '挑戦者');
+      const sub = document.createElement('small'); sub.textContent = label;
+      c.append(av, name, sub);
+      if (extra) {
+        const dice = document.createElement('div'); dice.className = 'dice-row'; dice.innerHTML = extra.diceHtml || ''; c.appendChild(dice);
+        const hand = document.createElement('em'); hand.className = 'hand-label'; hand.textContent = extra.handLabel || ''; c.appendChild(hand);
+      }
+      return c;
+    }
+
+    /**
+     * 結果シーン: 両者の出目と役を並べ、勝った側に WIN、見出し(誰の勝ち)、理由、支払い。タップで飛ばせる。
+     * info = { headline, why, pay, winner: 'parent'|'child'|'draw', parent: {name,char,color,handLabel,diceHtml}, child: {...}|null }
+     */
+    async function playResult(info, opts = {}) {
+      reset();
+      el.avatar.hidden = true;
+      el.bubble.textContent = '';
+      root.classList.add('playing', 'intro-on');
+      const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
+      running = run;
+      const quick = opts.reduced || reducedMotion();
+      const draw = info.winner === 'draw';
+      const scene = document.createElement('div'); scene.className = `result-scene${draw ? ' draw' : ''}`;
+      const left = fighterCard(info.parent, 'left', '親', info.parent);
+      const right = fighterCard(info.child || { name: '挑戦者', char: 'binbo', color: '#ccc' }, 'right', '挑戦者', info.child || { diceHtml: '', handLabel: '(振らず)' });
+      const mid = document.createElement('div'); mid.className = 'judge'; mid.textContent = draw ? '＝' : info.winner === 'parent' ? '＞' : '＜';
+      const head = document.createElement('div'); head.className = 'headline'; head.textContent = info.headline || '';
+      const why = document.createElement('div'); why.className = 'why'; why.textContent = info.why || '';
+      const pay = document.createElement('div'); pay.className = 'pay'; pay.textContent = info.pay || '';
+      scene.append(head, left, mid, right, why, pay);
+      el.hud.appendChild(scene);
+      const winCard = info.winner === 'parent' ? left : info.winner === 'child' ? right : null;
+      const loseCard = info.winner === 'parent' ? right : info.winner === 'child' ? left : null;
+      const badge = document.createElement('span'); badge.className = 'win-badge'; badge.textContent = 'WIN';
+      const vkey = info.winner === 'parent' ? 'win_parent' : info.winner === 'child' ? 'win_child' : 'draw';
+      if (quick) {
+        if (winCard) { winCard.classList.add('win'); winCard.appendChild(badge); loseCard.classList.add('lose'); }
+        scene.classList.add('show-head', 'show-pay');
+        await sleep(60);
+      } else {
+        sounds.whoosh();
+        await sleep(600); if (run !== running) return;
+        if (winCard) {
+          winCard.classList.add('win'); winCard.appendChild(badge); loseCard.classList.add('lose');
+          fxFlash('white', 300); fxShake(true); sounds.boom(); sounds.chime(info.winner === 'parent' ? 'gold' : 'rainbow');
+          fxParticles(rnd0, 36, ['#ffd93d', '#ff4d4d', '#3b8cff', '#2ec27e', '#fff'], true);
+        } else { sounds.thud(); }
+        await sleep(500); if (run !== running) return;
+        scene.classList.add('show-head');
+        sounds.voice(VOICE_LINES[vkey], vkey);
+        await sleep(700); if (run !== running) return;
+        scene.classList.add('show-pay');
+        await sleep(draw ? 900 : 1800);
+      }
+      if (run !== running) return;
+      el.hud.innerHTML = '';
+      root.classList.remove('playing', 'intro-on');
+      running = null;
+    }
+
     /** 対決スタートの登場シーン: 両者が左右から滑り込み、VS が叩き込まれ、「対決スタート!」。タップで飛ばせる。 */
     async function playIntro(parent, child, opts = {}) {
       reset();
@@ -864,15 +931,7 @@ const ChinchiroAnim = (() => {
       const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
       running = run;
       const quick = opts.reduced || reducedMotion();
-      const card = (f, side, label) => {
-        const c = document.createElement('div'); c.className = `fighter-card ${side}`;
-        const av = document.createElement('span'); av.className = 'avatar lg'; av.style.setProperty('--c', (f && f.color) || '#2b2d5c');
-        if (f && f.char && typeof SugorokuArt !== 'undefined' && Object.hasOwn(SugorokuArt.CHAR_ART, f.char)) av.innerHTML = SugorokuArt.CHAR_ART[f.char]();
-        const name = document.createElement('b'); name.textContent = (f && f.name) || (side === 'left' ? '配信者' : '挑戦者');
-        const sub = document.createElement('small'); sub.textContent = label;
-        c.append(av, name, sub);
-        return c;
-      };
+      const card = (f, side, label) => fighterCard(f, side, label);
       const intro = document.createElement('div'); intro.className = 'intro';
       const vs = document.createElement('div'); vs.className = 'vs-burst'; vs.innerHTML = '<span class="vs">VS</span>';
       const start = document.createElement('div'); start.className = 'start-text'; start.textContent = '対決スタート!';
@@ -895,7 +954,7 @@ const ChinchiroAnim = (() => {
     const rnd0 = mulberry32(12345); // 登場シーンの粒子用(毎回同じでよい)
 
     root.addEventListener('click', skip);
-    return { play, skip, reset, showWaiting, playIntro, el };
+    return { play, skip, reset, showWaiting, playIntro, playResult, el };
   }
 
   /** 数字を from から to まで動かして見せる(点数のカウントアップ)。 */

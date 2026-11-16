@@ -12,7 +12,7 @@ before(async () => { browser = await chromium.launch(); srv = await serve(); url
 after(async () => { await browser?.close(); await srv?.close(); });
 
 /** 起動時の voice/<役>.mp3|m4a の存在確認(HEAD)で出る 404 は想定内なので、ページエラーに数えない。 */
-const isVoiceProbe = (m) => /\/voice\/[a-z0-9]+\.(mp3|m4a)$/.test(((m.location && m.location()) || {}).url || '');
+const isVoiceProbe = (m) => /\/voice\/[a-z0-9_]+\.(mp3|m4a)$/.test(((m.location && m.location()) || {}).url || '');
 
 async function newPage(ctx, path, viewport = { width: 390, height: 844 }) {
   const context = ctx || await browser.newContext({ viewport });
@@ -279,10 +279,11 @@ test('対戦: 親が振り、子が振ると両画面に同じ出目と結果が
   assert.equal(Math.abs(me.points - 100), 10 * res.mult);
   assert.equal(me.wins + me.losses, 1);
   await host.locator('#next-match').waitFor({ state: 'visible', ...T });
-  const hostVs = await host.locator('.arena .center .vs').innerText();
-  const kidVs = await kid.locator('.arena .center .vs').innerText();
+  const hostVs = await host.locator('.arena .center .win-name').innerText();
+  const kidVs = await kid.locator('.arena .center .win-name').innerText();
   assert.equal(hostVs, kidVs);
-  assert.equal(hostVs, `×${res.mult}`);
+  assert.ok(hostVs.includes('の勝ち'), hostVs);
+  assert.ok((await host.locator('.arena .center .why').innerText()).length > 0, '勝った理由が出る');
   assert.ok((await kid.locator('#my-status').innerText()).includes(res.winner === 'child' ? '勝ち' : '負け'));
   assert.deepEqual(errors.concat(kids[0].errors), []);
   await context.close();
@@ -518,8 +519,8 @@ test('非表示にした人の名前は、手番や勝敗の表示にも出な�
   assert.ok(!status.includes('ひみつ') && status.includes('？？？'), status);
   await kids[0].page.click('#listener-roll');
   await host.locator('#next-match').waitFor({ state: 'visible', ...T });
-  status = await host.locator('.arena .center .status').innerText();
-  assert.ok(!status.includes('ひみつ') && status.includes('？？？'), status);
+  const center = await host.locator('#screen-host .arena .center').innerText(); // 結果は勝者名・理由・支払いに出る
+  assert.ok(!center.includes('ひみつ') && center.includes('？？？'), center);
   assert.ok(!(await host.locator('#screen-host .arena').innerText()).includes('ひみつ'));
   await context.close();
 });
@@ -1297,5 +1298,32 @@ test('音: 効果音の揺らぎは Math.random を使わない(出目の乱数�
   });
   assert.ok(r.started > 0, '音は鳴っている');
   assert.equal(r.rnd, 0, 'Math.random を呼ばない');
+  await context.close();
+});
+
+// ---------- 結果シーン ----------
+test('結果: 決着すると両者の出目と役を並べた結果シーンが出て、勝った側に WIN、下に支払い。アリーナにも大きく勝者と理由', async () => {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host, { name: 'おやま' });
+  const { page: kid } = await joinAs(context, code, 'うさ', 'kappa');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await fixDice(host, diceSeq([4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', timeout: 15000 });
+  await kid.click('#listener-roll');
+  await host.locator('#stage .result-scene').waitFor({ state: 'visible', timeout: 15000 });
+  await host.locator('#stage .result-scene .win-badge').waitFor({ state: 'visible', ...T }); // WIN が付くまで待つ
+  const scene = await host.locator('#stage .result-scene').innerText();
+  for (const t of ['おやま の勝ち', '6の目', 'ヒフミ', '2倍', 'うさ → おやま に 20点', 'WIN']) assert.ok(scene.includes(t), scene);
+  assert.equal(await host.locator('#stage .result-scene .fighter-card.win').count(), 1);
+  assert.equal(await host.locator('#stage .result-scene .fighter-card.lose').count(), 1);
+  assert.ok((await host.locator('#stage .result-scene .fighter-card.win .mdice').count()) >= 3, '勝った側の出目');
+  await kid.locator('#stage .result-scene').waitFor({ state: 'visible', ...T });
+  await host.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 15000 });
+  const center = await host.locator('#screen-host .arena .center').innerText();
+  assert.ok(center.includes('おやま の勝ち') && center.includes('ヒフミ') && center.includes('20点'), center);
+  assert.deepEqual(errors, []);
   await context.close();
 });

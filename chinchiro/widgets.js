@@ -96,6 +96,37 @@ const ChinchiroWidgets = (() => {
     }).join('');
   }
 
-  return { esc, dieHtml, diceHtml, throwsHtml, legendHtml, rulesHtml, logHtml, hands };
+  /**
+   * 誰がどうやって勝ったかを文にする。names = { host, child }(伏せる名前は呼び出し側で ？？？ にしておく)。
+   * @returns {{ headline: string, why: string, pay: string }}
+   */
+  function resultSummary(result, names, settings) {
+    const s = settings && typeof settings === 'object' ? settings : {};
+    const mode = s.mode === 'drink' || s.mode === 'both' ? s.mode : 'points';
+    const unit = L.POINT_UNITS.includes(s.unit) ? s.unit : L.POINT_UNITS[0];
+    const host = (names && names.host) || '配信者';
+    const child = (names && names.child) || '挑戦者';
+    const ph = result.parentHand || null;
+    const ch = result.childHand || null;
+    if (result.winner === 'draw') return { headline: '引き分け! もう一度', why: ph ? `${ph.label} 同士` : '', pay: '' };
+    const parentWon = result.winner === 'parent';
+    const winName = parentWon ? host : child;
+    const loseName = parentWon ? child : host;
+    const winHand = parentWon ? ph : ch;
+    const loseHand = parentWon ? ch : ph;
+    let why = '';
+    if (loseHand && loseHand.lose) {
+      const pen = L.penaltyMult(loseHand);
+      why = `${loseName} は${loseHand.label}(負け${pen > 1 ? `・${pen}倍払い` : ''})${ch ? '' : `。${child} は振らずに勝ち`}`;
+    } else if (winHand && loseHand) {
+      why = `${winHand.label}(×${winHand.mult}) ＞ ${loseHand.label}${loseHand.type === 'none' ? '' : `(×${loseHand.mult})`}`;
+    }
+    const pay = [];
+    if (mode !== 'drink') pay.push(`${loseName} → ${winName} に ${unit * result.mult}点`);
+    if (mode !== 'points') pay.push(`${loseName} が ${drinkLabel(s)} × ${result.mult} 飲む`);
+    return { headline: `${winName} の勝ち!`, why, pay: pay.join(' ・ ') };
+  }
+
+  return { esc, dieHtml, diceHtml, throwsHtml, legendHtml, rulesHtml, logHtml, hands, resultSummary };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroWidgets;
