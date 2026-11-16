@@ -657,7 +657,7 @@ test('リスナーが振ると、親機の返事が来るまで手の中で振�
   await host.close(); // 親機がいない
   await kid.evaluate(([c, u]) => {
     const db = JSON.parse(localStorage.getItem('chinchiro.mock.db'));
-    db.rooms[c].state = { seq: 2, phase: 'child', match: { childUid: u, round: 1, parent: { throws: [{ dice: [2, 2, 5], seed: 1, shonben: false, hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, at: 1 }], hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, done: true }, child: { done: false } }, host: { points: 100, wins: 0, losses: 0, drinks: 0 } };
+    db.rooms[c].state = { seq: 2, watched: 2, phase: 'child', match: { childUid: u, round: 1, parent: { throws: [{ dice: [2, 2, 5], seed: 1, shonben: false, hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, at: 1 }], hand: { type: 'me', value: 5, mult: 1, label: '5の目', lose: false, rank: 105 }, done: true }, child: { done: false } }, host: { points: 100, wins: 0, losses: 0, drinks: 0 } };
     delete db.rooms[c].queue;
     localStorage.setItem('chinchiro.mock.db', JSON.stringify(db));
     new BroadcastChannel('chinchiro-mock').postMessage({ type: 'change', tree: db });
@@ -1325,5 +1325,80 @@ test('結果: 決着すると両者の出目と役を並べた結果シーンが
   const center = await host.locator('#screen-host .arena .center').innerText();
   assert.ok(center.includes('おやま の勝ち') && center.includes('ヒフミ') && center.includes('20点'), center);
   assert.deepEqual(errors, []);
+  await context.close();
+});
+
+// ---------- 演出中は相手が触れない(親機の演出が終わるまで待つ) ----------
+/** 非同期の条件が真になるまで待つ(helpers の waitFor は同期関数用)。 */
+async function pollUntil(fn, ms = 5000) {
+  const t0 = Date.now();
+  while (!(await fn())) { if (Date.now() - t0 > ms) throw new Error('pollUntil: timeout'); await new Promise((r) => setTimeout(r, 100)); }
+}
+async function hostAndQuickKid(name = 'うさ') {
+  const { page: host, context, errors } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code, '&quick=1&watchms=400');
+  await kid.locator('#screen-join').waitFor({ state: 'visible', ...T });
+  await kid.locator('#join-name').fill(name);
+  await kid.click('#join-challenge');
+  await kid.locator('#screen-listener').waitFor({ state: 'visible', ...T });
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  return { host, kid, context, errors, code };
+}
+
+test('演出中は相手が触れない: 親機の演出が終わるまでリスナーの「振る」は出ず、終わると state.watched が進んで出る', async () => {
+  const { host, kid, context, errors, code } = await hostAndQuickKid();
+  await fixDice(host, diceSeq([4, 4, 6], [2, 2, 5]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 10000 });
+  await host.click('#host-roll');
+  await host.locator('#stage-overlay:not([hidden])').waitFor({ state: 'attached', ...T });
+  await kid.waitForTimeout(600); // リスナー側(quick)の演出は一瞬で終わっている
+  assert.equal(await kid.locator('#listener-roll').evaluate((e) => e.hidden), true, '親機の演出中は振れない');
+  assert.ok((await kid.locator('#my-status').innerText()).includes('演出'), await kid.locator('#my-status').innerText());
+  await host.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 20000 });
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  const room = await readRoom(host, code);
+  assert.equal(room.state.watched, room.state.seq, '親機が見終わった seq');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('演出中に届いた「振る」要求は、親機の演出が終わってから処理される', async () => {
+  const { host, kid, context, code } = await hostAndQuickKid();
+  await fixDice(host, diceSeq([4, 4, 6], [2, 2, 5]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 10000 });
+  await host.click('#host-roll');
+  await host.locator('#stage-overlay:not([hidden])').waitFor({ state: 'attached', ...T });
+  await kid.waitForTimeout(400);
+  // 古い端末のように、画面の制限を無視して要求を送る
+  await kid.evaluate(() => { document.getElementById('listener-roll').hidden = false; });
+  await kid.click('#listener-roll');
+  await kid.waitForTimeout(500);
+  assert.equal((await readRoom(host, code)).state.lastThrow.by, 'parent', '親機の演出中は処理しない');
+  await host.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 20000 });
+  await pollUntil(async () => (await readRoom(host, code)).state.lastThrow.by === 'child', 5000);
+  await context.close();
+});
+
+test('親機の演出が終わらない(親機が落ちた)ときは、しばらく待ってから振れるようになる(watchms)', async () => {
+  const { host, kid, context, code } = await hostAndQuickKid();
+  await fixDice(host, diceSeq([4, 4, 6]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 10000 });
+  await host.click('#host-roll');
+  await pollUntil(async () => (await readRoom(kid, code)).state.phase === 'child', 5000);
+  await host.close(); // 親機が見終わる前に落ちた(watched は書かれない)
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', timeout: 4000 });
+  await context.close();
+});
+
+test('「動きを減らす」設定の端末でも、サイコロの演出とリーチは出る(スマホで演出が出ない対策)', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?demo=1&dice=1,1,1&seed=7&reach=3`);
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .cube.hold').count(), 1);
   await context.close();
 });

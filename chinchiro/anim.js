@@ -8,7 +8,6 @@ const ChinchiroAnim = (() => {
   // 面 F を正面に向ける回転(度)。面の配置: 1=前 6=後 2=右 5=左 3=上 4=下
   const FINAL_ROT = { 1: [0, 0], 6: [0, 180], 2: [0, -90], 5: [0, 90], 3: [-90, 0], 4: [90, 0] };
   const FLOOR = { cx: 240, cy: 160, rx: 150, ry: 42 }; // 器の底(テーブル座標)
-  const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function mulberry32(seed) {
     let a = (Number(seed) || 0) >>> 0;
@@ -723,7 +722,7 @@ const ChinchiroAnim = (() => {
         return;
       }
       const rnd = mulberry32(throwObj.seed);
-      const reduced = opts.reduced || reducedMotion();
+      const reduced = !!opts.reduced; // 端末の「動きを減らす」設定は見ない(演出がこのゲームの中身なので)
       const outIdx = throwObj.shonben ? Math.floor(rnd() * 3) : -1;
       const spots = landingSpots(rnd);
       // リーチ: 最後に止める1個と強さ(seed から。quick/動きを減らす/ションベンでは無し)
@@ -882,7 +881,7 @@ const ChinchiroAnim = (() => {
       root.classList.add('playing', 'intro-on');
       const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
       running = run;
-      const quick = opts.reduced || reducedMotion();
+      const quick = !!opts.reduced;
       const draw = info.winner === 'draw';
       const scene = document.createElement('div'); scene.className = `result-scene${draw ? ' draw' : ''}`;
       const left = fighterCard(info.parent, 'left', '親', info.parent);
@@ -930,7 +929,7 @@ const ChinchiroAnim = (() => {
       root.classList.add('playing', 'intro-on');
       const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
       running = run;
-      const quick = opts.reduced || reducedMotion();
+      const quick = !!opts.reduced;
       const card = (f, side, label) => fighterCard(f, side, label);
       const intro = document.createElement('div'); intro.className = 'intro';
       const vs = document.createElement('div'); vs.className = 'vs-burst'; vs.innerHTML = '<span class="vs">VS</span>';
