@@ -397,12 +397,12 @@ const ChinchiroAnim = (() => {
         <div class="bowl-front"></div>
         <div class="fx-layer"></div>
         <div class="result-stamp" data-hand=""></div>
-      </div></div>
+      </div><div class="hud"></div></div>
       <div class="hint">タップで飛ばす</div>`;
     const el = {
       avatar: root.querySelector('.avatar'), bubble: root.querySelector('.bubble'), hand: root.querySelector('.hand'),
       scaler: root.querySelector('.scaler'), table: root.querySelector('.table'), dice: root.querySelector('.dice-layer'),
-      fx: root.querySelector('.fx-layer'), stamp: root.querySelector('.result-stamp'),
+      fx: root.querySelector('.fx-layer'), stamp: root.querySelector('.result-stamp'), hud: root.querySelector('.hud'),
     };
     let running = null; // { anims: Animation[], timers: number[], skipped, resolveSkip }
 
@@ -444,13 +444,14 @@ const ChinchiroAnim = (() => {
       if (running) { for (const a of running.anims) a.cancel(); for (const t of running.timers) clearTimeout(t); stopAll(running); running = null; }
       el.dice.innerHTML = '';
       el.fx.innerHTML = '';
+      el.hud.innerHTML = '';
       el.stamp.textContent = '';
       el.stamp.dataset.hand = '';
       delete el.stamp.dataset.fail;
       root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing', 'reaching');
+      root.classList.remove('playing', 'reaching', 'l1', 'l2', 'l3');
     }
 
     function setThrower(t) {
@@ -596,7 +597,8 @@ const ChinchiroAnim = (() => {
     }
 
     function stampFor(hand, remaining) {
-      if (!hand) return { text: remaining > 0 ? `目なし… あと${remaining}投` : '目なし…', key: 'none' };
+      const again = !Number.isFinite(remaining) ? '目なし… もう一回!' : remaining > 0 ? `目なし… あと${remaining}投` : '目なし…';
+      if (!hand) return { text: again, key: 'none' };
       switch (hand.type) {
         case 'pinzoro': return { text: 'ピンゾロ!!', key: 'pinzoro' };
         case 'zoro': return { text: `${hand.value}ゾロ!`, key: 'zoro' };
@@ -604,7 +606,7 @@ const ChinchiroAnim = (() => {
         case 'me': return { text: `${hand.value}の目`, key: 'me' };
         case 'hifumi': return { text: 'ヒフミ…', key: 'hifumi' };
         case 'shonben': return { text: 'ションベン!', key: 'shonben' };
-        default: return { text: remaining > 0 ? `目なし… あと${remaining}投` : '目なし…', key: 'none' };
+        default: return { text: again, key: 'none' };
       }
     }
 
@@ -648,23 +650,28 @@ const ChinchiroAnim = (() => {
       const base = level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
       return plan.kind === 'pinzoro' ? `ピンゾロ${base}` : base;
     }
+    // ドアップ中もテーブルと一緒に拡大されないよう、文字・ランプ・ストライプ・稲妻は HUD 層(拡大の外)に置く。
+    // スポットライトとスピードラインはサイコロの座標に付くので fx 層(拡大の中)。
     function fxReach(plan, level) {
       const spot = document.createElement('div'); spot.className = 'spot'; el.fx.appendChild(spot);
+      if (level >= 2) { const sl = document.createElement('div'); sl.className = `speedlines${plan.pinch ? ' pinch' : ''}`; el.fx.appendChild(sl); }
       const c = document.createElement('div');
       c.className = `cutin l${level}${plan.pinch ? ' pinch' : ''}`;
       c.textContent = cutinText(plan, level);
-      el.fx.appendChild(c);
-      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.fx.appendChild(l); }
+      el.hud.appendChild(c);
+      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.hud.appendChild(l); }
       if (level >= 3) {
-        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.fx.appendChild(st); }
-        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.fx.appendChild(bolt); }
+        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.hud.appendChild(st); }
+        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.hud.appendChild(bolt); }
       }
+      root.classList.add(`l${level}`);
     }
     function clearReach() {
-      for (const n of el.fx.querySelectorAll('.cutin, .lamps, .stripes, .bolt, .spot')) n.remove();
+      for (const n of el.fx.querySelectorAll('.spot, .speedlines')) n.remove();
+      el.hud.innerHTML = '';
       el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit');
       for (const n of el.dice.querySelectorAll('.hold')) n.classList.remove('hold');
-      root.classList.remove('reaching');
+      root.classList.remove('reaching', 'l1', 'l2', 'l3');
     }
     function stopAll(run) { for (const st of run.stops) { try { st.stop(); } catch { /* 無視 */ } } run.stops = []; }
 

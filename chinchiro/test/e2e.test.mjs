@@ -1046,7 +1046,7 @@ test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らな
 // ---------- リーチ演出 ----------
 test('リーチ: 1,1,1 を reach=3 で投げると「激アツ」のカットインと暗転・ズームの後にピンゾロ', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
-  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
   assert.ok((await page.locator('#stage .cutin').innerText()).includes('激アツ'));
   assert.equal(await page.locator('#stage .table.reach.zoom.reach-l3').count(), 1);
   assert.equal(await page.locator('#stage .cube.hold').count(), 1);
@@ -1060,7 +1060,7 @@ test('リーチ: 1,1,1 を reach=3 で投げると「激アツ」のカットイ
 
 test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」の後にヒフミ', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,2,3&seed=7&reach=2');
-  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
   assert.ok((await page.locator('#stage .cutin').innerText()).includes('大ピンチ'));
   assert.equal(await page.locator('#stage .table.reach.pinch').count(), 1);
   await page.locator('#stage .result-stamp[data-hand="hifumi"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -1070,9 +1070,11 @@ test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」の後にヒ
 
 test('リーチ: 溜め中にタップすると即結果で、カットイン・暗転・溜めが残らない', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
-  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  // 激アツ中は画面が揺れている(要素が動き続ける)ので、座標でタップする
+  const box = await page.locator('#stage').boundingBox();
   const t0 = Date.now();
-  await page.locator('#stage').click();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
   assert.ok(Date.now() - t0 < 1500, 'すぐ結果');
   assert.equal(await page.locator('#stage .cutin').count(), 0);
@@ -1080,7 +1082,7 @@ test('リーチ: 溜め中にタップすると即結果で、カットイン・
   assert.equal(await page.locator('#stage .cube.hold').count(), 0);
   // 続けて別の投げを始めても、前のリーチの残骸がない(play を直接呼ぶ)
   await page.evaluate(() => { ChinchiroDemo.stage.play({ dice: [3, 3, 5], seed: 5, shonben: false, hand: { type: 'me', value: 5 } }, { remaining: 0, forceReach: 1 }); });
-  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
   assert.equal(await page.locator('#stage .cutin').count(), 1);
   assert.equal(await page.locator('#stage .cube').count(), 3);
   await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -1171,7 +1173,7 @@ test('音: 溜め中に reset() すると鼓動・唸りのタイマーも止ま
   await context.addInitScript(() => { window.__allow = true; });
   const page = await context.newPage();
   await page.goto(`${url}/index.html?demo=1&dice=1,2,3&seed=7&reach=2`);
-  await page.locator('#stage .fx-layer .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
   const r = await page.evaluate(async () => {
     ChinchiroDemo.stage.reset();
     await new Promise((r) => setTimeout(r, 250));
@@ -1180,5 +1182,45 @@ test('音: 溜め中に reset() すると鼓動・唸りのタイマーも止ま
     return { before, after: window.__started };
   });
   assert.equal(r.after, r.before, '唸りが続いている');
+  await context.close();
+});
+
+// ---------- 目なしは負けではない / ドアップ ----------
+test('目なし: 回数の上限なし。デモは「もう一回!」、対戦では3投役なしでも親の番が続く', async () => {
+  const d = await newPage(null, 'index.html?demo=1&dice=1,3,5&seed=5&skip=1&remaining=Infinity');
+  await d.page.locator('#stage .result-stamp[data-hand="none"]').waitFor({ state: 'visible', ...T });
+  assert.equal(await d.page.locator('#stage .result-stamp').innerText(), '目なし… もう一回!');
+  await d.context.close();
+  const { host, context, code, errors } = await setupMatch();
+  await fixDice(host, diceSeq([2, 4, 6], [1, 3, 5], [2, 3, 5], [4, 4, 6]));
+  await host.click('#start-match');
+  for (let i = 0; i < 3; i++) {
+    await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+    await host.click('#host-roll');
+    await host.locator('.fighter.host .throws .throw').nth(i).waitFor({ state: 'visible', ...T });
+  }
+  assert.equal(await phaseOf(host, code), 'parent');
+  const status = await host.locator('#screen-host .arena .status').innerText();
+  assert.ok(status.includes('4投目'), status);
+  assert.ok((await host.locator('.fighter.host .fhand').innerText()).includes('振り直し'));
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('.fighter.host .fhand').filter({ hasText: '6の目' }).waitFor({ state: 'visible', ...T });
+  assert.equal(await phaseOf(host, code), 'child');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('ドアップ: リーチの溜め中は最後の1個が 2.5 倍以上に寄り、集中線(スピードライン)と画面の揺れが付く', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
+  await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
+  await page.waitForTimeout(700); // ズームのトランジションが終わるまで
+  const scale = await page.locator('#stage .table').evaluate((e) => { const m = getComputedStyle(e).transform.match(/matrix\(([^,]+),/); return m ? Number(m[1]) : 1; });
+  assert.ok(scale >= 2.5, 'scale=' + scale);
+  assert.ok(await page.locator('#stage .fx-layer .speedlines').count(), 'スピードライン');
+  assert.ok(await page.locator('#stage.reaching.l3').count(), '画面の揺れ(l3)');
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.equal(await page.locator('#stage .fx-layer .speedlines').count(), 0);
+  assert.deepEqual(errors, []);
   await context.close();
 });

@@ -108,7 +108,24 @@ test('startMatch → 親の番', () => {
   assert.equal(L.canThrow(s, 'child'), false);
 });
 
-test('親が1投目で役 → 子の番。親が3投役なし → 目なしで子の不戦勝(result)', () => {
+test('目なしは負けではない: 3投役なしでも振り直せて、役が出たら進む', () => {
+  assert.equal(L.MAX_THROWS, Infinity);
+  let s = L.startMatch(L.createState(), 'kid1');
+  for (const d of [[1, 3, 5], [2, 4, 6], [1, 4, 6]]) s = L.applyThrow(s, 'parent', roll(d), SETTINGS).state;
+  assert.equal(s.phase, 'parent');
+  assert.equal(s.match.parent.hand, null);
+  assert.equal(s.match.parent.throws.length, 3);
+  assert.equal(L.canThrow(s, 'parent'), true);
+  const r = L.applyThrow(s, 'parent', roll([4, 4, 6]), SETTINGS);
+  assert.equal(r.state.phase, 'child');
+  assert.equal(r.state.match.parent.hand.label, '6の目');
+  // 子も同じ
+  let c = r.state;
+  for (const d of [[1, 3, 5], [2, 4, 6], [1, 4, 6], [2, 3, 5]]) c = L.applyThrow(c, 'child', roll(d), SETTINGS).state;
+  assert.equal(c.phase, 'child'); assert.equal(c.match.child.throws.length, 4); assert.equal(L.canThrow(c, 'child'), true);
+});
+
+test('親が1投目で役 → 子の番。親が役なしの投げは手番が続く', () => {
   let s = L.startMatch(L.createState(), 'kid1');
   let r = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS);
   assert.equal(r.state.phase, 'child');
@@ -125,12 +142,9 @@ test('親が1投目で役 → 子の番。親が3投役なし → 目なしで�
   assert.equal(s.match.parent.hand, null);
   s = L.applyThrow(s, 'parent', roll([2, 4, 6]), SETTINGS).state;
   r = L.applyThrow(s, 'parent', roll([1, 4, 6]), SETTINGS);
-  assert.equal(r.state.phase, 'result');
-  assert.equal(r.state.match.parent.hand.type, 'none');
-  assert.equal(r.result.winner, 'child');
-  assert.equal(r.result.mult, 1);
-  assert.equal(r.result.childHand, null);
-  assert.equal(r.result.childUid, 'kid1');
+  assert.equal(r.state.phase, 'parent');
+  assert.equal(r.state.match.parent.hand, null);
+  assert.equal(r.result, null);
 });
 
 test('親ヒフミは1投で終了して子の不戦勝、倍率2。ションベンも1投で終了', () => {

@@ -34,7 +34,7 @@ const ChinchiroWidgets = (() => {
       { name: 'ゾロ目', dice: [6, 6, 6], mult: L.evaluate([6, 6, 6]).mult, note: '2〜6 のゾロ目。大きい数が強い' },
       { name: 'シゴロ', dice: [4, 5, 6], mult: L.evaluate([4, 5, 6]).mult, note: '4・5・6' },
       { name: '目', dice: [2, 2, 5], mult: L.evaluate([2, 2, 5]).mult, note: '同じ数2つ + 別の数1つ(例は 5の目)。6が強く1が弱い' },
-      { name: '目なし', dice: [2, 4, 6], lose: true, pay: 1, note: `${L.MAX_THROWS}回振っても役なし` },
+      { name: '目なし', dice: [2, 4, 6], again: true, note: '役なし。負けではなく、役が出るまで振り直し' },
       { name: 'ヒフミ', dice: [1, 2, 3], lose: true, pay, note: `${pay}倍払う` },
       { name: 'ションベン', dice: null, lose: true, pay: 1, note: '器から飛び出し(たまに)' },
     ];
@@ -42,7 +42,7 @@ const ChinchiroWidgets = (() => {
 
   /** 1 行の順位表(配信画面用)。 */
   function legendHtml() {
-    const parts = hands().filter((h) => h.name !== 'ションベン')
+    const parts = hands().filter((h) => h.name !== 'ションベン' && !h.again)
       .map((h) => (h.lose ? (h.pay > 1 ? `${h.name} ×${h.pay}払い` : h.name) : `${h.name} ×${h.mult}`));
     return `<span class="legend-text">${parts.map(esc).join(' ＞ ')}</span>`;
   }
@@ -56,7 +56,7 @@ const ChinchiroWidgets = (() => {
     const usePts = mode !== 'drink';
     const useDr = mode !== 'points';
     const dl = drinkLabel(s);
-    const rows = hands().map((h) => `<tr><td>${h.dice ? diceHtml(h.dice) : '<span class="mdice-out">🥣→</span>'}</td><th>${esc(h.name)}</th><td class="mult">${h.lose ? '負け' : `×${h.mult}`}</td><td class="note">${esc(h.note)}</td></tr>`).join('');
+    const rows = hands().map((h) => `<tr><td>${h.dice ? diceHtml(h.dice) : '<span class="mdice-out">🥣→</span>'}</td><th>${esc(h.name)}</th><td class="mult">${h.again ? '振り直し' : h.lose ? '負け' : `×${h.mult}`}</td><td class="note">${esc(h.note)}</td></tr>`).join('');
     const room = [];
     if (usePts) room.push(`持ち点 ${L.startPoints(s)}`, `1戦 ${unit}点 × 倍率`);
     if (useDr) room.push(`飲みは ${dl} × 倍率`);
@@ -67,7 +67,7 @@ const ChinchiroWidgets = (() => {
 <p class="rules-lead">強い順。勝った側の倍率(または負けた役の罰)ぶん、負けた側が払う。</p>
 <table class="rules-table">${rows}</table>
 <ul class="rules-flow">
-<li>親(配信者)が先に振って役を決める → 子(リスナー)が振る。各${L.MAX_THROWS}投まで。</li>
+<li>親(配信者)が先に振って役を決める → 子(リスナー)が振る。目なしは何度でも振り直し。</li>
 <li>親が負け役なら子は振らずに勝ち。同じ役は引き分けで、両方もう一度。</li>
 <li>払う倍率は、勝った役の倍率と負けた役の罰(ヒフミ=${L.penaltyMult(L.HIFUMI)})の大きい方。</li>
 </ul>
