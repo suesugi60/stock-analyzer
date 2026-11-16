@@ -16,8 +16,9 @@ const ChinchiroLogic = (() => {
     return Number.isInteger(v) && v >= 1 && v <= 99999 ? v : DEFAULT_START_POINTS;
   }
 
+  // 目なし: 3投で役が出なかったとき。負け確定ではなく「いちばん弱い役」(相手が役を作れば負け、相手も目なしなら引き分け)
+  const NONE = Object.freeze({ type: 'none', value: 0, mult: 1, label: '目なし', lose: false, rank: 0 });
   // 負け役(出た瞬間に手番終了)
-  const NONE = Object.freeze({ type: 'none', value: 0, mult: 1, label: '目なし', lose: true, rank: 0 });
   const SHONBEN = Object.freeze({ type: 'shonben', value: 0, mult: 1, label: 'ションベン', lose: true, rank: -1 });
   const HIFUMI = Object.freeze({ type: 'hifumi', value: 0, mult: 1, label: 'ヒフミ', lose: true, rank: -2 });
 
@@ -82,7 +83,7 @@ const ChinchiroLogic = (() => {
   }
 
   // ---------- 部屋の状態遷移(親機だけが実行し、結果を同期先に書く) ----------
-  const MAX_THROWS = Infinity; // 目なしは振り直し(回数の上限なし)。有限にすると「n投で役なし=目なしで負け」になる
+  const MAX_THROWS = 3; // 3投で役が出なければ目なし(いちばん弱い役)
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const emptySide = () => ({ throws: [], hand: null, done: false });
 

@@ -69,9 +69,20 @@ const ChinchiroAnim = (() => {
   // ---------- リーチ(最後の1個をどれにするか・演出の強さ) ----------
   /** レベル 0〜3(なし/ノーマル/スーパー/激アツ)の重み。結果ごとに引くので「強い役ほど激アツが出やすいが確定ではない」。 */
   const REACH_WEIGHTS = { pinzoro: [0, 5, 25, 70], zoro: [0, 20, 45, 35], shigoro: [0, 25, 45, 30], me: [70, 22, 6, 2], noneShigoro: [75, 18, 5, 2], hifumi: [10, 30, 60, 0], nonePinch: [80, 15, 5, 0] };
-  /** 溜めの長さ(2 個目が止まってから最後の 1 個を落とすまで)。 */
-  const REACH_HOLD_MS = { 1: 900, 2: 1800, 3: 2800 };
-  const NO_REACH = () => ({ lastIdx: 2, kind: null, level: 0, pinch: false });
+  /** 溜めの長さ(2 個目が止まってから最後の 1 個を落とすまで)。レベル別の基本値。 */
+  const REACH_HOLD_MS = { 1: 1400, 2: 2400, 3: 3600 };
+  /** 見えている形(狙える役)が強いほど長く溜める。 */
+  const KIND_FACTOR = { pinzoro: 1.5, zoro: 1.25, shigoro: 1, pinch: 1 };
+  function holdMs(level, kind) { return level > 0 ? Math.round((REACH_HOLD_MS[level] || REACH_HOLD_MS[1]) * (KIND_FACTOR[kind] || 1)) : 0; }
+  const NO_REACH = () => ({ lastIdx: 2, kind: null, level: 0, pinch: false, need: null, target: null });
+  /** 見えている 2 個から「何が出れば何の役か」。 */
+  function needFor(kind, a, b) {
+    if (kind === 'pinzoro') return { need: 1, target: 'ピンゾロ ×5' };
+    if (kind === 'zoro') return { need: a, target: `${a}ゾロ ×3` };
+    if (kind === 'shigoro') return { need: [4, 5, 6].find((x) => x !== a && x !== b), target: 'シゴロ ×2' };
+    if (kind === 'pinch') return { need: [1, 2, 3].find((x) => x !== a && x !== b), target: 'ヒフミ(2倍払い)' };
+    return { need: null, target: null };
+  }
   const hi = (x) => x >= 4;
   const lo = (x) => x <= 3;
   /** 先に止まる 2 個だけから見える形(結果は見ない)。 */
@@ -126,7 +137,7 @@ const ChinchiroAnim = (() => {
     }
     if (Number.isInteger(force) && force >= 0 && force <= 3) level = force;
     if (kind === 'pinch') level = Math.min(level, 2);
-    return { lastIdx, kind, level, pinch: kind === 'pinch' };
+    return { lastIdx, kind, level, pinch: kind === 'pinch', ...needFor(kind, a, b) };
   }
 
   /** 動いているアニメだけ止めて、その配列を返す(終わったものを play() すると巻き戻るため触らない)。 */
@@ -339,12 +350,15 @@ const ChinchiroAnim = (() => {
       /** 強い役の「ドン!」。 */
       boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
       /** リーチの鼓動(レベルが高いほど速く・多く。激アツは上昇音つき)。{ stop() } を返す。 */
-      heartbeat(level) {
+      heartbeat(level, ms = 2000) {
         const beat = () => { tone(60, 0.25, 0.9, 'sine'); lowNoise(0.08, 0.6); };
-        const times = level >= 3 ? [0, 500, 900, 1250, 1550, 1800, 2000, 2150] : level === 2 ? [0, 350, 700, 1050] : [0, 450];
-        const timers = times.map((t) => setTimeout(beat, t));
-        if (level >= 3) timers.push(setTimeout(() => sweep(200, 1800, 1.2, 0.35), 1600));
-        return { stop() { for (const t of timers) clearTimeout(t); } };
+        const timers = [];
+        // レベルが高いほど速く。激アツは終わりに向かって加速
+        let t = 0; let gap = level >= 3 ? 520 : level === 2 ? 380 : 480;
+        const end = Math.max(0, ms - (level >= 3 ? 400 : 0)); // 激アツの最後 400ms は無音の溜め
+        while (t < end) { timers.push(setTimeout(beat, t)); t += gap; if (level >= 3) gap = Math.max(140, gap * 0.86); }
+        if (level >= 3 && ms > 1600) timers.push(setTimeout(() => sweep(200, 1800, 1.2, 0.35), end - 1200));
+        return { stop() { for (const t2 of timers) clearTimeout(t2); } };
       },
       /** ピンチの低い唸り。{ stop() } を返す。 */
       drone() {
@@ -451,7 +465,7 @@ const ChinchiroAnim = (() => {
       root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing', 'reaching', 'l1', 'l2', 'l3');
+      root.classList.remove('playing', 'reaching', 'l1', 'l2', 'l3', 'kind-pinzoro', 'kind-zoro', 'kind-shigoro', 'kind-pinch');
     }
 
     function setThrower(t) {
@@ -645,20 +659,33 @@ const ChinchiroAnim = (() => {
     /** 投げる。opts: { thrower:{name,char,color}, remaining, reduced }。タップで skip。 */
     // ---- リーチの飾り(カットイン・ランプ・ストライプ・稲妻・スポットライト) ----
     const BOLT = '<svg viewBox="0 0 60 160" xmlns="http://www.w3.org/2000/svg"><path d="M36 0 L6 78 L30 78 L18 160 L56 60 L32 60 Z" fill="#ffe978" stroke="#2b2d5c" stroke-width="5" stroke-linejoin="round"/></svg>';
-    function cutinText(plan, level) {
-      if (plan.pinch) return level >= 2 ? '大ピンチ!!' : 'ピンチ…';
-      const base = level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
-      return plan.kind === 'pinzoro' ? `ピンゾロ${base}` : base;
+    function cutinParts(plan, level) {
+      const badge = plan.pinch ? (level >= 2 ? '大ピンチ!!' : 'ピンチ…') : level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
+      const main = plan.kind === 'pinzoro' ? 'ピンゾロリーチ!' : plan.kind === 'zoro' ? `${plan.need}ゾロリーチ!` : plan.kind === 'shigoro' ? 'シゴロリーチ!' : plan.kind === 'pinch' ? 'ヒフミのピンチ…' : 'リーチ!';
+      const sub = plan.need == null ? '' : plan.pinch ? ` が出たら ${plan.target}` : ` が出れば ${plan.target}`;
+      return { badge, main, sub };
+    }
+    function cdieHtml(n) {
+      if (!PIPS[n]) return '';
+      return `<span class="cdie" data-n="${n}">${PIPS[n].map(([r, c]) => `<i style="grid-area:${r}/${c}"></i>`).join('')}</span>`;
     }
     // ドアップ中もテーブルと一緒に拡大されないよう、文字・ランプ・ストライプ・稲妻は HUD 層(拡大の外)に置く。
     // スポットライトとスピードラインはサイコロの座標に付くので fx 層(拡大の中)。
     function fxReach(plan, level) {
       const spot = document.createElement('div'); spot.className = 'spot'; el.fx.appendChild(spot);
       if (level >= 2) { const sl = document.createElement('div'); sl.className = `speedlines${plan.pinch ? ' pinch' : ''}`; el.fx.appendChild(sl); }
+      const { badge, main, sub } = cutinParts(plan, level);
       const c = document.createElement('div');
       c.className = `cutin l${level}${plan.pinch ? ' pinch' : ''}`;
-      c.textContent = cutinText(plan, level);
+      c.innerHTML = `<span class="badge"></span><b class="main"></b>${sub ? `<small class="sub">${plan.pinch ? '' : 'あと '}${cdieHtml(plan.need)}<span></span></small>` : ''}`;
+      c.querySelector('.badge').textContent = badge;
+      c.querySelector('.main').textContent = main;
+      if (sub) c.querySelector('.sub span').textContent = sub;
       el.hud.appendChild(c);
+      if (plan.kind) { el.table.classList.add(`kind-${plan.kind}`); root.classList.add(`kind-${plan.kind}`); }
+      if (level >= 2 && (plan.kind === 'pinzoro' || plan.kind === 'zoro')) {
+        const sp = document.createElement('div'); sp.className = 'sparks'; sp.innerHTML = '<i></i>'.repeat(8); el.fx.appendChild(sp);
+      }
       if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.hud.appendChild(l); }
       if (level >= 3) {
         for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.hud.appendChild(st); }
@@ -667,11 +694,11 @@ const ChinchiroAnim = (() => {
       root.classList.add(`l${level}`);
     }
     function clearReach() {
-      for (const n of el.fx.querySelectorAll('.spot, .speedlines')) n.remove();
+      for (const n of el.fx.querySelectorAll('.spot, .speedlines, .sparks')) n.remove();
       el.hud.innerHTML = '';
-      el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit');
+      el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit', 'kind-pinzoro', 'kind-zoro', 'kind-shigoro', 'kind-pinch');
       for (const n of el.dice.querySelectorAll('.hold')) n.classList.remove('hold');
-      root.classList.remove('reaching', 'l1', 'l2', 'l3');
+      root.classList.remove('reaching', 'l1', 'l2', 'l3', 'kind-pinzoro', 'kind-zoro', 'kind-shigoro', 'kind-pinch');
     }
     function stopAll(run) { for (const st of run.stops) { try { st.stop(); } catch { /* 無視 */ } } run.stops = []; }
 
@@ -765,10 +792,10 @@ const ChinchiroAnim = (() => {
           el.table.style.setProperty('--spot-y', `${160 + holdPoint.p.y - holdPoint.h}px`);
           root.classList.add('reaching');
         }, delay + D * HOLD_OFF);
-        const hold = REACH_HOLD_MS[level] || REACH_HOLD_MS[1];
+        const hold = holdMs(level, plan.kind);
         later(() => {
           fxReach(plan, level);
-          run.stops.push(plan.pinch ? sounds.drone() : sounds.heartbeat(level));
+          run.stops.push(plan.pinch ? sounds.drone() : sounds.heartbeat(level, hold));
           if (level >= 3) later(() => { el.table.classList.add('dark2'); stopAll(run); }, hold - 400);
           later(() => {
             stopAll(run);
@@ -795,7 +822,8 @@ const ChinchiroAnim = (() => {
       clearReach();
       dies.forEach((d, i) => { d.cube.dataset.face = dice[i]; if (i === outIdx) { d.wrap.classList.add('out'); d.cube.classList.add('out'); } });
       showResult(throwObj, opts, dies, rnd, run.skipped || quick, { ...plan, level });
-      await sleep(run.skipped || quick ? 250 : 1100);
+      const strong = throwObj.hand && ['pinzoro', 'zoro', 'shigoro'].includes(throwObj.hand.type);
+      await sleep(run.skipped || quick ? 250 : strong ? 2600 : 1800); // 結果を見る時間(強い役は長め)
       if (run === running) { root.classList.remove('playing'); running = null; }
     }
 
@@ -845,6 +873,6 @@ const ChinchiroAnim = (() => {
     requestAnimationFrame(step);
   }
 
-  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, reachPlan, REACH_WEIGHTS, REACH_HOLD_MS, freezeAnims, thawAnims, FINAL_ROT, PIPS };
+  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, reachPlan, REACH_WEIGHTS, REACH_HOLD_MS, holdMs, freezeAnims, thawAnims, FINAL_ROT, PIPS };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroAnim;

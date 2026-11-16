@@ -29,7 +29,7 @@ test('役の強さ: ピンゾロ > 6ゾロ > 2ゾロ > シゴロ > 6の目 > 1�
   assert.ok(r([3, 3, 1]) > L.NONE.rank);
   assert.ok(L.NONE.rank > L.SHONBEN.rank);
   assert.ok(L.SHONBEN.rank > r([1, 2, 3]));
-  assert.equal(L.NONE.lose, true);
+  assert.equal(L.NONE.lose, false, '目なしは負け確定ではなく最弱の役');
   assert.equal(L.SHONBEN.lose, true);
   assert.equal(L.NONE.label, '目なし');
   assert.equal(L.SHONBEN.label, 'ションベン');
@@ -42,7 +42,10 @@ test('judge: 同じ役は引き分け、親の負け役は子の不戦勝、倍�
   assert.deepEqual(L.judge(H([3, 3, 2]), H([1, 1, 1])), { winner: 'child', mult: 5 });
   assert.deepEqual(L.judge(H([1, 2, 3]), null), { winner: 'child', mult: 2 });
   assert.deepEqual(L.judge(L.SHONBEN, null), { winner: 'child', mult: 1 });
-  assert.deepEqual(L.judge(L.NONE, null), { winner: 'child', mult: 1 });
+  assert.throws(() => L.judge(L.NONE, null), /子の役/); // 親が目なしでも子は振る
+  assert.deepEqual(L.judge(L.NONE, L.NONE), { winner: 'draw', mult: 0 });
+  assert.deepEqual(L.judge(L.NONE, H([2, 2, 1])), { winner: 'child', mult: 1 });
+  assert.deepEqual(L.judge(L.NONE, H([1, 2, 3])), { winner: 'parent', mult: 2 });
   assert.deepEqual(L.judge(H([2, 2, 5]), H([5, 4, 4])), { winner: 'draw', mult: 0 });
   assert.deepEqual(L.judge(H([4, 5, 6]), H([6, 5, 4])), { winner: 'draw', mult: 0 });
   assert.deepEqual(L.judge(H([2, 2, 5]), H([2, 2, 6])), { winner: 'child', mult: 1 });
@@ -108,24 +111,34 @@ test('startMatch → 親の番', () => {
   assert.equal(L.canThrow(s, 'child'), false);
 });
 
-test('目なしは負けではない: 3投役なしでも振り直せて、役が出たら進む', () => {
-  assert.equal(L.MAX_THROWS, Infinity);
+test('目なし: 3投で役なしなら「目なし」= いちばん弱い役。相手が役を作れば負け、相手も目なしなら引き分け', () => {
+  assert.equal(L.MAX_THROWS, 3);
+  assert.equal(L.NONE.lose, false);
   let s = L.startMatch(L.createState(), 'kid1');
   for (const d of [[1, 3, 5], [2, 4, 6], [1, 4, 6]]) s = L.applyThrow(s, 'parent', roll(d), SETTINGS).state;
-  assert.equal(s.phase, 'parent');
-  assert.equal(s.match.parent.hand, null);
-  assert.equal(s.match.parent.throws.length, 3);
-  assert.equal(L.canThrow(s, 'parent'), true);
-  const r = L.applyThrow(s, 'parent', roll([4, 4, 6]), SETTINGS);
-  assert.equal(r.state.phase, 'child');
-  assert.equal(r.state.match.parent.hand.label, '6の目');
-  // 子も同じ
-  let c = r.state;
-  for (const d of [[1, 3, 5], [2, 4, 6], [1, 4, 6], [2, 3, 5]]) c = L.applyThrow(c, 'child', roll(d), SETTINGS).state;
-  assert.equal(c.phase, 'child'); assert.equal(c.match.child.throws.length, 4); assert.equal(L.canThrow(c, 'child'), true);
+  assert.equal(s.phase, 'child', '親が目なしでも子は振る');
+  assert.equal(s.match.parent.hand.type, 'none');
+  assert.equal(L.canThrow(s, 'child'), true);
+  // 子が 1の目 でも目なしには勝つ(倍率は子の役の 1)
+  let r = L.applyThrow(s, 'child', roll([2, 2, 1]), SETTINGS);
+  assert.equal(r.result.winner, 'child'); assert.equal(r.result.mult, 1);
+  assert.equal(r.result.deltas.child.points, 10);
+  // 子も目なしなら引き分け → もう一度
+  let d = s;
+  for (const dice of [[1, 3, 5], [2, 4, 6], [2, 3, 5]]) d = L.applyThrow(d, 'child', roll(dice), SETTINGS).state;
+  assert.equal(d.phase, 'parent'); assert.equal(d.match.round, 2); assert.deepEqual(d.log, []);
+  // 子が目なしで親に役があれば親の勝ち。親が目なしで子がヒフミなら親の勝ち(×2)
+  let p = L.startMatch(L.createState(), 'kid1');
+  p = L.applyThrow(p, 'parent', roll([4, 4, 6]), SETTINGS).state;
+  for (const dice of [[1, 3, 5], [2, 4, 6], [2, 3, 5]]) p = L.applyThrow(p, 'child', roll(dice), SETTINGS).state;
+  assert.equal(p.phase, 'result'); assert.equal(p.result.winner, 'parent'); assert.equal(p.result.mult, 1);
+  let h = L.startMatch(L.createState(), 'kid1');
+  for (const dice of [[1, 3, 5], [2, 4, 6], [2, 3, 5]]) h = L.applyThrow(h, 'parent', roll(dice), SETTINGS).state;
+  r = L.applyThrow(h, 'child', roll([1, 2, 3]), SETTINGS);
+  assert.equal(r.result.winner, 'parent'); assert.equal(r.result.mult, 2);
 });
 
-test('親が1投目で役 → 子の番。親が役なしの投げは手番が続く', () => {
+test('親が1投目で役 → 子の番。親が2投役なしなら手番が続き、3投目で目なし', () => {
   let s = L.startMatch(L.createState(), 'kid1');
   let r = L.applyThrow(s, 'parent', roll([2, 2, 5]), SETTINGS);
   assert.equal(r.state.phase, 'child');
@@ -142,8 +155,8 @@ test('親が1投目で役 → 子の番。親が役なしの投げは手番が�
   assert.equal(s.match.parent.hand, null);
   s = L.applyThrow(s, 'parent', roll([2, 4, 6]), SETTINGS).state;
   r = L.applyThrow(s, 'parent', roll([1, 4, 6]), SETTINGS);
-  assert.equal(r.state.phase, 'parent');
-  assert.equal(r.state.match.parent.hand, null);
+  assert.equal(r.state.phase, 'child');
+  assert.equal(r.state.match.parent.hand.type, 'none');
   assert.equal(r.result, null);
 });
 

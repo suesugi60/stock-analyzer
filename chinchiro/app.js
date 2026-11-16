@@ -83,7 +83,7 @@
     try { hand = shonben ? { ...L.SHONBEN } : L.evaluate(dice); } catch { hand = null; }
     if (!hand && !shonben && remaining === 0) hand = { ...L.NONE };
     const reach = params.get('reach'); // デモだけ: リーチの強さを固定(0〜3)
-    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining, forceReach: reach === null ? undefined : Number(reach) });
+    stage.play({ dice, seed, shonben, hand }, { thrower: { name: 'デモ', char: 'momotaro', color: '#ff4d4d' }, remaining, reduced: QUICK, forceReach: reach === null ? undefined : Number(reach) });
     if (params.get('skip') === '1') stage.skip();
     window.ChinchiroDemo = { stage }; // デモ画面のコンソールから投げ直せる
     return;
@@ -299,7 +299,7 @@
 
   function sideText(side) {
     if (!side) return ['', ''];
-    if (side.hand) return [side.hand.label + (side.hand.lose ? '' : ` (×${side.hand.mult})`), `${side.throws.length}投目`];
+    if (side.hand) return [side.hand.label + (side.hand.lose || side.hand.type === 'none' ? '' : ` (×${side.hand.mult})`), `${side.throws.length}投目`];
     if (side.throws.length) return [Number.isFinite(L.MAX_THROWS) ? `目なし… あと${L.MAX_THROWS - side.throws.length}投` : '目なし… 振り直し', `${side.throws.length}投目`];
     return ['', ''];
   }
@@ -367,8 +367,8 @@
       let status = '';
       let drink = '';
       if (st.phase === 'lobby') status = Object.keys(room.queue || {}).length ? (readonly ? '次の対決を待っています' : '「対決スタート」で先頭の人と対決') : '挑戦者を待っています';
-      else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length + 1}投目)`;
-      else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length + 1}投目)`;
+      else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length + 1}/${L.MAX_THROWS}投)`;
+      else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length + 1}/${L.MAX_THROWS}投)`;
       else if (st.phase === 'result' && st.result) {
         const res = st.result;
         center = `<div class="vs">${res.winner === 'draw' ? '引き分け' : `×${res.mult}`}</div>`;
