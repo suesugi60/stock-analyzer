@@ -266,6 +266,31 @@ h2::before { content: '▶ '; color: var(--red); }
 .stage .intro.go .start-text { animation: start-pop .45s cubic-bezier(.2,1.6,.5,1) both; }
 @keyframes start-pop { from { transform: translateX(-50%) scale(0) rotate(-6deg); } to { transform: translateX(-50%) scale(1); } }
 
+/* ---- 結果シーン ---- */
+.stage .result-scene { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr auto 1fr; grid-template-rows: auto 1fr auto auto; align-items: center; gap: 2px 8px; padding: 6px 14px; }
+.stage .result-scene .headline { grid-column: 1 / -1; text-align: center; font-size: 2.3rem; font-weight: 900; color: var(--yellow); -webkit-text-stroke: 6px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy); transform: scale(0); white-space: nowrap; }
+.stage .result-scene.show-head .headline { animation: start-pop2 .45s cubic-bezier(.2,1.6,.5,1) both; }
+@keyframes start-pop2 { from { transform: scale(0) rotate(-6deg); } to { transform: scale(1); } }
+.stage .result-scene .fighter-card { position: relative; transition: opacity .3s, filter .3s, transform .3s; min-width: 150px; }
+.stage .result-scene .fighter-card .avatar { width: 64px; height: 64px; }
+.stage .result-scene .fighter-card .dice-row { margin-top: 2px; }
+.stage .result-scene .fighter-card .dice-row .mdice { width: 24px; height: 24px; }
+.stage .result-scene .fighter-card .dice-row .mdice i { width: 5px; height: 5px; }
+.stage .result-scene .fighter-card .hand-label { font-style: normal; font-weight: 900; font-size: 1.1rem; color: var(--red); }
+.stage .result-scene .fighter-card.win { transform: scale(1.08); box-shadow: 0 0 0 5px var(--yellow), 6px 6px 0 var(--navy); }
+.stage .result-scene .fighter-card.lose { opacity: .55; filter: grayscale(.6); transform: scale(.92); }
+.stage .result-scene .win-badge { position: absolute; top: -16px; right: -14px; background: var(--red); color: #fff; font-weight: 900; font-size: 1rem; padding: 4px 12px; border: 3px solid var(--navy); border-radius: 999px; transform: rotate(10deg); box-shadow: 3px 3px 0 var(--navy); animation: vs-slam .4s cubic-bezier(.2,1.6,.5,1) both; }
+.stage .result-scene .judge { font-size: 2.6rem; font-weight: 900; color: #fff; -webkit-text-stroke: 6px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy); }
+.stage .result-scene .why { grid-column: 1 / -1; text-align: center; font-size: 1.05rem; font-weight: 900; color: #fff; -webkit-text-stroke: 4px var(--navy); paint-order: stroke fill; text-shadow: 0 3px 0 var(--navy); white-space: nowrap; opacity: 0; }
+.stage .result-scene .pay { grid-column: 1 / -1; text-align: center; font-size: 1.15rem; font-weight: 900; color: var(--yellow); -webkit-text-stroke: 4px var(--navy); paint-order: stroke fill; text-shadow: 0 3px 0 var(--navy); white-space: nowrap; opacity: 0; }
+.stage .result-scene.show-head .why { opacity: 1; transition: opacity .3s; }
+.stage .result-scene.show-pay .pay { opacity: 1; animation: start-pop2 .4s cubic-bezier(.2,1.6,.5,1) both; }
+.stage .result-scene.draw .judge { color: #d7d9e6; }
+/* アリーナの結果表示(大きく、理由と支払いも) */
+.arena .center .win-name { font-size: 1.7rem; font-weight: 900; color: var(--red); -webkit-text-stroke: 4px var(--navy); paint-order: stroke fill; text-shadow: 0 3px 0 var(--navy); line-height: 1.2; overflow-wrap: anywhere; }
+.arena .center .why { font-size: .95rem; font-weight: 900; color: var(--navy); margin-top: 4px; }
+.arena.compact .center .win-name { font-size: 1.25rem; }
+
 /* ---- 親機・表示専用 ---- */
 .screen.wide { max-width: 1200px; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }

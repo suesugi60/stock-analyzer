@@ -152,6 +152,7 @@ const ChinchiroLogic = (() => {
       } else {
         const verdict = judge(s.match.parent.hand, hand);
         if (verdict.winner === 'draw') {
+          s.match.lastDraw = { parent: s.match.parent.hand, child: hand }; // 引き分けの結果シーン用
           s.match.round += 1;
           s.match.parent = emptySide();
           s.match.child = emptySide();

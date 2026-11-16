@@ -114,7 +114,8 @@
       room = r ? { ...r, state: L.normalizeState(r.state) } : r;
       const intro = room ? maybePlayIntro() : false;     // 対決スタートの登場シーン
       const started = room ? maybePlayThrow() : false; // 新しい投げは演出が終わるまで画面を更新しない
-      if (!intro && !started && !playing) shown = room;
+      const result = room ? maybePlayResult() : false; // 決着・引き分けの結果シーン
+      if (!intro && !started && !result && !playing) shown = room;
       render();
     });
   }
@@ -377,12 +378,10 @@
       else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length + 1}/${L.MAX_THROWS}投)`;
       else if (st.phase === 'result' && st.result) {
         const res = st.result;
-        center = `<div class="vs">${res.winner === 'draw' ? '引き分け' : `×${res.mult}`}</div>`;
-        status = res.winner === 'parent' ? `${settings.hostName || '配信者'} の勝ち!` : res.winner === 'child' ? `${childName} さんの勝ち!` : 'もう一度!';
-        if (settings.mode !== 'points' && res.winner !== 'draw') {
-          const loser = res.winner === 'parent' ? childName : (settings.hostName || '配信者');
-          drink = `${loser} さんが飲む: ${unitLabel(settings)} × ${res.mult}`;
-        }
+        const sum = W.resultSummary(res, { host: settings.hostName || '配信者', child: childName }, settings);
+        center = `<div class="win-name">${esc(sum.headline)}</div><div class="why">${esc(sum.why)}</div>`;
+        status = '';
+        drink = sum.pay;
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
       const arenaHtml =
@@ -641,8 +640,42 @@
   let playing = false;
   let pendingThrow = null;
   let pendingIntro = null;
+  let pendingResult = null;
+  let resultKey = null;   // 結果シーンを出した state.seq
   let introKey = null;    // 登場シーンを出した対戦(childUid:開始時の seq)
   let introInit = false;
+  /** 表示用の名前(非表示の人は ？？？)。 */
+  function displayName(uid, players, fallback) {
+    const p = (players || {})[uid];
+    return p ? (p.hidden ? '？？？' : (p.name || fallback)) : fallback;
+  }
+  /** 決着(phase=result)か引き分けの再戦開始なら結果シーンを予約する。途中から開いた端末は出さない。 */
+  function maybePlayResult() {
+    const st = room.state;
+    const m = st && st.match;
+    const settings = room.settings || {};
+    const players = room.players || {};
+    const finished = !!(st.phase === 'result' && st.result && m);
+    const drawn = !!(m && st.phase === 'parent' && m.round > 1 && m.parent.throws.length === 0 && m.lastDraw);
+    const key = finished || drawn ? `${st.seq}` : null;
+    if (resultKey === null) { resultKey = key || '0'; return false; }
+    if (!key || key === resultKey) return false;
+    resultKey = key;
+    const hostName = settings.hostName || '配信者';
+    const childName = displayName(m.childUid, players, 'リスナー');
+    const result = finished ? st.result : { winner: 'draw', mult: 0, parentHand: m.lastDraw.parent, childHand: m.lastDraw.child };
+    const sum = W.resultSummary(result, { host: hostName, child: childName }, settings);
+    const side = (s, hand) => ({ handLabel: hand ? hand.label : (s.throws.length ? '目なし' : ''), diceHtml: s.throws.length ? W.diceHtml(s.throws[s.throws.length - 1].dice) : '' });
+    const childP = players[m.childUid];
+    pendingResult = {
+      ...sum, winner: result.winner,
+      parent: { name: hostName, char: settings.hostChar, color: '#ff4d4d', ...side(m.parent, result.parentHand) },
+      child: { name: childName, char: childP && validChar(childP.char) ? childP.char : 'binbo', color: colorFor(m.childUid), ...side(m.child, result.childHand) },
+    };
+    if (drawn) { pendingResult.parent.diceHtml = ''; pendingResult.child.diceHtml = ''; pendingResult.parent.handLabel = result.parentHand ? result.parentHand.label : ''; pendingResult.child.handLabel = result.childHand ? result.childHand.label : ''; }
+    runPlayback();
+    return true;
+  }
   /** 新しい対戦が始まった(親の1投目の前)なら登場シーンを予約する。途中から開いた端末は出さない。 */
   function maybePlayIntro() {
     const st = room.state;
@@ -683,18 +716,23 @@
     if (playing) { stage.skip(); return; } // 新しい投げが来たら今のを飛ばして次へ
     playing = true;
     renderControlsOnly();
-    while (pendingIntro || pendingThrow) {
+    while (pendingIntro || pendingThrow || pendingResult) {
+      $('stage-overlay').hidden = false;
       if (pendingIntro) {
         const i = pendingIntro;
         pendingIntro = null;
-        $('stage-overlay').hidden = false;
         try { await stage.playIntro(i.parent, i.child, { reduced: QUICK }); } catch (e) { console.warn('登場シーンに失敗', e); }
         continue;
       }
-      const t = pendingThrow;
-      pendingThrow = null;
-      $('stage-overlay').hidden = false;
-      try { await stage.play(t.throwObj, { thrower: t.thrower, remaining: t.remaining, reduced: QUICK }); } catch (e) { console.warn('演出に失敗', e); }
+      if (pendingThrow) {
+        const t = pendingThrow;
+        pendingThrow = null;
+        try { await stage.play(t.throwObj, { thrower: t.thrower, remaining: t.remaining, reduced: QUICK }); } catch (e) { console.warn('演出に失敗', e); }
+        continue;
+      }
+      const r = pendingResult;
+      pendingResult = null;
+      try { await stage.playResult(r, { reduced: QUICK }); } catch (e) { console.warn('結果シーンに失敗', e); }
     }
     $('stage-overlay').hidden = true;
     playing = false;

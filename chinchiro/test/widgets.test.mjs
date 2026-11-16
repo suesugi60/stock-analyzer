@@ -51,3 +51,35 @@ test('logHtml: 自分の行に mine、非表示の人は？？？、点は親か
   assert.ok(W.logHtml([], {}).includes('まだ対戦がありません'));
   assert.ok(W.logHtml(undefined, {}).includes('まだ対戦がありません'));
 });
+
+test('resultSummary: 誰がどうやって勝ったかを文で返す(見出し・理由・支払い)', () => {
+  const H = (type, value, label, mult, lose) => ({ type, value, label, mult, lose });
+  const names = { host: 'おやま', child: 'うさ' };
+  const pts = { mode: 'points', unit: 10 };
+  // 親 6の目 vs 子 ヒフミ → 親の勝ち ×2
+  let r = W.resultSummary({ winner: 'parent', mult: 2, parentHand: H('me', 6, '6の目', 1, false), childHand: H('hifumi', 0, 'ヒフミ', 1, true) }, names, pts);
+  assert.equal(r.headline, 'おやま の勝ち!');
+  assert.ok(r.why.includes('ヒフミ') && r.why.includes('2倍'), r.why);
+  assert.equal(r.pay, 'うさ → おやま に 20点');
+  // 親 2の目 vs 子 4ゾロ → 子の勝ち ×3(強い役が勝つ)
+  r = W.resultSummary({ winner: 'child', mult: 3, parentHand: H('me', 2, '2の目', 1, false), childHand: H('zoro', 4, '4ゾロ', 3, false) }, names, pts);
+  assert.equal(r.headline, 'うさ の勝ち!');
+  assert.equal(r.why, '4ゾロ(×3) ＞ 2の目(×1)');
+  assert.equal(r.pay, 'おやま → うさ に 30点');
+  // 親がションベンで子は振らず
+  r = W.resultSummary({ winner: 'child', mult: 1, parentHand: H('shonben', 0, 'ションベン', 1, true), childHand: null }, names, pts);
+  assert.ok(r.why.includes('ションベン') && r.why.includes('振らず'), r.why);
+  // 飲み・両方
+  r = W.resultSummary({ winner: 'parent', mult: 2, parentHand: H('shigoro', 0, 'シゴロ', 2, false), childHand: H('me', 5, '5の目', 1, false) }, names, { mode: 'drink', drinkUnit: 'sip' });
+  assert.equal(r.pay, 'うさ が 1口 × 2 飲む');
+  r = W.resultSummary({ winner: 'parent', mult: 2, parentHand: H('shigoro', 0, 'シゴロ', 2, false), childHand: H('me', 5, '5の目', 1, false) }, names, { mode: 'both', unit: 20, drinkUnit: 'half' });
+  assert.equal(r.pay, 'うさ → おやま に 40点 ・ うさ が 半分 × 2 飲む');
+  assert.equal(r.why, 'シゴロ(×2) ＞ 5の目(×1)');
+  // 目なし同士は引き分け
+  r = W.resultSummary({ winner: 'draw', mult: 0, parentHand: H('none', 0, '目なし', 1, false), childHand: H('none', 0, '目なし', 1, false) }, names, pts);
+  assert.equal(r.headline, '引き分け! もう一度');
+  assert.equal(r.why, '目なし 同士'); assert.equal(r.pay, '');
+  // 名前は呼び出し側で伏せる前提(そのまま使う)。HTML には入れないので文字列のまま
+  r = W.resultSummary({ winner: 'child', mult: 1, parentHand: H('none', 0, '目なし', 1, false), childHand: H('me', 1, '1の目', 1, false) }, { host: '親', child: '？？？' }, pts);
+  assert.equal(r.headline, '？？？ の勝ち!'); assert.equal(r.why, '1の目(×1) ＞ 目なし');
+});
