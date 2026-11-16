@@ -5,7 +5,16 @@ const ChinchiroLogic = (() => {
 
   const DRINK_UNITS = { sip: { label: '1口' }, half: { label: '半分' }, glass: { label: '1杯' } };
   const POINT_UNITS = [10, 20, 50];
+  const START_POINTS = [50, 100, 300, 1000];
+  const DEFAULT_START_POINTS = 100;
+  const LOG_MAX = 30; // 対戦の記録(state.log)に残す件数
   const SHONBEN_RATE = 0.03;
+
+  /** 部屋設定の持ち点。1〜99999 の整数だけ採用し、それ以外(古い部屋など)は 100。 */
+  function startPoints(settings) {
+    const v = settings && settings.startPoints;
+    return Number.isInteger(v) && v >= 1 && v <= 99999 ? v : DEFAULT_START_POINTS;
+  }
 
   // 負け役(出た瞬間に手番終了)
   const NONE = Object.freeze({ type: 'none', value: 0, mult: 1, label: '目なし', lose: true, rank: 0 });
@@ -77,8 +86,8 @@ const ChinchiroLogic = (() => {
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const emptySide = () => ({ throws: [], hand: null, done: false });
 
-  function createState() {
-    return { seq: 0, phase: 'lobby', match: null, result: null, host: { points: 100, wins: 0, losses: 0, drinks: 0 }, lastThrow: null };
+  function createState(start = DEFAULT_START_POINTS) {
+    return { seq: 0, phase: 'lobby', match: null, result: null, host: { points: start, wins: 0, losses: 0, drinks: 0 }, lastThrow: null, log: [] };
   }
 
   /** 同期先(Firebase)は空配列や null を保存しないので、読み戻した状態の欠けを補う。 */
@@ -91,6 +100,7 @@ const ChinchiroLogic = (() => {
     st.result = st.result && typeof st.result === 'object' ? st.result : null;
     st.host = { ...base.host, ...(st.host || {}) };
     st.lastThrow = st.lastThrow && typeof st.lastThrow === 'object' ? st.lastThrow : null;
+    st.log = Array.isArray(st.log) ? st.log.slice(0, LOG_MAX) : [];
     if (st.match) {
       st.match.round = Number.isInteger(st.match.round) ? st.match.round : 1;
       for (const k of ['parent', 'child']) {
@@ -122,7 +132,7 @@ const ChinchiroLogic = (() => {
   }
 
   /** 1投を反映する。結果が出たら result も返す(state.result にも入る)。 */
-  function applyThrow(state, by, roll, settings, now = Date.now()) {
+  function applyThrow(state, by, roll, settings, now = Date.now(), meta = {}) {
     if (!canThrow(state, by)) throw new Error(`${by} は今振れません`);
     const s = bump(state);
     const side = s.match[by];
@@ -136,7 +146,7 @@ const ChinchiroLogic = (() => {
       side.hand = hand;
       side.done = true;
       if (by === 'parent') {
-        if (hand.lose) result = finish(s, settings);
+        if (hand.lose) result = finish(s, settings, meta, now);
         else s.phase = 'child';
       } else {
         const verdict = judge(s.match.parent.hand, hand);
@@ -146,14 +156,14 @@ const ChinchiroLogic = (() => {
           s.match.child = emptySide();
           s.phase = 'parent';
         } else {
-          result = finish(s, settings);
+          result = finish(s, settings, meta, now);
         }
       }
     }
     return { state: s, result };
   }
 
-  function finish(s, settings) {
+  function finish(s, settings, meta = {}, now = Date.now()) {
     const parentHand = s.match.parent.hand;
     const childHand = s.match.child.hand;
     const verdict = judge(parentHand, childHand);
@@ -165,7 +175,28 @@ const ChinchiroLogic = (() => {
     s.host.drinks += deltas.parent.drinks;
     s.result = result;
     s.phase = 'result';
+    s.log = [logEntry(s, result, meta, now), ...(s.log || [])].slice(0, LOG_MAX);
     return result;
+  }
+
+  /** 対戦の記録 1 件(小さく保つ: 役は type/value/label だけ、出目は各側の最後の投げ)。 */
+  function logEntry(s, result, meta, now) {
+    const small = (h) => (h ? { type: h.type, value: h.value, label: h.label } : null);
+    const last = (side) => (side.throws.length ? { dice: side.throws[side.throws.length - 1].dice.slice(), hand: small(side.hand) } : null);
+    const loser = result.winner === 'parent' ? result.deltas.child : result.deltas.parent;
+    return {
+      n: (s.log && s.log[0] ? s.log[0].n : 0) + 1,
+      at: now,
+      uid: result.childUid,
+      name: typeof meta.childName === 'string' ? meta.childName : '',
+      round: s.match.round,
+      p: last(s.match.parent),
+      c: last(s.match.child),
+      w: result.winner,
+      m: result.mult,
+      pt: result.deltas.parent.points,
+      dr: loser.drinks,
+    };
   }
 
   function nextMatch(state) {
@@ -177,8 +208,8 @@ const ChinchiroLogic = (() => {
   }
 
   return {
-    DRINK_UNITS, POINT_UNITS, SHONBEN_RATE, MAX_THROWS, NONE, SHONBEN, HIFUMI,
-    evaluate, penaltyMult, judge, resultDeltas, rollDice,
+    DRINK_UNITS, POINT_UNITS, START_POINTS, DEFAULT_START_POINTS, LOG_MAX, SHONBEN_RATE, MAX_THROWS, NONE, SHONBEN, HIFUMI,
+    evaluate, penaltyMult, judge, resultDeltas, rollDice, startPoints,
     createState, normalizeState, startMatch, canThrow, applyThrow, nextMatch,
   };
 })();
