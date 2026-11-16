@@ -44,9 +44,7 @@
   // 役名のコール: voice/<キー>.mp3(または .m4a)があればその声、無ければ端末の読み上げ。
   // ファイルは起動時に一度だけ調べ、あったものだけ登録する(同じオブジェクトを渡すので後から増やせる)。
   const voiceFiles = {};
-  const sounds = ChinchiroAnim.createSounds({ voiceFiles });
-  sounds.setMuted(store.get(KEY_MUTED) === true);
-  (async () => {
+  const voiceReady = (async () => {
     if (typeof fetch !== 'function' || location.protocol === 'file:') return;
     await Promise.all(Object.keys(ChinchiroAnim.VOICE_LINES).map(async (key) => {
       const found = await Promise.all(['mp3', 'm4a'].map(async (ext) => {
@@ -57,6 +55,8 @@
       if (url) voiceFiles[key] = url;
     }));
   })();
+  const sounds = ChinchiroAnim.createSounds({ voiceFiles, voiceReady });
+  sounds.setMuted(store.get(KEY_MUTED) === true);
   const stage = ChinchiroAnim.createDiceStage($('stage'), sounds);
 
   function show(id) {

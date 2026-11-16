@@ -1099,3 +1099,37 @@ test('リーチ: quick=1 と reach=0 ではリーチなし(.cutin が出ない)'
   assert.deepEqual(b.errors, []);
   await b.context.close();
 });
+
+// ---------- 結果の派手さ ----------
+test('派手さ: ピンゾロは金の光線・集中線・画面全体の金フラッシュ・粒子 60 個以上', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=0');
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await page.locator('#stage .fx-layer .rays.gold').count(), '光線');
+  assert.ok(await page.locator('#stage .fx-layer .impact').count(), '集中線');
+  assert.ok(await page.locator('#stage.bigwin-gold').count(), '画面全体の金フラッシュ');
+  assert.ok((await page.locator('#stage .fx-layer .particle').count()) >= 60, '粒子');
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('派手さ: ゾロ目は虹の光線、シゴロは青の光線', async () => {
+  const a = await newPage(null, 'index.html?demo=1&dice=6,6,6&seed=7&reach=0');
+  await a.page.locator('#stage .result-stamp[data-hand="zoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await a.page.locator('#stage .fx-layer .rays.rainbow').count());
+  assert.ok(await a.page.locator('#stage .fx-layer .impact').count());
+  await a.context.close();
+  const b = await newPage(null, 'index.html?demo=1&dice=4,5,6&seed=7&reach=0');
+  await b.page.locator('#stage .result-stamp[data-hand="shigoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok(await b.page.locator('#stage .fx-layer .rays.blue').count());
+  await b.context.close();
+});
+
+test('派手さ: 投げ込みで光の筋が走り、砂煙は 8 個以上。リーチが外れた目はしょんぼり表示', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=3,3,5&seed=5&reach=1');
+  await page.locator('#stage .fx-layer .streak').waitFor({ state: 'attached', timeout: 10000 });
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 12000 });
+  assert.ok((await page.locator('#stage .fx-layer .dust').count()) >= 8, '砂煙');
+  assert.equal(await page.locator('#stage .result-stamp[data-fail="1"]').count(), 1, 'リーチ外れ');
+  assert.deepEqual(errors, []);
+  await context.close();
+});

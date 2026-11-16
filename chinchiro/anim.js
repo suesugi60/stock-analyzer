@@ -136,12 +136,15 @@ const ChinchiroAnim = (() => {
   const SILENT_WAV = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 
   /**
-   * @param {{voiceFiles?: Record<string,string>}} [opts]
+   * @param {{voiceFiles?: Record<string,string>, voiceReady?: Promise<any>}} [opts]
    *   voiceFiles: VOICE_LINES のキー → 音声ファイルURL。あればそれを再生し、無いキーは端末の読み上げに切り替える。
    *   (後から同じオブジェクトに追加しても反映される)
+   *   voiceReady: voiceFiles の調査が終わる Promise。最初のコールがこれより早いときは最大 400ms 待つ(ファイルがあるのに読み上げない)。
    */
   function createSounds(opts = {}) {
     const voiceFiles = (opts && opts.voiceFiles) || {};
+    let voiceReady = opts && opts.voiceReady && typeof opts.voiceReady.then === 'function' ? opts.voiceReady : null;
+    if (voiceReady) voiceReady.then(() => { voiceReady = null; }, () => { voiceReady = null; });
     const voiceMissing = new Set();
     let voiceEl = null;      // 音声ファイル再生用に使い回す <audio>(iOS の解錠を保つため1つだけ)
     let voiceText = null;    // 再生に失敗したとき読み上げに切り替える文言
@@ -341,9 +344,14 @@ const ChinchiroAnim = (() => {
        */
       voice(text, key) {
         if (muted || typeof window === 'undefined') return;
-        const url = key && !voiceMissing.has(key) && Object.hasOwn(voiceFiles, key) ? voiceFiles[key] : null;
-        if (url && playFile(url, key, text)) return;
-        speak(text);
+        const go = () => {
+          if (muted) return;
+          const url = key && !voiceMissing.has(key) && Object.hasOwn(voiceFiles, key) ? voiceFiles[key] : null;
+          if (url && playFile(url, key, text)) return;
+          speak(text);
+        };
+        if (voiceReady) Promise.race([voiceReady, new Promise((r) => setTimeout(r, 400))]).then(go, go);
+        else go();
       },
       /** 読み上げに使う声(テスト/設定表示用)。 */
       get voiceName() { const v = chosenVoice(); return v ? v.name : null; },
@@ -419,6 +427,8 @@ const ChinchiroAnim = (() => {
       el.fx.innerHTML = '';
       el.stamp.textContent = '';
       el.stamp.dataset.hand = '';
+      delete el.stamp.dataset.fail;
+      root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
       root.classList.remove('playing', 'reaching');
@@ -519,6 +529,24 @@ const ChinchiroAnim = (() => {
         ], { duration: 420 + rnd() * 200, easing: 'ease-out', fill: 'forwards' });
       }
     }
+    /** 回る光線(強い役の背景)。 */
+    function fxRays(kind) {
+      const r = document.createElement('div'); r.className = `rays ${kind}`; el.fx.appendChild(r);
+      after(() => r.remove(), 1700);
+    }
+    /** 集中線(ドン!)。 */
+    function fxImpact() {
+      const im = document.createElement('div'); im.className = 'impact'; el.fx.appendChild(im);
+      after(() => im.remove(), 700);
+    }
+    /** 投げ込みのとき器の上を走る光の筋。 */
+    function fxStreak() {
+      const st = document.createElement('div'); st.className = 'streak'; el.fx.appendChild(st);
+      st.animate([{ transform: 'translateX(-160px) skewX(-20deg)', opacity: 0 }, { opacity: .9, offset: .4 }, { transform: 'translateX(520px) skewX(-20deg)', opacity: 0 }], { duration: 520, easing: 'ease-in-out', fill: 'forwards' });
+      after(() => st.remove(), 700);
+    }
+    /** 演出中のあと処理(次の投げで reset されたら実行されない)。 */
+    const after = (fn, ms) => { const id = setTimeout(fn, ms); if (running) running.timers.push(id); return id; };
     function fxShake(strong) {
       el.table.classList.remove('shake', 'shake2');
       void el.table.offsetWidth; // アニメを再始動
@@ -565,21 +593,28 @@ const ChinchiroAnim = (() => {
       const { text, key } = stampFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand, opts.remaining ?? 0);
       el.stamp.textContent = text;
       el.stamp.dataset.hand = key;
+      const fail = plan.level >= 1 && !plan.pinch && (key === 'me' || key === 'none'); // リーチが外れた
+      if (fail) el.stamp.dataset.fail = '1'; else delete el.stamp.dataset.fail;
       const vkey = voiceKeyFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand);
       setTimeout(() => sounds.voice(VOICE_LINES[vkey], vkey), skipped ? 0 : (key === 'pinzoro' || key === 'zoro' ? 250 : 120));
       if (skipped) return;
       const colors = ['#ffd93d', '#ff4d4d', '#2ec27e', '#3b8cff', '#b56cff', '#fff'];
       switch (key) {
-        case 'pinzoro': fxFlash('gold', 1100); fxRing('gold'); fxParticles(rnd, 44, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); fxShake(true); sounds.boom(); sounds.chime('gold'); break;
-        case 'zoro': fxFlash('white', 500); fxRing('rainbow'); fxParticles(rnd, 24, colors, true); fxShake(true); sounds.boom(); sounds.chime('rainbow'); break;
-        case 'shigoro': fxFlash('blue', 700); fxRing('blue'); fxParticles(rnd, 20, ['#8ed0ff', '#fff', '#3b8cff'], false); fxShake(false); sounds.chime('blue'); break;
+        case 'pinzoro':
+          fxRays('gold'); fxImpact(); fxFlash('gold', 1100); after(() => fxFlash('gold', 900), 350); fxRing('gold');
+          fxParticles(rnd, 60, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); fxShake(true);
+          root.classList.add('bigwin-gold'); after(() => root.classList.remove('bigwin-gold'), 950);
+          sounds.boom(); sounds.chime('gold'); after(() => sounds.chime('gold'), 400); break;
+        case 'zoro': fxRays('rainbow'); fxImpact(); fxFlash('white', 500); fxRing('rainbow'); fxParticles(rnd, 36, colors, true); fxShake(true); sounds.boom(); sounds.chime('rainbow'); break;
+        case 'shigoro': fxRays('blue'); fxFlash('blue', 700); fxRing('blue'); fxParticles(rnd, 24, ['#8ed0ff', '#fff', '#3b8cff'], false); fxShake(false); sounds.chime('blue'); break;
         case 'me': {
           const d = throwObj.dice; const odd = d[0] === d[1] ? 2 : d[0] === d[2] ? 1 : 0;
           if (dies[odd]) dies[odd].cube.classList.add('pulse');
           fxParticles(rnd, 8, ['#fff', '#ffd93d'], false);
-          sounds.roll(); break;
+          if (fail) sounds.sad(); else sounds.roll();
+          break;
         }
-        case 'none': sounds.thud(); break;
+        case 'none': if (fail) sounds.sad(); else sounds.thud(); break;
         case 'hifumi': el.table.classList.add('dark'); fxFlash('white', 120); fxShake(true); sounds.thunder(); break;
         case 'shonben': fxShake(false); sounds.thud(); break;
         default: break;
@@ -660,7 +695,7 @@ const ChinchiroAnim = (() => {
       const quick = reduced || run.skipped;
       const D = quick ? 1 : 1500;
       const finished = [];
-      if (!quick) { sounds.whoosh(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
+      if (!quick) { sounds.whoosh(); fxStreak(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
       // 投げる順: 最後の1個(decider)以外を先に(0 / 90ms)、decider は 180ms
       const order = [0, 1, 2].filter((i) => i !== decider).concat(decider >= 0 ? [decider] : []);
       const delayOf = (i) => (quick ? 0 : order.indexOf(i) * 90);
