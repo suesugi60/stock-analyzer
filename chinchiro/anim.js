@@ -55,15 +55,52 @@ const ChinchiroAnim = (() => {
       const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
       o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
     }
+    function lowNoise(dur, vol) {
+      const c = ac(); if (!c || muted) return;
+      const len = Math.floor(c.sampleRate * dur);
+      const buf = c.createBuffer(1, len, c.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.5);
+      const src = c.createBufferSource(); src.buffer = buf;
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220;
+      const g = c.createGain(); g.gain.value = vol;
+      src.connect(lp).connect(g).connect(c.destination); src.start();
+    }
+    function sweep(from, to, dur, vol) {
+      const c = ac(); if (!c || muted) return;
+      const t = c.currentTime;
+      const o = c.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(from, t); o.frequency.exponentialRampToValueAtTime(to, t + dur);
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+      const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      o.connect(lp).connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    }
     return {
       /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
       unlock() { const c = ac(); if (c) unlocked = true; },
       get unlocked() { return unlocked; },
-      clack(vol = 1) { noise(0.06, 2000 + Math.random() * 800, 1.5, 0.55 * vol); tone(2500 + Math.random() * 500, 0.09, 0.16 * vol); },
-      rattle(ms = 600) { const n = Math.floor(ms / 70); for (let i = 0; i < n; i++) setTimeout(() => noise(0.03, 3000, 2, 0.22), i * 70 + Math.random() * 25); },
+      /** 着地: 高い「カッ」+ 低い「ドッ」。 */
+      clack(vol = 1) { noise(0.07, 1800 + Math.random() * 900, 1.2, 0.8 * vol); tone(2400 + Math.random() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
+      rattle(ms = 600) { const n = Math.floor(ms / 60); for (let i = 0; i < n; i++) setTimeout(() => { noise(0.03, 2600 + Math.random() * 900, 2, 0.3); }, i * 60 + Math.random() * 20); },
+      /** 投げ込みの風切り。 */
+      whoosh() { sweep(180, 900, 0.35, 0.25); noise(0.3, 1200, 0.6, 0.25); },
+      /** 転がっている間のゴロゴロ。 */
+      rumble(ms = 900) { const n = Math.floor(ms / 45); for (let i = 0; i < n; i++) setTimeout(() => lowNoise(0.05, 0.35 * (1 - i / n)), i * 45); },
+      /** 強い役の「ドン!」。 */
+      boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
+      /** 役名を声で読み上げる(端末の読み上げ機能。無ければ何もしない)。 */
+      voice(text) {
+        if (muted || typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+        try {
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(text);
+          u.lang = 'ja-JP'; u.rate = 1.05; u.pitch = 1.15; u.volume = 1;
+          window.speechSynthesis.speak(u);
+        } catch { /* 読み上げ不可 */ }
+      },
       chime(kind) {
-        const seq = kind === 'gold' ? [880, 1108, 1318, 1760, 2217] : kind === 'rainbow' ? [659, 784, 988, 1175] : [523, 659, 784];
-        seq.forEach((f, i) => setTimeout(() => tone(f, 0.5, 0.18, 'sine'), i * 90));
+        const seq = kind === 'gold' ? [880, 1108, 1318, 1760, 2217, 2637] : kind === 'rainbow' ? [659, 784, 988, 1175, 1568] : [523, 659, 784, 1047];
+        seq.forEach((f, i) => { setTimeout(() => { tone(f, 0.6, 0.22, 'sine'); tone(f * 2, 0.3, 0.06, 'triangle'); }, i * 85); });
       },
       thud() { tone(110, 0.3, 0.35, 'sine'); noise(0.12, 300, 0.8, 0.35); },
       thunder() { noise(0.7, 140, 0.4, 0.8); tone(55, 0.7, 0.45, 'sawtooth'); },
@@ -218,6 +255,28 @@ const ChinchiroAnim = (() => {
       return { wrapF, cubeF, shadowF };
     }
 
+    /** 着地の砂煙。 */
+    function fxDust(x, y, rnd, n = 5) {
+      for (let i = 0; i < n; i++) {
+        const d = document.createElement('i');
+        d.className = 'dust';
+        el.fx.appendChild(d);
+        const a = Math.PI + rnd() * Math.PI; // 上方向へ
+        const dist = 14 + rnd() * 26;
+        d.style.left = `${240 + x}px`; d.style.top = `${160 + y + 14}px`;
+        d.animate([
+          { transform: 'translate(-50%,-50%) scale(.4)', opacity: .8 },
+          { transform: `translate(calc(-50% + ${Math.cos(a) * dist}px), calc(-50% + ${Math.sin(a) * dist * 0.5 - 6}px)) scale(1.6)`, opacity: 0 },
+        ], { duration: 420 + rnd() * 200, easing: 'ease-out', fill: 'forwards' });
+      }
+    }
+    function fxShake(strong) {
+      el.table.classList.remove('shake', 'shake2');
+      void el.table.offsetWidth; // アニメを再始動
+      el.table.classList.add(strong ? 'shake2' : 'shake');
+      setTimeout(() => el.table.classList.remove('shake', 'shake2'), 260);
+    }
+
     function fxFlash(kind, ms = 700) {
       const f = document.createElement('div'); f.className = `flash ${kind}`; el.fx.appendChild(f);
       f.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, fill: 'forwards' });
@@ -257,20 +316,23 @@ const ChinchiroAnim = (() => {
       const { text, key } = stampFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand, opts.remaining ?? 0);
       el.stamp.textContent = text;
       el.stamp.dataset.hand = key;
+      const say = { pinzoro: 'ピンゾロ！', zoro: `${throwObj.hand && throwObj.hand.value}ゾロ！`, shigoro: 'シゴロ！', me: `${throwObj.hand && throwObj.hand.value}の目`, none: '目なし', hifumi: 'ヒフミ…', shonben: 'ションベン！' };
+      if (say[key]) setTimeout(() => sounds.voice(say[key]), skipped ? 0 : (key === 'pinzoro' || key === 'zoro' ? 250 : 120));
       if (skipped) return;
       const colors = ['#ffd93d', '#ff4d4d', '#2ec27e', '#3b8cff', '#b56cff', '#fff'];
       switch (key) {
-        case 'pinzoro': fxFlash('gold', 900); fxParticles(rnd, 28, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); sounds.chime('gold'); break;
-        case 'zoro': fxRing('rainbow'); fxParticles(rnd, 14, colors, true); sounds.chime('rainbow'); break;
-        case 'shigoro': fxFlash('blue', 600); fxParticles(rnd, 14, ['#8ed0ff', '#fff', '#3b8cff'], false); sounds.chime('blue'); break;
+        case 'pinzoro': fxFlash('gold', 1100); fxRing('gold'); fxParticles(rnd, 44, ['#ffd93d', '#ffe978', '#fff', '#ff9f1c'], true); fxShake(true); sounds.boom(); sounds.chime('gold'); break;
+        case 'zoro': fxFlash('white', 500); fxRing('rainbow'); fxParticles(rnd, 24, colors, true); fxShake(true); sounds.boom(); sounds.chime('rainbow'); break;
+        case 'shigoro': fxFlash('blue', 700); fxRing('blue'); fxParticles(rnd, 20, ['#8ed0ff', '#fff', '#3b8cff'], false); fxShake(false); sounds.chime('blue'); break;
         case 'me': {
           const d = throwObj.dice; const odd = d[0] === d[1] ? 2 : d[0] === d[2] ? 1 : 0;
           if (dies[odd]) dies[odd].cube.classList.add('pulse');
+          fxParticles(rnd, 8, ['#fff', '#ffd93d'], false);
           sounds.roll(); break;
         }
         case 'none': sounds.thud(); break;
-        case 'hifumi': el.table.classList.add('dark'); sounds.thunder(); break;
-        case 'shonben': sounds.thud(); break;
+        case 'hifumi': el.table.classList.add('dark'); fxFlash('white', 120); fxShake(true); sounds.thunder(); break;
+        case 'shonben': fxShake(false); sounds.thud(); break;
         default: break;
       }
     }
@@ -316,8 +378,9 @@ const ChinchiroAnim = (() => {
       // 投げ込み〜跳ねる〜止まる(飛ばされていたら一瞬で終える)
       const quick = reduced || run.skipped;
       const D = quick ? 1 : 1500;
-      const decider = throwObj.hand && (throwObj.hand.type === 'me' || throwObj.hand.type === 'zoro' || throwObj.hand.type === 'pinzoro') && outIdx < 0 ? 2 : -1;
+      const decider = outIdx < 0 ? 2 : -1; // 最後の1個は毎回スロー+ズームで溜める
       const finished = [];
+      if (!quick) { sounds.whoosh(); run.timers.push(setTimeout(() => sounds.rumble(900), 380)); }
       dies.forEach((d, i) => {
         const out = i === outIdx;
         const path = pathFor(rnd, i, spots[i], out);
@@ -330,15 +393,17 @@ const ChinchiroAnim = (() => {
         if (!quick) {
           for (const k of path) {
             if (k.h === 0 && k.off > 0 && k.off < 1) run.timers.push(setTimeout(() => {
-              sounds.clack(1 - k.off * 0.6);
-              if (k.off < 0.5) { el.table.classList.add('shake'); setTimeout(() => el.table.classList.remove('shake'), 200); }
+              sounds.clack(1 - k.off * 0.5);
+              fxDust(k.p.x, k.p.y, rnd, k.off < 0.5 ? 6 : 4);
+              fxShake(k.off < 0.5);
             }, delay + D * k.off));
           }
           if (out) run.timers.push(setTimeout(() => { d.wrap.classList.add('out'); d.cube.classList.add('out'); el.fx.appendChild(d.wrap); }, delay + D * 0.42));
           if (i === decider) run.timers.push(setTimeout(() => {
             if (run.skipped) return;
-            for (const a of [a1, a2, a3]) a.playbackRate = 0.4;
+            for (const a of [a1, a2, a3]) a.playbackRate = 0.35;
             el.table.classList.add('zoom');
+            sounds.rattle(700);
           }, delay + D * 0.68));
         }
       });
@@ -353,6 +418,7 @@ const ChinchiroAnim = (() => {
 
     function skip() {
       if (!running) return;
+      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* なし */ }
       running.skipped = true;
       for (const t of running.timers) clearTimeout(t);
       running.timers = [];

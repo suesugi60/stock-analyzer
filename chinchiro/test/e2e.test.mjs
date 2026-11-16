@@ -696,3 +696,59 @@ test('描画: 内容が変わらない更新では対戦の場を作り直さな
   assert.equal(await handle.evaluate((e) => e.isConnected), true);
   await context.close();
 });
+
+// ---------- 音・先バレ防止・派手さ ----------
+test('役が出たら声で読み上げる(読み上げ機能に渡す文言)', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  context.setDefaultTimeout(T.timeout);
+  await context.addInitScript(() => { window.__spoken = []; window.speechSynthesis.speak = (u) => { window.__spoken.push(u.text); }; });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?demo=1&dice=1,1,1&seed=3&skip=1`);
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  await page.waitForTimeout(600);
+  const spoken = await page.evaluate(() => window.__spoken);
+  assert.ok(spoken.some((t) => t.includes('ピンゾロ')), JSON.stringify(spoken));
+  await context.close();
+});
+
+test('サイコロが止まるまで、役・勝敗・点数は画面に出ない', async () => {
+  // quick なし(本物の時間で動かす)
+  const { page: host, context } = await newPage(null, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code);
+  await kid.locator('#join-name').fill('うさ');
+  await kid.click('#join-challenge');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await host.locator('#stage-overlay:not([hidden])').waitFor({ state: 'attached', ...T });
+  // 親の投げの最中: 役はまだ出ない
+  assert.equal(await host.locator('#screen-host .fighter.host .fhand').innerText(), '');
+  assert.ok(!(await host.locator('#screen-host .arena .center .status').innerText()).includes('うさ さんの番'));
+  await host.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 15000 });
+  assert.ok((await host.locator('#screen-host .fighter.host .fhand').innerText()).includes('2の目'));
+  // 子の投げの最中: 勝敗・点数はまだ出ない
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await kid.locator('#stage-overlay:not([hidden]) .cube').first().waitFor({ state: 'visible', ...T });
+  assert.ok(!(await kid.locator('#my-status').innerText()).includes('勝ち'));
+  assert.ok((await kid.locator('#my-record').innerText()).includes('100'));
+  assert.ok(!(await host.locator('#screen-host .arena .center').innerText()).includes('×3'));
+  assert.ok((await host.locator('#ranking').innerText()).includes('100点'));
+  assert.equal(await host.locator('#confetti').evaluate((e) => e.hidden), true);
+  await kid.locator('#stage-overlay[hidden]').waitFor({ state: 'attached', timeout: 15000 });
+  await kid.locator('#my-status').filter({ hasText: '勝ち' }).waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#screen-host .arena .center').innerText()).includes('×3'));
+  await host.locator('#confetti:not([hidden])').waitFor({ state: 'attached', ...T });
+  await context.close();
+});
+
+test('派手さ: 着地のたびに砂煙が出て、最後の1個はズームする', async () => {
+  const { page, context } = await newPage(null, 'index.html?demo=1&dice=2,2,5&seed=7');
+  await page.locator('#stage .table.zoom').waitFor({ state: 'attached', timeout: 10000 });
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 10000 });
+  assert.ok((await page.locator('#stage .fx-layer .dust').count()) >= 6, '砂煙');
+  await context.close();
+});

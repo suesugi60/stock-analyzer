@@ -74,7 +74,8 @@
   // ---------- 接続 ----------
   let backend = null;
   let code = null;       // いまの部屋コード
-  let room = null;       // 同期された部屋データ(rooms/{code})
+  let room = null;       // 同期された部屋データ(rooms/{code})。親機の進行はこれを使う
+  let shown = null;      // 画面に出している部屋データ。サイコロが止まるまで古いまま(先バレ防止)
   let role = null;       // 'host' | 'stage' | 'listener'
   let unsubRoom = null;
 
@@ -86,7 +87,12 @@
   function subscribe(c) {
     if (unsubRoom) unsubRoom();
     code = c;
-    unsubRoom = backend.watch(`rooms/${c}`, (r) => { room = r ? { ...r, state: L.normalizeState(r.state) } : r; render(); });
+    unsubRoom = backend.watch(`rooms/${c}`, (r) => {
+      room = r ? { ...r, state: L.normalizeState(r.state) } : r;
+      const started = room ? maybePlayThrow() : false; // 新しい投げは演出が終わるまで画面を更新しない
+      if (!started && !playing) shown = room;
+      render();
+    });
   }
 
   // ---------- キャラ選択画面(共通) ----------
@@ -293,7 +299,8 @@
   }
 
   function renderBoard(view, readonly) {
-    if (!view.root || !room) return;
+    if (!view.root || !shown) return;
+    const room = shown; // 画面用(演出が終わるまで古い状態)
     const r = view.refs;
     const st = room.state || L.createState();
     const settings = room.settings || {};
@@ -384,7 +391,8 @@
   let childTurnSince = 0;
   let proxyTimer = null;
   function renderHostControls() {
-    if (role !== 'host' || !room) return;
+    if (role !== 'host' || !shown) return;
+    const room = shown;
     const st = room.state || {};
     const hasQueue = Object.keys(room.queue || {}).length > 0;
     const child = st.match && (room.players || {})[st.match.childUid];
@@ -414,7 +422,7 @@
       if (role === 'stage' && stageView.refs.arena) stageView.refs.arena.innerHTML = '<div class="empty-note">この部屋は見つかりません</div>';
       return;
     }
-    maybePlayThrow();
+    if (!shown) shown = room;
     if (role === 'host') hostQueue = hostQueue.then(processActions).catch((e) => console.warn('要求の処理に失敗', e));
     if (role === 'host') { renderBoard(hostView, false); renderHostControls(); }
     if (role === 'stage') renderBoard(stageView, true);
@@ -498,6 +506,8 @@
   }
 
   function renderListener() {
+    if (!shown) return;
+    const room = shown;
     const me = (room.players || {})[backend.uid] || null;
     const st = room.state || {};
     const settings = room.settings || {};
@@ -554,7 +564,7 @@
   let rollReqSeq = 0;
   let hostAbsentSeq = null; // この seq のまま親機が応えない
   async function listenerRoll() {
-    if (rollRequested || !room || !L.canThrow(room.state, 'child') || room.state.match.childUid !== backend.uid) return;
+    if (rollRequested || !room || playing || !L.canThrow(room.state, 'child') || room.state.match.childUid !== backend.uid) return;
     rollRequested = true;
     rollReqSeq = (room.state.lastThrow && room.state.lastThrow.seq) || 0;
     const reqStateSeq = room.state.seq;
@@ -581,8 +591,8 @@
     const st = room.state;
     const lt = st && st.lastThrow;
     const seq = (lt && lt.seq) || 0;
-    if (playedSeq === null) { playedSeq = seq; return; } // 途中から開いた端末は最後の投げを再生しない
-    if (!lt || seq <= playedSeq) return;
+    if (playedSeq === null) { playedSeq = seq; return false; } // 途中から開いた端末は最後の投げを再生しない
+    if (!lt || seq <= playedSeq) return false;
     playedSeq = seq;
     const settings = room.settings || {};
     const child = st.match ? (room.players || {})[st.match.childUid] : null;
@@ -593,6 +603,7 @@
     const remaining = side && side.throws.length ? L.MAX_THROWS - side.throws.length : 0;
     pendingThrow = { throwObj: lt.throw, thrower, remaining };
     runPlayback();
+    return true;
   }
   async function runPlayback() {
     if (playing) { stage.skip(); return; } // 新しい投げが来たら今のを飛ばして次へ
@@ -606,6 +617,7 @@
     }
     $('stage-overlay').hidden = true;
     playing = false;
+    shown = room; // 止まったので最新を見せる
     render();
   }
   function renderControlsOnly() {
