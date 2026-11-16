@@ -111,3 +111,13 @@ test('allocateRoomCode: 既にある部屋のコードは避けて別のコー�
   assert.equal(await a.get(`rooms/${code}`), null);
   a.close(); b.close();
 });
+
+test('explainError: Firebase のエラーを日本語の対処に変換する', () => {
+  const { explainError } = loadSync();
+  assert.equal(explainError({ code: 'auth/admin-restricted-operation' }), '匿名ログインが有効になっていません。Firebase の Authentication →「ログイン方法」→「匿名」を有効にしてください。');
+  assert.equal(explainError({ code: 'auth/unauthorized-domain' }), 'このサイトが Firebase に許可されていません。Authentication →「設定」→「承認済みドメイン」に suesugi60.github.io を追加してください。');
+  assert.equal(explainError({ code: 'auth/network-request-failed' }), 'ネットワークに接続できません。電波の良いところで再読み込みしてください。');
+  assert.equal(explainError({ code: 'PERMISSION_DENIED', message: 'PERMISSION_DENIED: Permission denied' }), '書き込みが拒否されました。Realtime Database の「ルール」に firebase-rules.json の内容を貼って「公開」してください。');
+  assert.equal(explainError(new Error('FIREBASE_CONFIG がありません')), 'FIREBASE_CONFIG がありません');
+  assert.equal(explainError('x'), 'x');
+});

@@ -615,7 +615,7 @@
 
   // ---------- 親機: 対戦の進行(state を書けるのは親機だけ) ----------
   let hostQueue = Promise.resolve();
-  const hostDo = (fn) => { hostQueue = hostQueue.then(fn).catch((e) => { console.warn(e); alert('進行に失敗しました: ' + e.message); }); return hostQueue; };
+  const hostDo = (fn) => { hostQueue = hostQueue.then(fn).catch((e) => { console.warn(e); alert('進行に失敗しました: ' + SY.explainError(e)); }); return hostQueue; };
   const writeState = (st) => backend.set(`rooms/${code}/state`, st);
 
   async function hostStartMatch(uid) {
@@ -663,14 +663,14 @@
       backend = await connect();
     } catch (e) {
       console.warn('接続できません', e);
-      if (ROOM_PARAM) { $('connect-error').textContent = String(e && e.message || e); show('screen-connect-failed'); } // リスナーには設定の話はしない
-      else { $('setup-error').textContent = String(e && e.message || e); show('screen-setup-needed'); }
+      if (ROOM_PARAM) { $('connect-error').textContent = SY.explainError(e); show('screen-connect-failed'); } // リスナーには設定の話はしない
+      else { $('setup-error').textContent = SY.explainError(e); $('setup-headline').textContent = window.FIREBASE_CONFIG ? 'Firebase に接続できませんでした。' : 'まだ Firebase の設定がありません。'; show('screen-setup-needed'); }
       return;
     }
     if (ROOM_PARAM && !ROOM_OK) { show('screen-notfound'); return; }
     if (ROOM_PARAM && IS_STAGE) { enterStage(ROOM_PARAM); return; }
     if (ROOM_PARAM) {
-      try { await enterListenerEntry(ROOM_PARAM); } catch (e) { console.warn(e); $('connect-error').textContent = String(e && e.message || e); show('screen-connect-failed'); }
+      try { await enterListenerEntry(ROOM_PARAM); } catch (e) { console.warn(e); $('connect-error').textContent = SY.explainError(e); show('screen-connect-failed'); }
       return;
     }
     const prev = store.get(KEY_HOST);
@@ -686,7 +686,7 @@
   $('pick-back').addEventListener('click', () => { pickCb = null; show(role === 'listener' ? 'screen-join' : 'screen-host-entry'); });
   $('join-avatar').addEventListener('click', () => openPick(join.char, 'あなたのキャラクター', (id) => { join.char = id; renderJoin(); show('screen-join'); }));
   $('join-name').addEventListener('input', () => { join.name = $('join-name').value; });
-  $('join-challenge').addEventListener('click', () => challenge().catch((e) => alert('参加できませんでした: ' + e.message)));
+  $('join-challenge').addEventListener('click', () => challenge().catch((e) => alert('参加できませんでした: ' + SY.explainError(e))));
   $('join-watch').addEventListener('click', () => enterListener(code));
   $('requeue').addEventListener('click', () => requeue().catch((e) => alert('並べませんでした: ' + e.message)));
   $('leave').addEventListener('click', () => backend.remove(`rooms/${code}/queue/${backend.uid}`));
@@ -696,7 +696,7 @@
     moderate(btn.dataset.act, uid).catch((e) => alert('操作できませんでした: ' + e.message));
   });
   $('host-name').addEventListener('input', () => { setup.name = $('host-name').value; });
-  $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + e.message)));
+  $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + SY.explainError(e))));
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
   document.addEventListener('pointerdown', () => sounds.unlock()); // iOS: 最初のタップで音を使えるようにする
   renderMute();
