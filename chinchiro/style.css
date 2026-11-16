@@ -88,9 +88,6 @@ h2::before { content: '▶ '; color: var(--red); }
 
 /* ---- オーバーレイ・紙吹雪 ---- */
 .overlay { position: fixed; inset: 0; background: rgba(43,45,92,.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; overflow-y: auto; }
-  overflow: hidden; animation: bounce-in .35s cubic-bezier(.2,1.4,.5,1); position: relative; }
-  background: #fff; border: 3px solid var(--navy); border-radius: 16px; padding: 14px 14px; }
-  transform: translateX(-50%) rotate(45deg); }
 .confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 21; }
 .confetti i { position: absolute; top: -12px; width: 10px; height: 14px; border-radius: 2px; animation: fall 2.8s linear forwards; }
 @keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: .8; } }
