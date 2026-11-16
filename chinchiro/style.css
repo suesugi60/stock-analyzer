@@ -132,12 +132,34 @@ h2::before { content: '▶ '; color: var(--red); }
 .stage .spot { position: absolute; left: var(--spot-x, 240px); top: var(--spot-y, 150px); width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%; z-index: 4; pointer-events: none;
   background: radial-gradient(circle, rgba(255,255,220,.5), transparent 70%); animation: spot-breathe .8s ease-in-out infinite alternate; }
 @keyframes spot-breathe { to { transform: scale(1.25); } }
-.stage .cutin { position: absolute; left: 50%; top: 22%; transform: translate(-50%, -50%); z-index: 9; font-size: 3.2rem; font-weight: 900; white-space: nowrap; pointer-events: none;
-  color: #fff; -webkit-text-stroke: 6px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy), 0 0 24px rgba(255,255,255,.55);
+/* カットイン: バッジ(強さ)+ 狙える役 + 何が出ればよいか(誰が見てもわかる) */
+.stage .cutin { position: absolute; left: 50%; top: 24%; transform: translate(-50%, -50%); z-index: 9; display: flex; flex-direction: column; align-items: center; gap: 2px; white-space: nowrap; pointer-events: none;
   animation: cutin-in .35s cubic-bezier(.2,1.5,.5,1), cutin-shake .12s .35s infinite alternate; }
-.stage .cutin.l2 { color: var(--yellow); text-shadow: 0 5px 0 var(--navy), 0 0 30px #ffd93d; }
-.stage .cutin.l3 { color: #ff2d2d; font-size: 3.8rem; -webkit-text-stroke: 7px #2a0000; text-shadow: 0 6px 0 #2a0000, 0 0 34px #ffd93d; animation: cutin-in .35s cubic-bezier(.2,1.5,.5,1), cutin-pulse .22s .35s infinite alternate; }
-.stage .cutin.pinch { color: #e6e8f5; -webkit-text-stroke: 6px #000; text-shadow: 0 5px 0 #000, 0 0 22px #ff2d2d; }
+.stage .cutin .badge { font-size: 1.1rem; font-weight: 900; color: #fff; background: var(--navy); border: 3px solid #fff; border-radius: 999px; padding: 2px 14px; box-shadow: 0 3px 0 rgba(0,0,0,.4); }
+.stage .cutin .main { font-size: 3rem; font-weight: 900; line-height: 1.1; color: #fff; -webkit-text-stroke: 6px var(--navy); paint-order: stroke fill; text-shadow: 0 5px 0 var(--navy), 0 0 24px rgba(255,255,255,.55); }
+.stage .cutin .sub { display: inline-flex; align-items: center; gap: 4px; font-size: 1.05rem; font-weight: 900; color: #fff; -webkit-text-stroke: 3px var(--navy); paint-order: stroke fill; text-shadow: 0 2px 0 var(--navy); }
+.stage .cutin .cdie { display: inline-grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 30px; height: 30px; padding: 3px; box-sizing: border-box; background: #fff; border: 3px solid var(--navy); border-radius: 7px; -webkit-text-stroke: 0; animation: cdie-bounce .5s ease-in-out infinite alternate; }
+.stage .cutin .cdie i { width: 6px; height: 6px; border-radius: 50%; background: var(--navy); align-self: center; justify-self: center; }
+@keyframes cdie-bounce { to { transform: translateY(-4px) rotate(8deg); } }
+.stage .cutin.l2 .badge { background: #ff9f1c; border-color: #fff; color: #fff; animation: lamp .3s infinite alternate; }
+.stage .cutin.l2 .main { color: var(--yellow); text-shadow: 0 5px 0 var(--navy), 0 0 30px #ffd93d; }
+.stage .cutin.l3 .badge { background: #ff2d2d; border-color: #ffd93d; color: #fff; font-size: 1.4rem; animation: cutin-pulse .22s infinite alternate; }
+.stage .cutin.l3 .main { color: #ff2d2d; font-size: 3.6rem; -webkit-text-stroke: 7px #2a0000; text-shadow: 0 6px 0 #2a0000, 0 0 34px #ffd93d; }
+.stage .cutin.pinch .badge { background: #000; border-color: #ff2d2d; }
+.stage .cutin.pinch .main { color: #e6e8f5; -webkit-text-stroke: 6px #000; text-shadow: 0 5px 0 #000, 0 0 22px #ff2d2d; }
+/* 狙える役ごとの色: ピンゾロは金、ゾロ目は虹、シゴロは青、ピンチは赤黒 */
+.stage .table.reach.kind-pinzoro::after { background: radial-gradient(circle at calc(var(--spot-x, 240px) + 80px) calc(var(--spot-y, 150px) + 80px), transparent 56px, rgba(90,60,0,.55) 130px, rgba(40,25,0,.9) 260px); }
+.stage .table.reach.kind-shigoro::after { background: radial-gradient(circle at calc(var(--spot-x, 240px) + 80px) calc(var(--spot-y, 150px) + 80px), transparent 56px, rgba(0,30,80,.55) 130px, rgba(0,10,40,.9) 260px); }
+.stage.kind-pinzoro .lamps i { background: #ffd93d; box-shadow: 0 0 18px #ffd93d; }
+.stage.kind-zoro .lamps i { animation: lamp .18s infinite alternate, hue 1.2s linear infinite; }
+.stage.kind-shigoro .lamps i { background: #3b8cff; box-shadow: 0 0 18px #8ed0ff; }
+@keyframes hue { to { filter: hue-rotate(360deg); } }
+.stage .sparks { position: absolute; left: var(--spot-x, 240px); top: var(--spot-y, 150px); width: 0; height: 0; z-index: 4; pointer-events: none; }
+.stage .sparks i { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #ffe978; box-shadow: 0 0 10px #ffd93d; animation: orbit 1.1s linear infinite; }
+.stage.kind-zoro .sparks i { background: #fff; box-shadow: 0 0 10px #b56cff; }
+.stage .sparks i:nth-child(2) { animation-delay: -.1375s; } .stage .sparks i:nth-child(3) { animation-delay: -.275s; } .stage .sparks i:nth-child(4) { animation-delay: -.4125s; }
+.stage .sparks i:nth-child(5) { animation-delay: -.55s; } .stage .sparks i:nth-child(6) { animation-delay: -.6875s; } .stage .sparks i:nth-child(7) { animation-delay: -.825s; } .stage .sparks i:nth-child(8) { animation-delay: -.9625s; }
+@keyframes orbit { from { transform: rotate(0deg) translateX(46px) scale(1); } 50% { transform: rotate(180deg) translateX(46px) scale(.5); } to { transform: rotate(360deg) translateX(46px) scale(1); } }
 @keyframes cutin-in { from { transform: translate(-50%, -50%) scale(3) rotate(-8deg); opacity: 0; } }
 @keyframes cutin-shake { from { transform: translate(-51%, -50%) rotate(-1deg); } to { transform: translate(-49%, -50%) rotate(1deg); } }
 @keyframes cutin-pulse { from { transform: translate(-50%, -50%) scale(1); } to { transform: translate(-50%, -50%) scale(1.12); } }

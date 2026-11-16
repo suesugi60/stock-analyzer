@@ -1044,24 +1044,31 @@ test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らな
 });
 
 // ---------- リーチ演出 ----------
-test('リーチ: 1,1,1 を reach=3 で投げると「激アツ」のカットインと暗転・ズームの後にピンゾロ', async () => {
+test('リーチ: 1,1,1 を reach=3 で投げると「ピンゾロリーチ」「激アツ」「あと 1 で ピンゾロ ×5」のカットインと暗転・ズームの後に、5秒以上溜めてピンゾロ', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
   await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
-  assert.ok((await page.locator('#stage .cutin').innerText()).includes('激アツ'));
+  const t0 = Date.now();
+  const cut = await page.locator('#stage .cutin').innerText();
+  for (const t of ['激アツ', 'ピンゾロリーチ', 'ピンゾロ ×5']) assert.ok(cut.includes(t), cut);
+  assert.equal(await page.locator('#stage .cutin .cdie[data-n="1"]').count(), 1, '何が出ればよいかサイコロで見せる');
+  assert.ok(await page.locator('#stage .table.kind-pinzoro').count(), '役ごとの色');
   assert.equal(await page.locator('#stage .table.reach.zoom.reach-l3').count(), 1);
   assert.equal(await page.locator('#stage .cube.hold').count(), 1);
   assert.equal(await page.locator('#stage .result-stamp').innerText(), ''); // 溜め中は結果なし
-  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 12000 });
+  assert.ok(Date.now() - t0 >= 4500, '強い役のリーチは長く溜める: ' + (Date.now() - t0));
   assert.equal(await page.locator('#stage .table.reach').count(), 0);
   assert.equal(await page.locator('#stage .cube.hold').count(), 0);
   assert.deepEqual(errors, []);
   await context.close();
 });
 
-test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」の後にヒフミ', async () => {
+test('リーチ: 1,2,3 を reach=2 で投げると「大ピンチ」「ヒフミ」の後にヒフミ', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,2,3&seed=7&reach=2');
   await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
-  assert.ok((await page.locator('#stage .cutin').innerText()).includes('大ピンチ'));
+  const cut = await page.locator('#stage .cutin').innerText();
+  assert.ok(cut.includes('大ピンチ') && cut.includes('ヒフミ'), cut);
+  assert.equal(await page.locator('#stage .cutin .cdie').count(), 1);
   assert.equal(await page.locator('#stage .table.reach.pinch').count(), 1);
   await page.locator('#stage .result-stamp[data-hand="hifumi"]').waitFor({ state: 'visible', timeout: 10000 });
   assert.deepEqual(errors, []);
@@ -1092,7 +1099,7 @@ test('リーチ: 溜め中にタップすると即結果で、カットイン・
 
 test('リーチ: quick=1 と reach=0 ではリーチなし(.cutin が出ない)', async () => {
   const a = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&quick=1');
-  await a.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', ...T });
+  await a.page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 2500 }); // quick なら一瞬で結果
   assert.equal(await a.page.locator('#stage .cutin').count(), 0);
   await a.context.close();
   const b = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=0');
@@ -1186,27 +1193,36 @@ test('音: 溜め中に reset() すると鼓動・唸りのタイマーも止ま
 });
 
 // ---------- 目なしは負けではない / ドアップ ----------
-test('目なし: 回数の上限なし。デモは「もう一回!」、対戦では3投役なしでも親の番が続く', async () => {
-  const d = await newPage(null, 'index.html?demo=1&dice=1,3,5&seed=5&skip=1&remaining=Infinity');
-  await d.page.locator('#stage .result-stamp[data-hand="none"]').waitFor({ state: 'visible', ...T });
-  assert.equal(await d.page.locator('#stage .result-stamp').innerText(), '目なし… もう一回!');
-  await d.context.close();
-  const { host, context, code, errors } = await setupMatch();
-  await fixDice(host, diceSeq([2, 4, 6], [1, 3, 5], [2, 3, 5], [4, 4, 6]));
+test('目なし: 3投で役なしなら目なしになり子の番へ。両方目なしは引き分け、片方だけなら負け', async () => {
+  const { host, kids, context, code, errors } = await setupMatch();
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([2, 4, 6], [1, 3, 5], [2, 3, 5], [1, 3, 5], [2, 4, 6], [2, 3, 5], [4, 4, 6], [1, 3, 5], [2, 4, 6], [2, 3, 5]));
   await host.click('#start-match');
   for (let i = 0; i < 3; i++) {
     await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
     await host.click('#host-roll');
     await host.locator('.fighter.host .throws .throw').nth(i).waitFor({ state: 'visible', ...T });
   }
+  assert.equal(await phaseOf(host, code), 'child', '親が目なしでも子の番になる');
+  assert.ok((await host.locator('.fighter.host .fhand').innerText()).includes('目なし'));
+  assert.ok((await host.locator('#screen-host .arena .status').innerText()).includes('1/3'));
+  for (let i = 0; i < 3; i++) {
+    await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+    await kid.click('#listener-roll');
+    await host.waitForTimeout(300);
+  }
+  await host.locator('#screen-host .arena .status').filter({ hasText: '引き分け' }).waitFor({ state: 'visible', ...T });
   assert.equal(await phaseOf(host, code), 'parent');
-  const status = await host.locator('#screen-host .arena .status').innerText();
-  assert.ok(status.includes('4投目'), status);
-  assert.ok((await host.locator('.fighter.host .fhand').innerText()).includes('振り直し'));
   await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
-  await host.click('#host-roll');
-  await host.locator('.fighter.host .fhand').filter({ hasText: '6の目' }).waitFor({ state: 'visible', ...T });
-  assert.equal(await phaseOf(host, code), 'child');
+  await host.click('#host-roll'); // 6の目
+  for (let i = 0; i < 3; i++) {
+    await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+    await kid.click('#listener-roll');
+    await host.waitForTimeout(300);
+  }
+  await host.locator('#screen-host [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  const row = await host.locator('#screen-host [data-ref="log"]').innerText();
+  for (const t of ['6の目', '目なし', '親の勝ち', '+10点']) assert.ok(row.includes(t), t);
   assert.deepEqual(errors, []);
   await context.close();
 });
