@@ -11,6 +11,9 @@ let browser, srv, url;
 before(async () => { browser = await chromium.launch(); srv = await serve(); url = srv.url; });
 after(async () => { await browser?.close(); await srv?.close(); });
 
+/** 起動時の voice/<役>.mp3|m4a の存在確認(HEAD)で出る 404 は想定内なので、ページエラーに数えない。 */
+const isVoiceProbe = (m) => /\/voice\/[a-z0-9]+\.(mp3|m4a)$/.test(((m.location && m.location()) || {}).url || '');
+
 async function newPage(ctx, path, viewport = { width: 390, height: 844 }) {
   const context = ctx || await browser.newContext({ viewport });
   context.setDefaultTimeout(T.timeout);
@@ -19,7 +22,7 @@ async function newPage(ctx, path, viewport = { width: 390, height: 844 }) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !isVoiceProbe(m)) errors.push(m.text()); });
   await page.goto(`${url}/${path}`);
   return { page, context, errors };
 }
@@ -135,7 +138,7 @@ async function openListener(context, code, extra = '') {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !isVoiceProbe(m)) errors.push(m.text()); });
   await page.goto(`${url}/index.html?mock=1&room=${code}${extra}`);
   return { page, errors };
 }
@@ -750,5 +753,53 @@ test('派手さ: 着地のたびに砂煙が出て、最後の1個はズーム�
   await page.locator('#stage .table.zoom').waitFor({ state: 'attached', timeout: 10000 });
   await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', timeout: 10000 });
   assert.ok((await page.locator('#stage .fx-layer .dust').count()) >= 6, '砂煙');
+  await context.close();
+});
+
+test('音声ファイルがあればそれを再生し、無ければ読み上げに切り替える', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  context.setDefaultTimeout(T.timeout);
+  await context.addInitScript(() => {
+    window.__spoken = []; window.__played = [];
+    window.speechSynthesis.speak = (u) => { window.__spoken.push(u.text); };
+    window.Audio = class {
+      constructor(src) { this.src = src; this.listeners = {}; }
+      addEventListener(k, f) { this.listeners[k] = f; }
+      play() { window.__played.push(this.src); return Promise.resolve(); }
+    };
+  });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?mock=1`);
+  const r = await page.evaluate(async () => {
+    const s = ChinchiroAnim.createSounds({ voiceFiles: { pinzoro: 'voice/pinzoro.mp3' } });
+    s.voice('ピンゾロ！', 'pinzoro');
+    s.voice('シゴロ！', 'shigoro');
+    await new Promise((r) => setTimeout(r, 50));
+    return { played: window.__played, spoken: window.__spoken };
+  });
+  assert.deepEqual(r.played, ['voice/pinzoro.mp3']);
+  assert.deepEqual(r.spoken, ['シゴロ！']);
+  await context.close();
+});
+
+test('voice/ に音声ファイルがあれば起動時に見つけて、その役のコールに使う', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  context.setDefaultTimeout(T.timeout);
+  await context.route('**/firebase-config.js', (route) => route.fulfill({ contentType: 'text/javascript', body: 'window.FIREBASE_CONFIG = null;' }));
+  await context.route('**/voice/shigoro.m4a', (route) => route.fulfill({ status: 200, contentType: 'audio/mp4', body: '' }));
+  await context.addInitScript(() => {
+    window.__spoken = []; window.__played = [];
+    window.speechSynthesis.speak = (u) => { window.__spoken.push(u.text); };
+    window.Audio = class {
+      constructor() { this.src = ''; this.dataset = {}; }
+      addEventListener() {}
+      play() { window.__played.push(this.src); return Promise.resolve(); }
+    };
+  });
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?demo=1&dice=4,5,6&seed=7&skip=1`);
+  await page.locator('#stage .result-stamp[data-hand="shigoro"]').waitFor({ state: 'visible', ...T });
+  await page.waitForFunction(() => window.__played.includes('voice/shigoro.m4a'), null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.__spoken), []);
   await context.close();
 });

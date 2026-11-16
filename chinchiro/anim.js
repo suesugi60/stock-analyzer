@@ -25,8 +25,113 @@ const ChinchiroAnim = (() => {
     return Array.isArray(d) && d.length === 3 && d.every((x) => Number.isInteger(x) && x >= 1 && x <= 6);
   }
 
+  // ---------- 声 ----------
+  /** 役ごとの読み上げ文言。キーはそのまま音声ファイル名(voice/<キー>.mp3 / .m4a)になる。 */
+  const VOICE_LINES = {
+    pinzoro: 'ピンゾロ！',
+    zoro2: '2ゾロ！', zoro3: '3ゾロ！', zoro4: '4ゾロ！', zoro5: '5ゾロ！', zoro6: '6ゾロ！',
+    shigoro: 'シゴロ！',
+    me1: '1の目', me2: '2の目', me3: '3の目', me4: '4の目', me5: '5の目', me6: '6の目',
+    none: '目なし',
+    hifumi: 'ヒフミ…',
+    shonben: 'ションベン！',
+  };
+  /** 役(logic の hand。ションベンは {type:'shonben'})→ VOICE_LINES のキー。 */
+  function voiceKeyFor(hand) {
+    if (!hand || !hand.type) return 'none';
+    if (hand.type === 'zoro' || hand.type === 'me') {
+      const k = `${hand.type}${hand.value}`;
+      return Object.hasOwn(VOICE_LINES, k) ? k : 'none';
+    }
+    return Object.hasOwn(VOICE_LINES, hand.type) ? hand.type : 'none';
+  }
+  /** 自然に聞こえる順の既知の日本語音声名(前にあるほど優先)。 */
+  const VOICE_PREFERENCE = ['Google 日本語', 'Nanami', 'Keita', 'Kyoko', 'O-ren', 'O-Ren', 'Hattori', 'Ayumi', 'Haruka', 'Ichiro', 'Sayaka', 'Otoya'];
+  /**
+   * speechSynthesis.getVoices() の中から、いちばん人間らしい日本語の声を選ぶ。
+   * 拡張/プレミアム/ニューラル系(iOS の「拡張」、Edge の「Natural」など)> 知られた自然な声 > その他の日本語。無ければ null。
+   */
+  function pickVoice(voices) {
+    const ja = (voices || []).filter((v) => v && /^ja/i.test(String(v.lang || '')));
+    if (!ja.length) return null;
+    const score = (v) => {
+      const uri = String(v.voiceURI || '').toLowerCase();
+      const name = String(v.name || '');
+      let s = 0;
+      if (/premium|enhanced|natural|neural|wavenet|siri/.test(uri) || /natural|enhanced|premium|拡張/i.test(name)) s += 100;
+      const i = VOICE_PREFERENCE.findIndex((p) => name.includes(p));
+      if (i >= 0) s += 50 - i;
+      return s;
+    };
+    return ja.map((v, i) => ({ v, i, s: score(v) })).sort((a, b) => b.s - a.s || a.i - b.i)[0].v;
+  }
+
   // ---------- 音(その場で合成) ----------
-  function createSounds() {
+  /** 約50msの無音 WAV。iOS で <audio> をユーザー操作中に一度鳴らして「解錠」するために使う。 */
+  const SILENT_WAV = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+
+  /**
+   * @param {{voiceFiles?: Record<string,string>}} [opts]
+   *   voiceFiles: VOICE_LINES のキー → 音声ファイルURL。あればそれを再生し、無いキーは端末の読み上げに切り替える。
+   *   (後から同じオブジェクトに追加しても反映される)
+   */
+  function createSounds(opts = {}) {
+    const voiceFiles = (opts && opts.voiceFiles) || {};
+    const voiceMissing = new Set();
+    let voiceEl = null;      // 音声ファイル再生用に使い回す <audio>(iOS の解錠を保つため1つだけ)
+    let voiceText = null;    // 再生に失敗したとき読み上げに切り替える文言
+    let voiceCache = null;   // pickVoice の結果
+    const synth = () => (typeof window !== 'undefined' && window.speechSynthesis) || null;
+    if (synth() && typeof synth().addEventListener === 'function') synth().addEventListener('voiceschanged', () => { voiceCache = null; });
+    function chosenVoice() {
+      if (voiceCache) return voiceCache;
+      try { voiceCache = pickVoice(synth().getVoices()); } catch { voiceCache = null; }
+      return voiceCache;
+    }
+    function speak(text) {
+      const s = synth();
+      if (muted || !text || !s || typeof SpeechSynthesisUtterance === 'undefined') return;
+      try {
+        s.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'ja-JP'; u.rate = 1.0; u.pitch = 1.0; u.volume = 1;
+        const v = chosenVoice();
+        if (v) u.voice = v;
+        s.speak(u);
+      } catch { /* 読み上げ不可 */ }
+    }
+    function audioEl() {
+      if (voiceEl || typeof window === 'undefined' || typeof window.Audio !== 'function') return voiceEl;
+      try {
+        voiceEl = new window.Audio();
+        voiceEl.preload = 'auto';
+        if (typeof voiceEl.addEventListener === 'function') {
+          voiceEl.addEventListener('error', () => {
+            // ファイルが無い/壊れている → このキーは以後読み上げに回す
+            const k = voiceEl.dataset && voiceEl.dataset.key;
+            if (k) voiceMissing.add(k);
+            const t = voiceText; voiceText = null;
+            speak(t);
+          });
+        }
+      } catch { voiceEl = null; }
+      return voiceEl;
+    }
+    function playFile(url, key, text) {
+      const a = audioEl(); if (!a) return false;
+      try {
+        voiceText = text;
+        if (a.dataset) a.dataset.key = key;
+        a.src = url;
+        try { a.currentTime = 0; } catch { /* 読み込み前 */ }
+        const p = a.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => { voiceText = null; }, () => { const t = voiceText; voiceText = null; speak(t); });
+        }
+        return true;
+      } catch { voiceText = null; return false; }
+    }
+
     let ctx = null;
     let muted = false;
     let unlocked = false;
@@ -77,7 +182,12 @@ const ChinchiroAnim = (() => {
     }
     return {
       /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
-      unlock() { const c = ac(); if (c) unlocked = true; },
+      unlock() {
+        const c = ac(); if (c) unlocked = true;
+        // <audio> も同じ操作の中で一度鳴らしておく(iOS は操作外の play() を拒むため)
+        const a = audioEl();
+        if (a && !a.src) { try { a.src = SILENT_WAV; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch { /* 無視 */ } }
+      },
       get unlocked() { return unlocked; },
       /** 着地: 高い「カッ」+ 低い「ドッ」。 */
       clack(vol = 1) { noise(0.07, 1800 + Math.random() * 900, 1.2, 0.8 * vol); tone(2400 + Math.random() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
@@ -88,16 +198,18 @@ const ChinchiroAnim = (() => {
       rumble(ms = 900) { const n = Math.floor(ms / 45); for (let i = 0; i < n; i++) setTimeout(() => lowNoise(0.05, 0.35 * (1 - i / n)), i * 45); },
       /** 強い役の「ドン!」。 */
       boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
-      /** 役名を声で読み上げる(端末の読み上げ機能。無ければ何もしない)。 */
-      voice(text) {
-        if (muted || typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
-        try {
-          window.speechSynthesis.cancel();
-          const u = new SpeechSynthesisUtterance(text);
-          u.lang = 'ja-JP'; u.rate = 1.05; u.pitch = 1.15; u.volume = 1;
-          window.speechSynthesis.speak(u);
-        } catch { /* 読み上げ不可 */ }
+      /**
+       * 役名をコールする。voiceFiles[key] があればその音声ファイル(人の声)を再生し、
+       * 無ければ端末の読み上げ(いちばん自然な日本語の声を自動で選ぶ)。どちらも無ければ何もしない。
+       */
+      voice(text, key) {
+        if (muted || typeof window === 'undefined') return;
+        const url = key && !voiceMissing.has(key) && Object.hasOwn(voiceFiles, key) ? voiceFiles[key] : null;
+        if (url && playFile(url, key, text)) return;
+        speak(text);
       },
+      /** 読み上げに使う声(テスト/設定表示用)。 */
+      get voiceName() { const v = chosenVoice(); return v ? v.name : null; },
       chime(kind) {
         const seq = kind === 'gold' ? [880, 1108, 1318, 1760, 2217, 2637] : kind === 'rainbow' ? [659, 784, 988, 1175, 1568] : [523, 659, 784, 1047];
         seq.forEach((f, i) => { setTimeout(() => { tone(f, 0.6, 0.22, 'sine'); tone(f * 2, 0.3, 0.06, 'triangle'); }, i * 85); });
@@ -316,8 +428,8 @@ const ChinchiroAnim = (() => {
       const { text, key } = stampFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand, opts.remaining ?? 0);
       el.stamp.textContent = text;
       el.stamp.dataset.hand = key;
-      const say = { pinzoro: 'ピンゾロ！', zoro: `${throwObj.hand && throwObj.hand.value}ゾロ！`, shigoro: 'シゴロ！', me: `${throwObj.hand && throwObj.hand.value}の目`, none: '目なし', hifumi: 'ヒフミ…', shonben: 'ションベン！' };
-      if (say[key]) setTimeout(() => sounds.voice(say[key]), skipped ? 0 : (key === 'pinzoro' || key === 'zoro' ? 250 : 120));
+      const vkey = voiceKeyFor(throwObj.shonben ? { type: 'shonben' } : throwObj.hand);
+      setTimeout(() => sounds.voice(VOICE_LINES[vkey], vkey), skipped ? 0 : (key === 'pinzoro' || key === 'zoro' ? 250 : 120));
       if (skipped) return;
       const colors = ['#ffd93d', '#ff4d4d', '#2ec27e', '#3b8cff', '#b56cff', '#fff'];
       switch (key) {
@@ -460,6 +572,6 @@ const ChinchiroAnim = (() => {
     requestAnimationFrame(step);
   }
 
-  return { createSounds, createDiceStage, countUp, mulberry32, FINAL_ROT, PIPS };
+  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, FINAL_ROT, PIPS };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroAnim;
