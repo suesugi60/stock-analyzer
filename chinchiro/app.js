@@ -39,8 +39,22 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const safeName = (s) => String(s ?? '').trim().slice(0, 12);
 
-  const sounds = ChinchiroAnim.createSounds();
+  // 役名のコール: voice/<キー>.mp3(または .m4a)があればその声、無ければ端末の読み上げ。
+  // ファイルは起動時に一度だけ調べ、あったものだけ登録する(同じオブジェクトを渡すので後から増やせる)。
+  const voiceFiles = {};
+  const sounds = ChinchiroAnim.createSounds({ voiceFiles });
   sounds.setMuted(store.get(KEY_MUTED) === true);
+  (async () => {
+    if (typeof fetch !== 'function' || location.protocol === 'file:') return;
+    await Promise.all(Object.keys(ChinchiroAnim.VOICE_LINES).map(async (key) => {
+      const found = await Promise.all(['mp3', 'm4a'].map(async (ext) => {
+        const u = `voice/${key}.${ext}`;
+        try { return (await fetch(u, { method: 'HEAD' })).ok ? u : null; } catch { return null; }
+      }));
+      const url = found.find(Boolean);
+      if (url) voiceFiles[key] = url;
+    }));
+  })();
   const stage = ChinchiroAnim.createDiceStage($('stage'), sounds);
 
   function show(id) {
