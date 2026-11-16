@@ -121,3 +121,15 @@ test('explainError: Firebase のエラーを日本語の対処に変換する', 
   assert.equal(explainError(new Error('FIREBASE_CONFIG がありません')), 'FIREBASE_CONFIG がありません');
   assert.equal(explainError('x'), 'x');
 });
+
+test('firebase-rules.json: 書き込むキーがすべて明示されている(「それ以外は拒否」に巻き込まれない)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const rules = JSON.parse(await readFile(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const room = rules.rules.rooms.$code;
+  assert.ok(room.queue.$uid.joinedAt, 'queue/$uid/joinedAt のルールが要る');
+  assert.equal(room.queue.$uid.$other['.validate'], false);
+  for (const k of ['name', 'char', 'joinedAt', 'online', 'points', 'wins', 'losses', 'drinks', 'hidden', 'banned']) assert.ok(room.players.$uid[k], `players/$uid/${k}`);
+  for (const k of ['type', 'at']) assert.ok(room.actions.$uid[k], `actions/$uid/${k}`);
+  assert.equal(room.actions.$uid.$other['.validate'], false);
+  for (const k of ['hostUid', 'createdAt', 'settings', 'state', 'players', 'presence', 'queue', 'actions']) assert.ok(room[k], `rooms/$code/${k}`);
+});

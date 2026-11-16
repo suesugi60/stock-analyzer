@@ -27,15 +27,18 @@
         "queue": {
           "$uid": {
             ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
-            ".validate": "newData.hasChildren(['joinedAt']) && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 60000 && newData.child('joinedAt').val() <= now + 60000",
+            ".validate": "newData.hasChildren(['joinedAt'])",
+            "joinedAt": { ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 60000" },
             "$other": { ".validate": false }
           }
         },
         "actions": {
           "$uid": {
             ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid)",
-            ".validate": "newData.child('type').val() == 'roll' && newData.child('at').isNumber()",
-            "$other": { ".validate": "$other == 'type' || $other == 'at'" }
+            ".validate": "newData.hasChildren(['type', 'at'])",
+            "type": { ".validate": "newData.val() == 'roll'" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
           }
         },
         "$other": { ".validate": false }
