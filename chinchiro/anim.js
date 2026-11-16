@@ -129,6 +129,15 @@ const ChinchiroAnim = (() => {
     return { lastIdx, kind, level, pinch: kind === 'pinch' };
   }
 
+  /** 動いているアニメだけ止めて、その配列を返す(終わったものを play() すると巻き戻るため触らない)。 */
+  function freezeAnims(anims) {
+    const frozen = [];
+    for (const a of anims || []) { if (a && a.playState === 'running') { try { a.pause(); frozen.push(a); } catch { /* 無視 */ } } }
+    return frozen;
+  }
+  /** freezeAnims で止めたものだけ再開する。 */
+  function thawAnims(frozen) { for (const a of frozen || []) { if (a && a.playState === 'paused') { try { a.play(); } catch { /* 無視 */ } } } }
+
   // ---------- 音(その場で合成) ----------
   /** 0.5 秒の無音 WAV。ループ再生して iOS にページを「再生中」と思わせ、消音スイッチでも Web Audio を鳴らす。 */
   const SILENT_LOOP = 'data:audio/wav;base64,UklGRsQPAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAPAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
@@ -291,17 +300,27 @@ const ChinchiroAnim = (() => {
     }
     return {
       /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
-      unlock() {
+      /**
+       * 音を使えるようにする。gesture=true はユーザー操作の中(タップ・キー)、false はタブ復帰など操作の外。
+       * 操作の外では AudioContext の再開だけを試し、読み上げの解錠は操作の中まで取っておく。
+       */
+      unlock(gesture = true) {
         const c = ac();
         if (c) {
           unlocked = true;
           if (c.state !== 'running') tryResume(c).then(notify, () => {});
         }
-        // <audio> も同じ操作の中で一度鳴らしておく(iOS は操作外の play() を拒むため)
+        // <audio> も同じ操作の中で一度鳴らしておく(iOS は操作外の play() を拒むため)。拒まれたら次の操作でやり直す
         const a = audioEl();
-        if (a && !a.src) { try { a.src = SILENT_WAV; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch { /* 無視 */ } }
+        if (a && !a.src) {
+          try {
+            a.src = SILENT_WAV;
+            const p = a.play();
+            if (p && p.catch) p.catch(() => { try { if (typeof a.removeAttribute === 'function') a.removeAttribute('src'); else a.src = ''; } catch { /* 無視 */ } });
+          } catch { try { a.src = ''; } catch { /* 無視 */ } }
+        }
         if (keepAlive) startLoop();
-        warmSpeech();
+        if (gesture) warmSpeech();
       },
       /** 効果音を今すぐ鳴らせるか(AudioContext が running)。 */
       get ready() { return isReady(); },
@@ -378,12 +397,12 @@ const ChinchiroAnim = (() => {
         <div class="bowl-front"></div>
         <div class="fx-layer"></div>
         <div class="result-stamp" data-hand=""></div>
-      </div></div>
+      </div><div class="hud"></div></div>
       <div class="hint">タップで飛ばす</div>`;
     const el = {
       avatar: root.querySelector('.avatar'), bubble: root.querySelector('.bubble'), hand: root.querySelector('.hand'),
       scaler: root.querySelector('.scaler'), table: root.querySelector('.table'), dice: root.querySelector('.dice-layer'),
-      fx: root.querySelector('.fx-layer'), stamp: root.querySelector('.result-stamp'),
+      fx: root.querySelector('.fx-layer'), stamp: root.querySelector('.result-stamp'), hud: root.querySelector('.hud'),
     };
     let running = null; // { anims: Animation[], timers: number[], skipped, resolveSkip }
 
@@ -422,16 +441,17 @@ const ChinchiroAnim = (() => {
     }
 
     function reset() {
-      if (running) { for (const a of running.anims) a.cancel(); for (const t of running.timers) clearTimeout(t); running = null; }
+      if (running) { for (const a of running.anims) a.cancel(); for (const t of running.timers) clearTimeout(t); stopAll(running); running = null; }
       el.dice.innerHTML = '';
       el.fx.innerHTML = '';
+      el.hud.innerHTML = '';
       el.stamp.textContent = '';
       el.stamp.dataset.hand = '';
       delete el.stamp.dataset.fail;
       root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing', 'reaching');
+      root.classList.remove('playing', 'reaching', 'l1', 'l2', 'l3');
     }
 
     function setThrower(t) {
@@ -577,7 +597,8 @@ const ChinchiroAnim = (() => {
     }
 
     function stampFor(hand, remaining) {
-      if (!hand) return { text: remaining > 0 ? `目なし… あと${remaining}投` : '目なし…', key: 'none' };
+      const again = !Number.isFinite(remaining) ? '目なし… もう一回!' : remaining > 0 ? `目なし… あと${remaining}投` : '目なし…';
+      if (!hand) return { text: again, key: 'none' };
       switch (hand.type) {
         case 'pinzoro': return { text: 'ピンゾロ!!', key: 'pinzoro' };
         case 'zoro': return { text: `${hand.value}ゾロ!`, key: 'zoro' };
@@ -585,7 +606,7 @@ const ChinchiroAnim = (() => {
         case 'me': return { text: `${hand.value}の目`, key: 'me' };
         case 'hifumi': return { text: 'ヒフミ…', key: 'hifumi' };
         case 'shonben': return { text: 'ションベン!', key: 'shonben' };
-        default: return { text: remaining > 0 ? `目なし… あと${remaining}投` : '目なし…', key: 'none' };
+        default: return { text: again, key: 'none' };
       }
     }
 
@@ -629,23 +650,28 @@ const ChinchiroAnim = (() => {
       const base = level >= 3 ? '激アツ!!!' : level === 2 ? 'スーパーリーチ!!' : 'リーチ!';
       return plan.kind === 'pinzoro' ? `ピンゾロ${base}` : base;
     }
+    // ドアップ中もテーブルと一緒に拡大されないよう、文字・ランプ・ストライプ・稲妻は HUD 層(拡大の外)に置く。
+    // スポットライトとスピードラインはサイコロの座標に付くので fx 層(拡大の中)。
     function fxReach(plan, level) {
       const spot = document.createElement('div'); spot.className = 'spot'; el.fx.appendChild(spot);
+      if (level >= 2) { const sl = document.createElement('div'); sl.className = `speedlines${plan.pinch ? ' pinch' : ''}`; el.fx.appendChild(sl); }
       const c = document.createElement('div');
       c.className = `cutin l${level}${plan.pinch ? ' pinch' : ''}`;
       c.textContent = cutinText(plan, level);
-      el.fx.appendChild(c);
-      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.fx.appendChild(l); }
+      el.hud.appendChild(c);
+      if (level >= 2) { const l = document.createElement('div'); l.className = 'lamps'; l.innerHTML = '<i></i><i></i><i></i><i></i>'; el.hud.appendChild(l); }
       if (level >= 3) {
-        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.fx.appendChild(st); }
-        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.fx.appendChild(bolt); }
+        for (const pos of ['top', 'bottom']) { const st = document.createElement('div'); st.className = `stripes ${pos}`; el.hud.appendChild(st); }
+        for (const pos of ['left', 'right']) { const bolt = document.createElement('div'); bolt.className = `bolt ${pos}`; bolt.innerHTML = BOLT; el.hud.appendChild(bolt); }
       }
+      root.classList.add(`l${level}`);
     }
     function clearReach() {
-      for (const n of el.fx.querySelectorAll('.cutin, .lamps, .stripes, .bolt, .spot')) n.remove();
+      for (const n of el.fx.querySelectorAll('.spot, .speedlines')) n.remove();
+      el.hud.innerHTML = '';
       el.table.classList.remove('reach', 'reach-l1', 'reach-l2', 'reach-l3', 'pinch', 'dark2', 'hit');
       for (const n of el.dice.querySelectorAll('.hold')) n.classList.remove('hold');
-      root.classList.remove('reaching');
+      root.classList.remove('reaching', 'l1', 'l2', 'l3');
     }
     function stopAll(run) { for (const st of run.stops) { try { st.stop(); } catch { /* 無視 */ } } run.stops = []; }
 
@@ -752,10 +778,10 @@ const ChinchiroAnim = (() => {
             for (const k of bounces) if (k.off > HOLD_OFF) {
               const at = (k.off - HOLD_OFF) * D / REL_RATE;
               if (k.off === LAND_OFF) later(() => {
-                for (const a of anims) a.pause(); // ヒットストップ(最後の1個だけ。他は止まっている)
+                const frozen = freezeAnims(anims); // ヒットストップ(最後の1個だけ。終わっていれば止めない=巻き戻さない)
                 el.table.classList.add('hit');
                 fxFlash('white', 220); fxShake(true); sounds.hit(); fxDust(k.p.x, k.p.y, rnd, 10);
-                later(() => { for (const a of anims) a.play(); el.table.classList.remove('hit'); }, 120);
+                later(() => { thawAnims(frozen); el.table.classList.remove('hit'); }, 120);
               }, at);
               else later(() => bounceFx(k), at);
             }
@@ -819,6 +845,6 @@ const ChinchiroAnim = (() => {
     requestAnimationFrame(step);
   }
 
-  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, reachPlan, REACH_WEIGHTS, REACH_HOLD_MS, FINAL_ROT, PIPS };
+  return { createSounds, createDiceStage, countUp, mulberry32, pickVoice, voiceKeyFor, VOICE_LINES, reachPlan, REACH_WEIGHTS, REACH_HOLD_MS, freezeAnims, thawAnims, FINAL_ROT, PIPS };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroAnim;

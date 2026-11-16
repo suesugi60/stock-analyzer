@@ -82,7 +82,7 @@ const ChinchiroLogic = (() => {
   }
 
   // ---------- 部屋の状態遷移(親機だけが実行し、結果を同期先に書く) ----------
-  const MAX_THROWS = 3;
+  const MAX_THROWS = Infinity; // 目なしは振り直し(回数の上限なし)。有限にすると「n投で役なし=目なしで負け」になる
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const emptySide = () => ({ throws: [], hand: null, done: false });
 

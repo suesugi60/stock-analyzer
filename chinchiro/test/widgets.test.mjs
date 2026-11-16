@@ -25,6 +25,9 @@ test('throwsHtml: 投げた順に出目と役名', () => {
 test('legendHtml / rulesHtml: 倍率と部屋の設定が入る', () => {
   assert.ok(W.legendHtml().includes('ピンゾロ ×5'));
   assert.ok(W.legendHtml().includes('ヒフミ ×2払い'));
+  assert.ok(!W.legendHtml().includes('目なし'), '目なしは負けではないので順位に出さない');
+  const rules = W.rulesHtml({ mode: 'points', unit: 10 });
+  assert.ok(rules.includes('振り直し') && !rules.includes('3回振っても') && !rules.includes('3投まで'), rules);
   const h = W.rulesHtml({ mode: 'both', unit: 20, drinkUnit: 'half', startPoints: 300 });
   for (const s of ['ルール', 'ピンゾロ', '×5', 'シゴロ', '×2', 'ヒフミ', '2倍', 'ションベン', '持ち点 300', '1戦 20点', '半分', '40点']) assert.ok(h.includes(s), s);
   const d = W.rulesHtml({ mode: 'drink', drinkUnit: 'sip' });

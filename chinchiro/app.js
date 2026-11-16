@@ -300,7 +300,7 @@
   function sideText(side) {
     if (!side) return ['', ''];
     if (side.hand) return [side.hand.label + (side.hand.lose ? '' : ` (×${side.hand.mult})`), `${side.throws.length}投目`];
-    if (side.throws.length) return [`目なし… あと${L.MAX_THROWS - side.throws.length}投`, ''];
+    if (side.throws.length) return [Number.isFinite(L.MAX_THROWS) ? `目なし… あと${L.MAX_THROWS - side.throws.length}投` : '目なし… 振り直し', `${side.throws.length}投目`];
     return ['', ''];
   }
 
@@ -367,8 +367,8 @@
       let status = '';
       let drink = '';
       if (st.phase === 'lobby') status = Object.keys(room.queue || {}).length ? (readonly ? '次の対決を待っています' : '「対決スタート」で先頭の人と対決') : '挑戦者を待っています';
-      else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length}/${L.MAX_THROWS})`;
-      else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length}/${L.MAX_THROWS})`;
+      else if (st.phase === 'parent') status = (m.round > 1 && m.parent.throws.length === 0 ? `引き分け → もう一度! (${m.round}回戦) ` : '') + `親の番(${m.parent.throws.length + 1}投目)`;
+      else if (st.phase === 'child') status = `${childName} さんの番(${m.child.throws.length + 1}投目)`;
       else if (st.phase === 'result' && st.result) {
         const res = st.result;
         center = `<div class="vs">${res.winner === 'draw' ? '引き分け' : `×${res.mult}`}</div>`;
@@ -492,11 +492,13 @@
     if ($('join-name').value !== join.name) $('join-name').value = join.name;
   }
 
+  let joinSettings = null; // 参加画面(まだ room を購読していない)でルール表に使う、その部屋の設定
   async function enterListenerEntry(c) {
     role = 'listener';
     code = c;
     const r = await backend.get(`rooms/${c}`);
     if (!r || !r.hostUid) { show('screen-notfound'); return; }
+    joinSettings = r.settings || null;
     const me = (r.players || {})[backend.uid];
     if (me && me.banned) { show('screen-banned'); return; }
     const presence = Object.keys(r.presence || {}).length;
@@ -645,7 +647,7 @@
       ? { name: settings.hostName || '配信者', char: settings.hostChar, color: '#ff4d4d' }
       : { name: child ? (child.hidden ? '？？？' : (child.name || 'リスナー')) : '挑戦者', char: child && validChar(child.char) ? child.char : 'binbo', color: colorFor(st.match ? st.match.childUid : '') };
     const side = st.match && st.match[lt.by];
-    const remaining = side && side.throws.length ? L.MAX_THROWS - side.throws.length : 0;
+    const remaining = side && side.throws.length ? (Number.isFinite(L.MAX_THROWS) ? L.MAX_THROWS - side.throws.length : Infinity) : 0;
     pendingThrow = { throwObj: lt.throw, thrower, remaining };
     runPlayback();
     return true;
@@ -757,7 +759,7 @@
   $('create-room').addEventListener('click', () => createRoom().catch((e) => alert('部屋を作れませんでした: ' + SY.explainError(e))));
   // ルール表(オーバーレイ)。部屋があればその設定、無ければ設定画面の値で作る
   function openRules() {
-    const settings = room && room.settings ? room.settings : { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
+    const settings = room && room.settings ? room.settings : joinSettings || { mode: setup.mode, unit: setup.unit, drinkUnit: setup.drinkUnit, startPoints: chosenStart() };
     $('rules-body').innerHTML = W.rulesHtml(settings);
     $('rules').hidden = false;
   }
@@ -771,7 +773,7 @@
   document.addEventListener('pointerdown', () => sounds.unlock());
   document.addEventListener('touchend', () => sounds.unlock());
   document.addEventListener('keydown', () => sounds.unlock());
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(false); });
   renderMute();
   $('start-match').addEventListener('click', () => { $('start-match').hidden = true; hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }); });
   $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });
