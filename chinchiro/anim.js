@@ -223,6 +223,8 @@ const ChinchiroAnim = (() => {
     let ctx = null;
     let muted = false;
     let unlocked = false;
+    // 音の揺らぎ用の乱数。Math.random を使うと出目の乱数(テストでは固定する)を乱すので専用に持つ
+    const jitter = mulberry32((Date.now() ^ 0x5bd1e995) >>> 0);
     let keepAlive = false;   // 無音ループを回すか(親機は常時、スマホは自分の対戦中だけ)
     let loopEl = null;
     let speechWarm = false;
@@ -276,7 +278,7 @@ const ChinchiroAnim = (() => {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+      for (let i = 0; i < len; i++) d[i] = (jitter() * 2 - 1) * Math.pow(1 - i / len, 2.5);
       const src = c.createBufferSource(); src.buffer = buf;
       const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = q;
       const g = c.createGain(); g.gain.value = vol;
@@ -294,7 +296,7 @@ const ChinchiroAnim = (() => {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.5);
+      for (let i = 0; i < len; i++) d[i] = (jitter() * 2 - 1) * Math.pow(1 - i / len, 1.5);
       const src = c.createBufferSource(); src.buffer = buf;
       const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220;
       const g = c.createGain(); g.gain.value = vol;
@@ -341,8 +343,8 @@ const ChinchiroAnim = (() => {
       setKeepAlive(b) { keepAlive = !!b; if (keepAlive) { if (unlocked) startLoop(); } else stopLoop(); },
       get unlocked() { return unlocked; },
       /** 着地: 高い「カッ」+ 低い「ドッ」。 */
-      clack(vol = 1) { noise(0.07, 1800 + Math.random() * 900, 1.2, 0.8 * vol); tone(2400 + Math.random() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
-      rattle(ms = 600) { const n = Math.floor(ms / 60); for (let i = 0; i < n; i++) setTimeout(() => { noise(0.03, 2600 + Math.random() * 900, 2, 0.3); }, i * 60 + Math.random() * 20); },
+      clack(vol = 1) { noise(0.07, 1800 + jitter() * 900, 1.2, 0.8 * vol); tone(2400 + jitter() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
+      rattle(ms = 600) { const n = Math.floor(ms / 60); for (let i = 0; i < n; i++) setTimeout(() => { noise(0.03, 2600 + jitter() * 900, 2, 0.3); }, i * 60 + jitter() * 20); },
       /** 投げ込みの風切り。 */
       whoosh() { sweep(180, 900, 0.35, 0.25); noise(0.3, 1200, 0.6, 0.25); },
       /** 転がっている間のゴロゴロ。 */
@@ -465,7 +467,7 @@ const ChinchiroAnim = (() => {
       root.classList.remove('bigwin-gold');
       el.table.className = 'table';
       el.hand.classList.remove('rattle');
-      root.classList.remove('playing', 'reaching', 'l1', 'l2', 'l3', 'kind-pinzoro', 'kind-zoro', 'kind-shigoro', 'kind-pinch');
+      root.classList.remove('playing', 'reaching', 'intro-on', 'l1', 'l2', 'l3', 'kind-pinzoro', 'kind-zoro', 'kind-shigoro', 'kind-pinch');
     }
 
     function setThrower(t) {
@@ -839,6 +841,7 @@ const ChinchiroAnim = (() => {
       el.hand.classList.remove('rattle');
       el.table.classList.remove('zoom');
       clearReach();
+      root.classList.remove('intro-on');
       for (const a of running.anims) { a.playbackRate = 1; try { if (a.playState === 'paused') a.play(); a.finish(); } catch { /* 未開始なら無視 */ } }
     }
 
@@ -852,8 +855,47 @@ const ChinchiroAnim = (() => {
       sounds.rattle(600);
     }
 
+    /** 対決スタートの登場シーン: 両者が左右から滑り込み、VS が叩き込まれ、「対決スタート!」。タップで飛ばせる。 */
+    async function playIntro(parent, child, opts = {}) {
+      reset();
+      el.avatar.hidden = true;
+      el.bubble.textContent = '';
+      root.classList.add('playing', 'intro-on');
+      const run = { anims: [], timers: [], wakers: [], stops: [], skipped: false };
+      running = run;
+      const quick = opts.reduced || reducedMotion();
+      const card = (f, side, label) => {
+        const c = document.createElement('div'); c.className = `fighter-card ${side}`;
+        const av = document.createElement('span'); av.className = 'avatar lg'; av.style.setProperty('--c', (f && f.color) || '#2b2d5c');
+        if (f && f.char && typeof SugorokuArt !== 'undefined' && Object.hasOwn(SugorokuArt.CHAR_ART, f.char)) av.innerHTML = SugorokuArt.CHAR_ART[f.char]();
+        const name = document.createElement('b'); name.textContent = (f && f.name) || (side === 'left' ? '配信者' : '挑戦者');
+        const sub = document.createElement('small'); sub.textContent = label;
+        c.append(av, name, sub);
+        return c;
+      };
+      const intro = document.createElement('div'); intro.className = 'intro';
+      const vs = document.createElement('div'); vs.className = 'vs-burst'; vs.innerHTML = '<span class="vs">VS</span>';
+      const start = document.createElement('div'); start.className = 'start-text'; start.textContent = '対決スタート!';
+      intro.append(card(parent, 'left', '親'), vs, card(child, 'right', '挑戦者'), start);
+      el.hud.appendChild(intro);
+      if (quick) { await sleep(60); }
+      else {
+        sounds.whoosh(); sounds.rattle(300);
+        await sleep(520); if (run !== running) return;
+        intro.classList.add('slam'); fxFlash('white', 400); fxShake(true); sounds.boom(); sounds.hit();
+        await sleep(650); if (run !== running) return;
+        intro.classList.add('go'); sounds.chime('rainbow'); fxParticles(rnd0, 30, ['#ffd93d', '#ff4d4d', '#3b8cff', '#2ec27e', '#fff'], true);
+        await sleep(1200);
+      }
+      if (run !== running) return;
+      el.hud.innerHTML = '';
+      root.classList.remove('playing', 'intro-on');
+      running = null;
+    }
+    const rnd0 = mulberry32(12345); // 登場シーンの粒子用(毎回同じでよい)
+
     root.addEventListener('click', skip);
-    return { play, skip, reset, showWaiting, el };
+    return { play, skip, reset, showWaiting, playIntro, el };
   }
 
   /** 数字を from から to まで動かして見せる(点数のカウントアップ)。 */
