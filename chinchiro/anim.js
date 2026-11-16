@@ -67,6 +67,8 @@ const ChinchiroAnim = (() => {
   }
 
   // ---------- 音(その場で合成) ----------
+  /** 0.5 秒の無音 WAV。ループ再生して iOS にページを「再生中」と思わせ、消音スイッチでも Web Audio を鳴らす。 */
+  const SILENT_LOOP = 'data:audio/wav;base64,UklGRsQPAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YaAPAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
   /** 約50msの無音 WAV。iOS で <audio> をユーザー操作中に一度鳴らして「解錠」するために使う。 */
   const SILENT_WAV = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 
@@ -135,15 +137,56 @@ const ChinchiroAnim = (() => {
     let ctx = null;
     let muted = false;
     let unlocked = false;
+    let keepAlive = false;   // 無音ループを回すか(親機は常時、スマホは自分の対戦中だけ)
+    let loopEl = null;
+    let speechWarm = false;
+    const readyCbs = [];
+    const isReady = () => !!ctx && ctx.state === 'running';
+    const notify = () => { const r = isReady(); for (const f of readyCbs) { try { f(r); } catch { /* 画面側の都合 */ } } };
     const ac = () => {
       try {
-        ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
+        if (!ctx) {
+          ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (typeof ctx.addEventListener === 'function') ctx.addEventListener('statechange', notify);
+        }
         return ctx;
       } catch { return null; }
     };
-    function noise(dur, freq, q, vol) {
-      const c = ac(); if (!c || muted) return;
+    const tryResume = (c) => { let p; try { p = c.resume(); } catch { p = null; } return Promise.resolve(p); };
+    /**
+     * 鳴らす直前の保険。running ならすぐ鳴らす。違えば resume() を試し、300ms 以内に起きたら鳴らす。
+     * 起きなければその音は捨てる(あとでまとめて鳴らない)。resume() はユーザー操作の外では拒まれることがある。
+     */
+    function ensure(fn) {
+      if (muted) return;
+      const c = ac(); if (!c) return;
+      if (c.state === 'running') { fn(c); return; }
+      let late = false;
+      const timer = setTimeout(() => { late = true; }, 300);
+      tryResume(c).then(() => { clearTimeout(timer); if (!late && c.state === 'running' && !muted) fn(c); notify(); }, () => {});
+    }
+    function startLoop() {
+      if (typeof window === 'undefined' || typeof window.Audio !== 'function') return;
+      try {
+        if (!loopEl) {
+          loopEl = new window.Audio();
+          loopEl.loop = true;
+          if (typeof loopEl.setAttribute === 'function') loopEl.setAttribute('playsinline', '');
+          loopEl.src = SILENT_LOOP;
+        }
+        if (loopEl.paused !== false) { const p = loopEl.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch { /* 再生できなければ次の操作で */ }
+    }
+    function stopLoop() { if (loopEl) { try { loopEl.pause(); } catch { /* 無視 */ } } }
+    /** iOS は最初の読み上げもユーザー操作が要るので、操作の中で無音の発話を 1 回流しておく。 */
+    function warmSpeech() {
+      if (speechWarm) return;
+      const s = synth(); if (!s || typeof SpeechSynthesisUtterance === 'undefined') return;
+      speechWarm = true;
+      try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; s.speak(u); } catch { /* 読み上げ不可 */ }
+    }
+    function noise(dur, freq, q, vol) { ensure((c) => noiseAt(c, dur, freq, q, vol)); }
+    function noiseAt(c, dur, freq, q, vol) {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
@@ -153,15 +196,15 @@ const ChinchiroAnim = (() => {
       const g = c.createGain(); g.gain.value = vol;
       src.connect(bp).connect(g).connect(c.destination); src.start();
     }
-    function tone(freq, dur, vol, type = 'triangle') {
-      const c = ac(); if (!c || muted) return;
+    function tone(freq, dur, vol, type = 'triangle') { ensure((c) => toneAt(c, freq, dur, vol, type)); }
+    function toneAt(c, freq, dur, vol, type) {
       const t = c.currentTime;
       const o = c.createOscillator(); o.type = type; o.frequency.value = freq;
       const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
       o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
     }
-    function lowNoise(dur, vol) {
-      const c = ac(); if (!c || muted) return;
+    function lowNoise(dur, vol) { ensure((c) => lowNoiseAt(c, dur, vol)); }
+    function lowNoiseAt(c, dur, vol) {
       const len = Math.floor(c.sampleRate * dur);
       const buf = c.createBuffer(1, len, c.sampleRate);
       const d = buf.getChannelData(0);
@@ -171,8 +214,8 @@ const ChinchiroAnim = (() => {
       const g = c.createGain(); g.gain.value = vol;
       src.connect(lp).connect(g).connect(c.destination); src.start();
     }
-    function sweep(from, to, dur, vol) {
-      const c = ac(); if (!c || muted) return;
+    function sweep(from, to, dur, vol) { ensure((c) => sweepAt(c, from, to, dur, vol)); }
+    function sweepAt(c, from, to, dur, vol) {
       const t = c.currentTime;
       const o = c.createOscillator(); o.type = 'sawtooth';
       o.frequency.setValueAtTime(from, t); o.frequency.exponentialRampToValueAtTime(to, t + dur);
@@ -183,11 +226,23 @@ const ChinchiroAnim = (() => {
     return {
       /** iOS Safari 対策: ユーザー操作の中で AudioContext を作って起こす。 */
       unlock() {
-        const c = ac(); if (c) unlocked = true;
+        const c = ac();
+        if (c) {
+          unlocked = true;
+          if (c.state !== 'running') tryResume(c).then(notify, () => {});
+        }
         // <audio> も同じ操作の中で一度鳴らしておく(iOS は操作外の play() を拒むため)
         const a = audioEl();
         if (a && !a.src) { try { a.src = SILENT_WAV; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch { /* 無視 */ } }
+        if (keepAlive) startLoop();
+        warmSpeech();
       },
+      /** 効果音を今すぐ鳴らせるか(AudioContext が running)。 */
+      get ready() { return isReady(); },
+      /** ready が変わったかもしれないときに呼ばれる(statechange と resume の後)。 */
+      onReadyChange(cb) { if (typeof cb === 'function') readyCbs.push(cb); },
+      /** 無音ループで iOS を「再生中」にするか。true にすると次の操作(と解錠済みなら今)から回り、false で止める。 */
+      setKeepAlive(b) { keepAlive = !!b; if (keepAlive) { if (unlocked) startLoop(); } else stopLoop(); },
       get unlocked() { return unlocked; },
       /** 着地: 高い「カッ」+ 低い「ドッ」。 */
       clack(vol = 1) { noise(0.07, 1800 + Math.random() * 900, 1.2, 0.8 * vol); tone(2400 + Math.random() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },

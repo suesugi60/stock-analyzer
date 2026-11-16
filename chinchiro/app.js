@@ -215,6 +215,13 @@
     });
   }
 
+  /** ミュートでないのに効果音を鳴らせない(AudioContext が起きていない)間だけ「タップで音をオン」を出す。 */
+  function updateAudioBadge() {
+    const el = $('audio-badge'); if (!el) return;
+    el.hidden = sounds.muted || sounds.ready || !(role === 'host' || role === 'listener');
+  }
+  sounds.onReadyChange(updateAudioBadge);
+
   async function enterHost(c) {
     if (!(await acquireHostLock(c))) {
       $('busy-code').textContent = c;
@@ -222,6 +229,7 @@
       return;
     }
     role = 'host';
+    sounds.setKeepAlive(true);
     bind(hostView, $('screen-host'));
     subscribe(c);
     show('screen-host');
@@ -448,7 +456,7 @@
     $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
   }
 
-  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); }
+  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); updateAudioBadge(); }
 
   function render() {
     if (!room) {
@@ -550,6 +558,8 @@
       .sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0)).map(([uid]) => uid);
     const pos = queue.indexOf(backend.uid);
     const inMatch = st.match && st.match.childUid === backend.uid;
+    sounds.setKeepAlive(!!inMatch); // 自分の対戦中だけ無音ループ(見ているだけの人の音楽を止めない)
+    updateAudioBadge();
     let status = '見るだけ';
     if (inMatch) status = st.phase === 'child' ? 'あなたの番!' : st.phase === 'parent' ? (st.match.round > 1 && st.match.parent.throws.length === 0 ? '引き分け! もう一度。親が振っています…' : '親が振っています…') : '結果';
     else if (pos >= 0) status = `あなたは ${pos + 1} 番目`;
@@ -755,7 +765,11 @@
   $('rules').addEventListener('click', (ev) => { if (ev.target === $('rules')) closeRules(); });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('rules').hidden) closeRules(); });
   $('resume-room').addEventListener('click', () => { const prev = store.get(KEY_HOST); if (prev && prev.code) enterHost(prev.code); });
-  document.addEventListener('pointerdown', () => sounds.unlock()); // iOS: 最初のタップで音を使えるようにする
+  // 音の解錠と再開: 最初のタップ(iOS)、キー操作、タブに戻ったとき(電話などの割り込み後)
+  document.addEventListener('pointerdown', () => sounds.unlock());
+  document.addEventListener('touchend', () => sounds.unlock());
+  document.addEventListener('keydown', () => sounds.unlock());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sounds.unlock(); });
   renderMute();
   $('start-match').addEventListener('click', () => { $('start-match').hidden = true; hostDo(() => { const uid = firstInQueue(); if (uid) return hostStartMatch(uid); }); });
   $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });

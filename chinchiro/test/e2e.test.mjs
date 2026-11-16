@@ -939,3 +939,105 @@ test('履歴: 非表示にした人は記録でも？？？', async () => {
   await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
   await context.close();
 });
+
+// ---------- 音の確実化(AudioContext と Audio を差し替えて振る舞いを見る) ----------
+const FAKE_AUDIO = () => {
+  window.__resumes = 0; window.__started = 0; window.__allow = false; window.__played = []; window.__audios = [];
+  const node = () => { const n = { connect() { return n; }, start() { window.__started++; }, stop() {}, gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, buffer: null, type: '', Q: { value: 0 } }; return n; };
+  window.AudioContext = class {
+    constructor() { this.state = 'suspended'; this.currentTime = 0; this.sampleRate = 48000; this.destination = {}; this._cbs = []; window.__ctx = this; }
+    resume() { window.__resumes++; return new Promise((r) => { if (window.__allow) { this.state = 'running'; this._cbs.forEach((f) => f()); r(); } }); }
+    addEventListener(k, f) { if (k === 'statechange') this._cbs.push(f); }
+    createBuffer() { return { getChannelData() { return new Float32Array(16); } }; }
+    createBufferSource() { return node(); } createOscillator() { return node(); } createGain() { return node(); } createBiquadFilter() { return node(); }
+  };
+  window.webkitAudioContext = window.AudioContext;
+  window.Audio = class {
+    constructor(src) { this.src = src || ''; this.paused = true; this.loop = false; this.dataset = {}; window.__audios.push(this); }
+    addEventListener() {} setAttribute() {}
+    play() { this.paused = false; window.__played.push({ src: this.src, loop: this.loop }); return Promise.resolve(); }
+    pause() { this.paused = true; }
+  };
+};
+const loopPlays = (page) => page.evaluate(() => window.__played.filter((p) => p.loop && String(p.src).startsWith('data:audio/wav')).length);
+
+test('音: まだ触っていない(suspended)間は resume を試し、300ms 以内に running にならなければその音は捨てる', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const page = await context.newPage();
+  await page.goto(`${url}/index.html?mock=1`);
+  const r1 = await page.evaluate(async () => {
+    const s = ChinchiroAnim.createSounds(); window.__s = s;
+    s.clack();
+    await new Promise((r) => setTimeout(r, 450));
+    return { resumes: window.__resumes, started: window.__started, ready: s.ready };
+  });
+  assert.ok(r1.resumes >= 1, 'resume を試す');
+  assert.equal(r1.started, 0, '鳴らせないときは捨てる');
+  assert.equal(r1.ready, false);
+  const r2 = await page.evaluate(async () => {
+    window.__allow = true;
+    window.__s.clack();
+    await new Promise((r) => setTimeout(r, 100));
+    return { started: window.__started, ready: window.__s.ready };
+  });
+  assert.ok(r2.started >= 1, '許可されたら鳴る');
+  assert.equal(r2.ready, true);
+  await context.close();
+});
+
+test('音: 親機は最初のタップで無音ループが回り、AudioContext が running になるとバッジが消える', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  await createRoom(host);
+  await host.locator('#audio-badge:not([hidden])').waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#audio-badge').innerText()).includes('タップで音をオン'));
+  await host.evaluate(() => { window.__allow = true; });
+  await host.mouse.click(600, 600);
+  await host.locator('#audio-badge[hidden]').waitFor({ state: 'attached', ...T });
+  assert.ok((await loopPlays(host)) >= 1, '無音ループ');
+  await context.close();
+});
+
+test('音: スマホは自分の対戦中だけ無音ループが回り、決着したら止まる', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  const code = await createRoom(host);
+  const { page: kid } = await joinAs(context, code, 'うさ');
+  await kid.evaluate(() => { window.__allow = true; });
+  await kid.mouse.click(200, 700);
+  await kid.waitForTimeout(100);
+  assert.equal(await loopPlays(kid), 0, '見ているだけの間は回さない');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await fixDice(host, diceSeq([4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  assert.ok((await loopPlays(kid)) >= 1, '自分の対戦中に回る');
+  assert.equal(await kid.evaluate(() => window.__audios.find((a) => a.loop).paused), false, '結果を見ている間はまだ回る');
+  await host.click('#next-match');
+  await kid.locator('#requeue').waitFor({ state: 'visible', ...T });
+  assert.equal(await kid.evaluate(() => window.__audios.find((a) => a.loop).paused), true, '決着したら止まる');
+  await context.close();
+});
+
+test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らない', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(FAKE_AUDIO);
+  const { page: host } = await newPage(context, 'index.html?mock=1&quick=1');
+  const code = await createRoom(host);
+  const stagePage = await context.newPage();
+  await stagePage.goto(`${url}/index.html?mock=1&room=${code}&stage=1`);
+  await stagePage.locator('#screen-stage').waitFor({ state: 'visible', ...T });
+  await stagePage.evaluate(() => { window.__allow = true; });
+  await stagePage.mouse.click(600, 600);
+  await stagePage.waitForTimeout(100);
+  assert.equal(await stagePage.locator('#audio-badge').evaluate((e) => e.hidden), true);
+  assert.equal(await loopPlays(stagePage), 0);
+  await context.close();
+});
