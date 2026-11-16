@@ -209,3 +209,39 @@ h2::before { content: '▶ '; color: var(--red); }
 .arena.compact .center .vs { font-size: 1.6rem; }
 .arena .center .drink { display: block; color: var(--red); font-weight: 900; font-size: .9rem; margin-top: 4px; }
 .room-info .url.big { font-size: 1.05rem; color: var(--navy); max-width: 460px; font-weight: 900; }
+
+/* ---- 部品: ミニサイコロ・投げの履歴・順位・ルール表・対戦の記録 ---- */
+.mdice { display: inline-grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 20px; height: 20px; padding: 2px; box-sizing: border-box;
+  background: #fff; border: 2px solid var(--navy); border-radius: 5px; vertical-align: middle; margin-right: 2px; font-size: .7rem; line-height: 1; color: var(--muted); text-align: center; }
+.mdice i { width: 4px; height: 4px; border-radius: 50%; background: var(--navy); align-self: center; justify-self: center; }
+.mdice.bad { display: inline-flex; align-items: center; justify-content: center; font-weight: 900; }
+.mdice-out { font-size: .95rem; }
+.throws { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 4px; }
+.throws .throw { display: inline-flex; align-items: center; gap: 3px; background: #fff; border: 2px solid var(--navy); border-radius: 10px; padding: 2px 6px; font-size: .72rem; }
+.throws .throw b { color: var(--muted); font-size: .65rem; }
+.throws .throw em { font-style: normal; font-weight: 900; }
+.legend { text-align: center; font-size: .78rem; padding: 6px 10px; margin-top: 10px; color: var(--navy); }
+.rules { max-width: 560px; width: 100%; max-height: 88vh; overflow: auto; padding: 14px 16px; background: var(--cream); }
+.rules-title { margin: 0 0 4px; font-size: 1.3rem; }
+.rules-lead { margin: 0 0 8px; font-size: .78rem; color: var(--muted); }
+.rules-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.rules-table tr { border-bottom: 1px dashed #c9ccdf; }
+.rules-table td, .rules-table th { padding: 6px 4px; text-align: left; vertical-align: middle; }
+.rules-table th { font-weight: 900; white-space: nowrap; }
+.rules-table .mult { color: var(--red); font-weight: 900; white-space: nowrap; }
+.rules-table .note { font-size: .72rem; color: var(--muted); font-weight: 700; }
+.rules-flow { font-size: .8rem; padding-left: 18px; margin: 10px 0; line-height: 1.6; }
+.rules-room { font-size: .85rem; font-weight: 900; margin: 8px 0 2px; }
+.rules-ex { font-size: .78rem; color: var(--muted); margin: 0 0 10px; }
+.rules .btn-primary { margin-top: 6px; }
+.log-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 6px 4px; border-bottom: 1px dashed #c9ccdf; font-size: .78rem; }
+.log-row:last-child { border-bottom: 0; }
+.log-row.mine { background: var(--yellow); border-radius: 8px; }
+.log-row .ln { color: var(--muted); font-size: .7rem; width: 2em; }
+.log-row .lside { display: inline-flex; align-items: center; gap: 3px; }
+.log-row .lside b { max-width: 7em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-row .lside em { font-style: normal; font-weight: 900; }
+.log-row .lvs { color: var(--muted); font-size: .7rem; }
+.log-row .lres { font-weight: 900; }
+.log-row .lres small { color: var(--muted); font-weight: 700; margin-left: 3px; }
+.log-row .lpt.plus { color: var(--c-all); } .log-row .lpt.minus { color: var(--red); }
