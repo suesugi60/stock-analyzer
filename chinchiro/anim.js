@@ -273,6 +273,8 @@ const ChinchiroAnim = (() => {
       speechWarm = true;
       try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; s.speak(u); } catch { /* 読み上げ不可 */ }
     }
+    // 振る音・転がる音の大きさ(出口で 1.0 を超えると音が割れるので、着地音より控えめにする)
+    const RATTLE_NOISE = 0.95, RATTLE_TONE = 0.2, ROLL_NOISE = 0.3;
     function noise(dur, freq, q, vol) { ensure((c) => noiseAt(c, dur, freq, q, vol)); }
     function noiseAt(c, dur, freq, q, vol) {
       const len = Math.floor(c.sampleRate * dur);
@@ -344,11 +346,32 @@ const ChinchiroAnim = (() => {
       get unlocked() { return unlocked; },
       /** 着地: 高い「カッ」+ 低い「ドッ」。 */
       clack(vol = 1) { noise(0.07, 1800 + jitter() * 900, 1.2, 0.8 * vol); tone(2400 + jitter() * 600, 0.1, 0.22 * vol); lowNoise(0.09, 0.7 * vol); },
-      rattle(ms = 600) { const n = Math.floor(ms / 60); for (let i = 0; i < n; i++) setTimeout(() => { noise(0.03, 2600 + jitter() * 900, 2, 0.3); }, i * 60 + jitter() * 20); },
+      /**
+       * 手の中でサイコロを振る「カラカラ」。ms の間、細かい間隔で鳴らし続ける。{ stop() } を返す。
+       * 着地音を小さくした音(カッ+コッ)を、小さなスピーカー(ノートPC・スマホ)でも着地音に埋もれない大きさで出す。
+       * alive を渡すと、2 回目以降は alive() が真の間だけ鳴らす(絵が消えたのに音だけ残らないように)。
+       */
+      rattle(ms = 600, vol = 1, alive = null) {
+        const startedAt = Date.now();
+        let timer = null; let stopped = false;
+        const click = () => { noise(0.05, 1700 + jitter() * 1500, 0.9, RATTLE_NOISE * vol); tone(1900 + jitter() * 1300, 0.04, RATTLE_TONE * vol); };
+        const next = () => {
+          timer = setTimeout(() => {
+            if (stopped || Date.now() - startedAt >= ms || (alive && !alive())) return;
+            click(); next();
+          }, 46 + jitter() * 28);
+        };
+        click(); next();
+        return { stop() { stopped = true; clearTimeout(timer); } };
+      },
       /** 投げ込みの風切り。 */
       whoosh() { sweep(180, 900, 0.35, 0.25); noise(0.3, 1200, 0.6, 0.25); },
       /** 転がっている間のゴロゴロ。 */
-      rumble(ms = 900) { const n = Math.floor(ms / 45); for (let i = 0; i < n; i++) setTimeout(() => lowNoise(0.05, 0.35 * (1 - i / n)), i * 45); },
+      rumble(ms = 900) {
+        const n = Math.floor(ms / 45);
+        // 低い音(220Hz 以下)だけだと小さなスピーカーでは聞こえないので、中くらいの高さの「コロコロ」も重ねる
+        for (let i = 0; i < n; i++) setTimeout(() => { const v = 1 - i / n; lowNoise(0.05, 0.35 * v); noise(0.04, 800 + jitter() * 500, 1.2, ROLL_NOISE * v); }, i * 45);
+      },
       /** 強い役の「ドン!」。 */
       boom() { lowNoise(0.5, 1.0); sweep(120, 40, 0.5, 0.5); noise(0.25, 600, 0.5, 0.5); },
       /** リーチの鼓動(レベルが高いほど速く・多く。激アツは上昇音つき)。{ stop() } を返す。 */
@@ -421,6 +444,11 @@ const ChinchiroAnim = (() => {
       fx: root.querySelector('.fx-layer'), stamp: root.querySelector('.result-stamp'), hud: root.querySelector('.hud'),
     };
     let running = null; // { anims: Animation[], timers: number[], skipped, resolveSkip }
+    let waitingShake = null; // 振るのを待っている間の「カラカラ」({ stop() })
+    const WAITING_SHAKE_MS = 10000; // 待ちの音を鳴らし続ける上限(ふつうは reset()/play() が先に止める)
+    /** 鳴り続ける音を、この演出が終わる・飛ばされるときに止められるように預かる。 */
+    const keepStop = (run, handle) => { if (handle && typeof handle.stop === 'function') run.stops.push(handle); };
+    const stopWaitingShake = () => { if (waitingShake) { try { waitingShake.stop(); } catch { /* 無視 */ } waitingShake = null; } };
 
     function fit() {
       const w = root.clientWidth || 480;
@@ -457,6 +485,7 @@ const ChinchiroAnim = (() => {
     }
 
     function reset() {
+      stopWaitingShake();
       if (running) { for (const a of running.anims) a.cancel(); for (const t of running.timers) clearTimeout(t); stopAll(running); running = null; }
       el.dice.innerHTML = '';
       el.fx.innerHTML = '';
@@ -743,7 +772,7 @@ const ChinchiroAnim = (() => {
       // 構え(手の中でカラカラ)
       if (!reduced) {
         el.hand.classList.add('rattle');
-        sounds.rattle(550);
+        keepStop(run, sounds.rattle(550));
         await sleep(550);
         if (run !== running) return;
         el.hand.classList.remove('rattle');
@@ -779,7 +808,7 @@ const ChinchiroAnim = (() => {
           later(() => {
             for (const a of anims) a.playbackRate = SLOW_RATE;
             el.table.classList.add('zoom');
-            sounds.rattle(500);
+            keepStop(run, sounds.rattle(500, 0.6));
             for (const k of bounces) if (k.off > SLOW_OFF) later(() => bounceFx(k), (k.off - SLOW_OFF) * D / SLOW_RATE);
           }, delay + D * SLOW_OFF);
           return;
@@ -854,7 +883,10 @@ const ChinchiroAnim = (() => {
       el.bubble.textContent = `${thrower && thrower.name ? thrower.name + ' さんが' : ''}振っています…`;
       el.hand.classList.add('rattle');
       root.classList.add('playing');
-      sounds.rattle(600);
+      // 親機の返事が来るまで鳴らし続ける(reset()/play() で止まる。手の絵が消えていたら音も止める)
+      const hand = el.hand;
+      const handle = sounds.rattle(WAITING_SHAKE_MS, 1, () => hand.classList.contains('rattle') && hand.getClientRects().length > 0);
+      waitingShake = handle && typeof handle.stop === 'function' ? handle : null;
     }
 
     /** 登場・結果シーンのカード(キャラ・名前・肩書き。結果では出目と役も)。名前は textContent なのでそのまま渡してよい。 */
@@ -940,7 +972,7 @@ const ChinchiroAnim = (() => {
       el.hud.appendChild(intro);
       if (quick) { await sleep(60); }
       else {
-        sounds.whoosh(); sounds.rattle(300);
+        sounds.whoosh(); keepStop(run, sounds.rattle(300, 0.7));
         await sleep(520); if (run !== running) return;
         intro.classList.add('slam'); fxFlash('white', 400); fxShake(true); sounds.boom(); sounds.hit();
         await sleep(650); if (run !== running) return;
