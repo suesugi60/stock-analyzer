@@ -194,6 +194,14 @@ node --test chinchiro/test/logic.test.mjs chinchiro/test/sync.test.mjs
 node --test chinchiro/test/e2e.test.mjs   # Playwright + Chromium が必要(mock 同期で動く)
 ```
 
+JS/CSS を変えたら、公開する前に次を実行する(`index.html` の読み込みに付けた印 `?v=…` を中身に合わせて更新する。合っていないと画面のテストが失敗する)。
+
+```bash
+node chinchiro/test/stamp-version.mjs
+```
+
+印があるので、公開後にページを再読み込みすれば必ず新しい版になる(印が無いと、ブラウザが古いファイルを最長 10 分使い続けることがある)。
+
 ## 注意(このリポジトリの同期について)
 
 `publish_public.sh` は Dropbox 側の元フォルダから `rsync --delete` でこのリポジトリへ同期します。
