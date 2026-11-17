@@ -538,7 +538,9 @@ const ChinchiroAnim = (() => {
       let rx = rnd() * 360; let ry = rnd() * 360;
       const n = path.length;
       path.forEach((k, idx) => {
-        const easing = k.h > 0 ? 'ease-in' : 'ease-out';
+        // 跳ねたあとは「上がりは減速・下りは加速」。投げ込み(最初の区間)だけは減速させず、器に当たる瞬間まで勢いを保つ
+        // (減速して着くと、見た目が先に「着いて」着地音があとから鳴るように感じる)。
+        const easing = idx === 0 ? 'linear' : k.h > 0 ? 'ease-in' : 'ease-out';
         wrapF.push({ transform: `translate(${k.p.x}px, ${k.p.y - k.h}px)`, offset: k.off, easing, opacity: out && idx === n - 1 ? 0 : 1 });
         const last = idx >= n - 2 && !out;
         if (!last) { rx += 120 + rnd() * 160; ry += 140 + rnd() * 200; }
