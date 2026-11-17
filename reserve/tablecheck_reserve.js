@@ -4,7 +4,7 @@
 
  使い方:
    node reserve/tablecheck_reserve.js --date 11/20 --time 19:00 --adults 2
-       [--children 0] [--babies 0] [--shop terrace|lounge]   既定は terrace
+       [--children 0] [--babies 0] [--shop lounge|terrace]   店の既定は lounge
        [--dry-run]            フォームを埋めるだけで送信しない(初回確認用)
        [--stop-at-confirm]    確定画面まで進んで止まる(最終ボタンは押さない)
        [--request "ご要望"] [--purpose デート] [--visits 初来店] [--marketing]
@@ -45,7 +45,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const shopKey = (args.shop || DEFAULT_SHOP).toString();
   const shop = SHOPS[shopKey];
-  if (!shop) throw new Fail(1, `--shop は terrace か lounge: ${shopKey}`);
+  if (!shop) throw new Fail(1, `--shop は lounge か terrace: ${shopKey}`);
   if (!args.date || !args.time || !args.adults) throw new Fail(1, '--date --time --adults は必須です');
   const today = jstToday();
   const date = parseDate(args.date, today);
