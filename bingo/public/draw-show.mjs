@@ -24,6 +24,11 @@ export function reducedMotion() {
   return !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+// いま演出を見せられるか(「動きを減らす」設定の端末や、画面が見えていないときは見せない)。
+export function canAnimate() {
+  return !!document.getElementById('draw-show') && !reducedMotion() && document.visibilityState === 'visible';
+}
+
 // 進行中の演出を、その場で終わらせる。
 export function cancelDraw() {
   if (current) current.finish();
@@ -38,9 +43,7 @@ export function playDraw({ n, sound = null }) {
   const canvas = document.getElementById('draw-show-canvas');
   const ballEl = document.getElementById('draw-show-ball');
   const titleEl = document.getElementById('draw-show-title');
-  if (!root || !canvas || !canvas.getContext || reducedMotion() || document.visibilityState !== 'visible') {
-    return Promise.resolve();
-  }
+  if (!root || !canvas || !canvas.getContext || !canAnimate()) return Promise.resolve();
 
   return new Promise((resolve) => {
     const letter = letterOf(n);
