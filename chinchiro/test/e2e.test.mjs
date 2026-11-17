@@ -1402,3 +1402,31 @@ test('「動きを減らす」設定の端末でも、サイコロの演出と�
   assert.equal(await page.locator('#stage .cube.hold').count(), 1);
   await context.close();
 });
+
+// ---------- 投げ込みの勢い(着地音と見た目を合わせる) ----------
+test('デモ: 投げ込まれたサイコロは、器に当たる瞬間まで勢いがある(減速して先に着いて見えない)', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=2,3,5&seed=7&reach=0');
+  await page.locator('#stage .die-wrap').nth(2).waitFor({ state: 'attached', ...T });
+  // サイコロの動きが始まるのを待ち、止めてから、時刻を指定して位置を読む
+  await page.waitForFunction(() => [...document.querySelectorAll('#stage .die-wrap')].every((el) => el.getAnimations().length > 0), null, T);
+  const left = await page.evaluate(() => [...document.querySelectorAll('#stage .die-wrap')].map((el) => {
+    const anim = el.getAnimations()[0];
+    anim.pause();
+    const timing = anim.effect.getComputedTiming();
+    const firstHit = timing.delay + timing.duration * 0.26; // 最初に器に当たる時刻(着地音が鳴る時刻)
+    const at = (ms) => { anim.currentTime = ms; const r = el.getBoundingClientRect(); return [r.left, r.top]; };
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const start = at(timing.delay);
+    const hit = at(firstHit);
+    return { total: dist(start, hit), before100: dist(at(firstHit - 100), hit), before50: dist(at(firstHit - 50), hit) };
+  }));
+  assert.equal(left.length, 3);
+  for (const d of left) {
+    assert.ok(d.total > 100, `飛ぶ距離 ${d.total}`);
+    // 当たる 0.1 秒前には、まだ 2 割以上の距離が残っている(減速していると 1 割を切る)
+    assert.ok(d.before100 / d.total >= 0.2, `0.1秒前の残り ${(d.before100 / d.total * 100).toFixed(1)}%`);
+    assert.ok(d.before50 / d.total >= 0.1, `0.05秒前の残り ${(d.before50 / d.total * 100).toFixed(1)}%`);
+  }
+  assert.deepEqual(errors, []);
+  await context.close();
+});
