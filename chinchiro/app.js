@@ -703,7 +703,7 @@
       parent: { name: settings.hostName || '配信者', char: settings.hostChar, color: '#ff4d4d' },
       child: { name: child ? (child.hidden ? '？？？' : (child.name || 'リスナー')) : '挑戦者', char: child && validChar(child.char) ? child.char : 'binbo', color: colorFor(m.childUid) },
     };
-    runPlayback();
+    runPlayback(true);
     return true;
   }
   function maybePlayThrow() {
@@ -721,11 +721,16 @@
     const side = st.match && st.match[lt.by];
     const remaining = side && side.throws.length ? (Number.isFinite(L.MAX_THROWS) ? L.MAX_THROWS - side.throws.length : Infinity) : 0;
     pendingThrow = { throwObj: lt.throw, thrower, remaining };
-    runPlayback();
+    runPlayback(true);
     return true;
   }
-  async function runPlayback() {
-    if (playing) { stage.skip(); return; } // 新しい投げが来たら今のを飛ばして次へ
+  /**
+   * 予約した場面(登場・投げ・結果)を順に再生する。
+   * skipCurrent: 再生中の場面を飛ばして次へ進むか。新しい投げ・新しい対戦が来たときだけ true。
+   * 結果シーンは、勝負を決めた投げと同じ更新で届く。ここで飛ばすと、その投げの演出(振る・跳ねる・音)が丸ごと消えるので、飛ばさず後ろに並べる。
+   */
+  async function runPlayback(skipCurrent = false) {
+    if (playing) { if (skipCurrent) stage.skip(); return; }
     playing = true;
     renderControlsOnly();
     while (pendingIntro || pendingThrow || pendingResult) {
