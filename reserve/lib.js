@@ -96,6 +96,6 @@ function parseArgs(argv) {
   return out;
 }
 
-const DEFAULT_SHOP = 'terrace'; // 指定が無ければ KANADE TERRACE
+const DEFAULT_SHOP = 'lounge'; // 指定が無ければ KANADE LOUNGE
 
 module.exports = { parseDate, parseTime, chooseSeatOnlyPlan, resolveProfile, parseArgs, REQUIRED_PROFILE, DEFAULT_SHOP };

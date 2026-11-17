@@ -83,6 +83,6 @@ test('parseArgs: flags, booleans and numbers', () => {
   assert.equal(a.shop, 'terrace');
 });
 
-test('DEFAULT_SHOP is KANADE TERRACE', () => {
-  assert.equal(DEFAULT_SHOP, 'terrace');
+test('DEFAULT_SHOP is KANADE LOUNGE', () => {
+  assert.equal(DEFAULT_SHOP, 'lounge');
 });
