@@ -1402,3 +1402,51 @@ test('「動きを減らす」設定の端末でも、サイコロの演出と�
   assert.equal(await page.locator('#stage .cube.hold').count(), 1);
   await context.close();
 });
+
+// ---------- 点数リセット ----------
+test('点数リセット: 親機のボタンで全員の点数が持ち点に戻り、勝敗も 0 に。対戦中は押せない', async () => {
+  const { host, kids, context, code, errors } = await setupMatch([['うさ', 'kappa']], { start: '300' });
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  assert.equal(await host.locator('#reset-scores').evaluate((e) => e.hidden), true, '対戦中は出ない');
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#host-record').innerText()).includes('320点'));
+  await host.locator('#reset-scores').waitFor({ state: 'visible', ...T });
+  host.once('dialog', (d) => d.accept());
+  await host.click('#reset-scores');
+  await host.locator('#host-record').filter({ hasText: '300点' }).waitFor({ state: 'visible', ...T });
+  assert.ok((await host.locator('#host-record').innerText()).includes('0勝0敗'));
+  await kid.locator('#my-record').filter({ hasText: '300点' }).waitFor({ state: 'visible', ...T });
+  assert.ok((await kid.locator('#my-record').innerText()).includes('0勝0敗'));
+  const room = await readRoom(host, code);
+  assert.equal(room.state.phase, 'lobby');
+  assert.equal(Object.values(room.players)[0].points, 300);
+  assert.ok((await host.locator('#screen-host [data-ref="log"]').innerText()).includes('#1'), '記録は残る');
+  // キャンセルしたら変わらない
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T }).catch(() => {});
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('点数リセット: 確認でキャンセルすると何も変わらない', async () => {
+  const { host, kids, context, code } = await setupMatch();
+  const kid = kids[0].page;
+  await fixDice(host, diceSeq([4, 4, 6], [1, 2, 3]));
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await host.click('#host-roll');
+  await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
+  await kid.click('#listener-roll');
+  await host.locator('#reset-scores').waitFor({ state: 'visible', ...T });
+  host.once('dialog', (d) => d.dismiss());
+  await host.click('#reset-scores');
+  await host.waitForTimeout(300);
+  assert.ok((await host.locator('#host-record').innerText()).includes('120点'));
+  assert.equal((await readRoom(host, code)).state.phase, 'result');
+  await context.close();
+});
