@@ -301,3 +301,18 @@ test('記録: 結果が出ると state.log の先頭に1件入り、30件で切�
   s5 = L.applyThrow(s5, 'child', { dice: [6, 2, 2], seed: 1 }, settings, 2).state;
   assert.equal(s5.phase, 'parent'); assert.deepEqual(s5.log, []);
 });
+
+test('resetScores: 親の点数を持ち点に戻し、勝敗・飲みを 0 にする。対戦中は不可', () => {
+  const settings = { mode: 'points', unit: 10, startPoints: 300 };
+  let st = L.startMatch(L.createState(300), 'u1');
+  st = L.applyThrow(st, 'parent', { dice: [4, 4, 6], seed: 1 }, settings, 1).state;
+  assert.throws(() => L.resetScores(st, 300), /対戦中/);
+  st = L.applyThrow(st, 'child', { dice: [1, 2, 3], seed: 2 }, settings, 2).state;
+  assert.equal(st.phase, 'result'); assert.equal(st.host.points, 320); assert.equal(st.host.wins, 1);
+  const r = L.resetScores(st, 300);
+  assert.deepEqual(r.host, { points: 300, wins: 0, losses: 0, drinks: 0 });
+  assert.equal(r.seq, st.seq + 1);
+  assert.equal(r.phase, 'lobby'); assert.equal(r.match, null); assert.equal(r.result, null);
+  assert.equal(r.log.length, 1, '記録は残す');
+  assert.equal(L.resetScores(L.createState(), 50).host.points, 50);
+});

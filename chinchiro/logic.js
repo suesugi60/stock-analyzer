@@ -201,6 +201,18 @@ const ChinchiroLogic = (() => {
     };
   }
 
+  /** 点数リセット: 親の点数を持ち点に戻し、勝敗・飲みを 0 に。ロビーに戻す(記録は残す)。対戦中は不可。 */
+  function resetScores(state, start = DEFAULT_START_POINTS) {
+    const cur = normalizeState(state);
+    if (cur.phase === 'parent' || cur.phase === 'child') throw new Error('対戦中はリセットできません');
+    const s = bump(cur);
+    s.host = { points: start, wins: 0, losses: 0, drinks: 0 };
+    s.phase = 'lobby';
+    s.match = null;
+    s.result = null;
+    return s;
+  }
+
   function nextMatch(state) {
     const s = bump(state);
     s.phase = 'lobby';
@@ -212,7 +224,7 @@ const ChinchiroLogic = (() => {
   return {
     DRINK_UNITS, POINT_UNITS, START_POINTS, DEFAULT_START_POINTS, LOG_MAX, SHONBEN_RATE, MAX_THROWS, NONE, SHONBEN, HIFUMI,
     evaluate, penaltyMult, judge, resultDeltas, rollDice, startPoints,
-    createState, normalizeState, startMatch, canThrow, applyThrow, nextMatch,
+    createState, normalizeState, startMatch, canThrow, applyThrow, nextMatch, resetScores,
   };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroLogic;

@@ -462,6 +462,7 @@
     }
     $('next-match').hidden = playing || st.phase !== 'result';
     $('rematch').hidden = playing || st.phase !== 'result' || !child || child.banned;
+    $('reset-scores').hidden = playing || !(st.phase === 'lobby' || st.phase === 'result');
   }
 
   function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); updateAudioBadge(); }
@@ -781,6 +782,20 @@
     const st = L.startMatch(cur, uid);
     await backend.update(`rooms/${code}`, { state: st, [`queue/${uid}`]: null }); // 列からの削除と対戦開始を1回で
   }
+  /** 全員の点数を持ち点に戻し、勝敗・飲みを 0 にする(1 回の書き込みで)。 */
+  async function hostResetScores() {
+    const cur = room.state;
+    if (cur.phase === 'parent' || cur.phase === 'child') return;
+    const start = startPts(room.settings);
+    const upd = { state: L.resetScores(cur, start) };
+    for (const uid of Object.keys(room.players || {})) {
+      upd[`players/${uid}/points`] = start;
+      upd[`players/${uid}/wins`] = 0;
+      upd[`players/${uid}/losses`] = 0;
+      upd[`players/${uid}/drinks`] = 0;
+    }
+    await backend.update(`rooms/${code}`, upd);
+  }
   async function hostThrowAndSettle(by) {
     const st = room.state;
     if (!L.canThrow(st, by)) return;
@@ -877,6 +892,10 @@
   $('host-roll').addEventListener('click', () => { $('host-roll').hidden = true; hostDo(() => hostThrowAndSettle('parent')); });
   $('roll-for-child').addEventListener('click', () => { $('roll-for-child').hidden = true; hostDo(() => hostThrowAndSettle('child')); });
   $('next-match').addEventListener('click', () => hostDo(() => writeState(L.nextMatch(room.state))));
+  $('reset-scores').addEventListener('click', () => {
+    if (!confirm('全員の点数を持ち点に戻し、勝敗と飲んだ数も 0 にします。よろしいですか?(対戦の記録は残ります)')) return;
+    hostDo(hostResetScores);
+  });
   $('rematch').addEventListener('click', () => hostDo(() => { const uid = room.state.match && room.state.match.childUid; if (uid) return hostStartMatch(uid); }));
   $('listener-roll').addEventListener('click', () => listenerRoll().catch((e) => alert('振れませんでした: ' + e.message)));
   $('mute').addEventListener('click', () => { sounds.setMuted(!sounds.muted); store.set(KEY_MUTED, sounds.muted); renderMute(); });
