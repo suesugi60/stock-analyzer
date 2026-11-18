@@ -3,6 +3,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { serve } from './helpers.mjs';
+import { readFileSync } from 'node:fs';
+import { stamp } from './stamp-version.mjs';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const T = { timeout: 8000 };
@@ -10,6 +12,11 @@ let browser, srv, url;
 
 before(async () => { browser = await chromium.launch(); srv = await serve(); url = srv.url; });
 after(async () => { await browser?.close(); await srv?.close(); });
+
+test('公開: index.html の JS/CSS の印(?v=)が中身と合っている(再読み込みで必ず新しい版になる)', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(stamp(html) === html, 'JS/CSS を変えたら node chinchiro/test/stamp-version.mjs を実行して、index.html の印を更新する');
+});
 
 /** 起動時の voice/<役>.mp3|m4a の存在確認(HEAD)で出る 404 は想定内なので、ページエラーに数えない。 */
 const isVoiceProbe = (m) => /\/voice\/[a-z0-9_]+\.(mp3|m4a)$/.test(((m.location && m.location()) || {}).url || '');
@@ -1019,7 +1026,8 @@ test('音: スマホは自分の対戦中だけ無音ループが回り、決着
   await host.click('#host-roll');
   await kid.locator('#listener-roll').waitFor({ state: 'visible', ...T });
   await kid.click('#listener-roll');
-  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', ...T });
+  // スマホ側は演出を省かないので、決着の投げの演出と結果シーンを見終わるまで待つ
+  await kid.locator('#screen-listener [data-ref="log"] .log-row').first().waitFor({ state: 'visible', timeout: 25000 });
   assert.ok((await loopPlays(kid)) >= 1, '自分の対戦中に回る');
   assert.equal(await kid.evaluate(() => window.__audios.find((a) => a.loop).paused), false, '結果を見ている間はまだ回る');
   await host.click('#next-match');
@@ -1403,6 +1411,187 @@ test('「動きを減らす」設定の端末でも、サイコロの演出と�
   await context.close();
 });
 
+// ---------- 投げ込みの勢い(着地音と見た目を合わせる) ----------
+test('デモ: 投げ込まれたサイコロは、器に当たる瞬間まで勢いがある(減速して先に着いて見えない)', async () => {
+  const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=2,3,5&seed=7&reach=0');
+  await page.locator('#stage .die-wrap').nth(2).waitFor({ state: 'attached', ...T });
+  // サイコロの動きが始まるのを待ち、止めてから、時刻を指定して位置を読む
+  await page.waitForFunction(() => [...document.querySelectorAll('#stage .die-wrap')].every((el) => el.getAnimations().length > 0), null, T);
+  const left = await page.evaluate(() => [...document.querySelectorAll('#stage .die-wrap')].map((el) => {
+    const anim = el.getAnimations()[0];
+    anim.pause();
+    const timing = anim.effect.getComputedTiming();
+    const firstHit = timing.delay + timing.duration * 0.26; // 最初に器に当たる時刻(着地音が鳴る時刻)
+    const at = (ms) => { anim.currentTime = ms; const r = el.getBoundingClientRect(); return [r.left, r.top]; };
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const start = at(timing.delay);
+    const hit = at(firstHit);
+    return { total: dist(start, hit), before100: dist(at(firstHit - 100), hit), before50: dist(at(firstHit - 50), hit) };
+  }));
+  assert.equal(left.length, 3);
+  for (const d of left) {
+    assert.ok(d.total > 100, `飛ぶ距離 ${d.total}`);
+    // 当たる 0.1 秒前には、まだ 2 割以上の距離が残っている(減速していると 1 割を切る)
+    assert.ok(d.before100 / d.total >= 0.2, `0.1秒前の残り ${(d.before100 / d.total * 100).toFixed(1)}%`);
+    assert.ok(d.before50 / d.total >= 0.1, `0.05秒前の残り ${(d.before50 / d.total * 100).toFixed(1)}%`);
+  }
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+// ---------- 振っている間の音(実際に信号が出ているかを測る) ----------
+/**
+ * 出口へつながる音を、測定用の analyser にも分ける。15ms ごとに { peak, rms, shaking } を window.__audio に積む。
+ * shaking は、そのとき手の中でサイコロを振る絵(.hand.rattle)が出ているか。hand は、そのとき出ている役(まだなら空)。
+ */
+const AUDIO_TAP = () => {
+  window.__audio = [];
+  const original = AudioNode.prototype.connect;
+  AudioNode.prototype.connect = function connect(target, ...rest) {
+    if (target instanceof AudioDestinationNode) {
+      const c = target.context;
+      if (!c.__tap) {
+        c.__tap = c.createAnalyser();
+        c.__tap.fftSize = 1024;
+        const buf = new Float32Array(1024);
+        setInterval(() => {
+          c.__tap.getFloatTimeDomainData(buf);
+          let peak = 0; let sum = 0;
+          for (const v of buf) { peak = Math.max(peak, Math.abs(v)); sum += v * v; }
+          window.__audio.push({ t: performance.now(), peak, rms: Math.sqrt(sum / buf.length), shaking: !!document.querySelector('#stage .hand.rattle'), hand: (document.querySelector('#stage .result-stamp') || { dataset: {} }).dataset.hand || '' });
+        }, 15);
+      }
+      original.call(this, c.__tap);
+    }
+    return original.call(this, target, ...rest);
+  };
+};
+const loudest = (samples) => ({ peak: Math.max(0, ...samples.map((x) => x.peak)), rms: Math.max(0, ...samples.map((x) => x.rms)) });
+
+test('対戦: 親が振っている間(手の中でカラカラ)、音がはっきり鳴る', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(AUDIO_TAP);
+  const { page: host, errors } = await newPage(context, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid } = await openListener(context, code);
+  await kid.locator('#join-name').fill('うさ');
+  await kid.click('#join-challenge');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await host.bringToFront();
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 20000 });
+  await fixDice(host, diceSeq([2, 4, 6])); // 毎回同じ投げにする
+  await host.waitForTimeout(500);
+  await host.evaluate(() => { window.__audio.length = 0; });
+  await host.click('#host-roll');
+  await host.locator('#stage .hand.rattle').waitFor({ state: 'attached', ...T });
+  await host.locator('#stage .hand.rattle').waitFor({ state: 'detached', ...T });
+  await host.waitForTimeout(1800);
+  const samples = await host.evaluate(() => window.__audio);
+  const shaking = loudest(samples.filter((x) => x.shaking));
+  const bouncing = loudest(samples.filter((x) => !x.shaking));
+  // 振っている間の音が、器に当たる音に埋もれない大きさで出ている(直す前は実効値 0.03・最大振幅 0.15 ほどで、当たる音よりずっと小さかった)
+  assert.ok(shaking.rms >= 0.09, `振っている間の実効値 ${shaking.rms.toFixed(3)}`);
+  assert.ok(shaking.peak >= 0.35, `振っている間の最大振幅 ${shaking.peak.toFixed(3)}`);
+  assert.ok(shaking.rms >= bouncing.rms / 4, `当たる音(${bouncing.rms.toFixed(3)})の 1/4 以上: ${shaking.rms.toFixed(3)}`);
+  // 振る音で音が割れない(出口で 1.0 を超えない)
+  assert.ok(shaking.peak <= 1.0, `振っている間の最大振幅 ${shaking.peak.toFixed(3)}`);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('振るのを待っている間(showWaiting)は、演出が始まるまでカラカラ鳴り続け、始まると止まる', async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(AUDIO_TAP);
+  const { page, errors } = await newPage(context, 'index.html?demo=1&dice=2,2,5&seed=9&skip=1');
+  await page.locator('#stage .result-stamp[data-hand="me"]').waitFor({ state: 'visible', ...T });
+  await page.mouse.click(200, 700); // 音を出せるように、画面を一度さわる
+  await page.waitForTimeout(2600);  // デモの演出が終わるのを待つ
+  await page.evaluate(() => { window.ChinchiroDemo.stage.showWaiting({ name: 'うさ', char: 'kappa', color: '#3b8cff' }); });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { window.__audio.length = 0; });
+  // 親機の返事が遅いとき(ここでは 2 秒)も、手が振れている間は鳴り続ける
+  await page.waitForTimeout(2000);
+  const waiting = await page.evaluate(() => window.__audio);
+  const byHalf = [0, 1, 2, 3].map((i) => loudest(waiting.filter((x) => x.t >= waiting[0].t + i * 500 && x.t < waiting[0].t + (i + 1) * 500)));
+  for (const [i, part] of byHalf.entries()) assert.ok(part.rms >= 0.08, `待っている ${i * 0.5}〜${(i + 1) * 0.5} 秒の実効値 ${part.rms.toFixed(3)}`);
+  assert.ok(waiting.every((x) => x.shaking), '待っている間は手が振れている');
+  // 場面を片づけると、音も止まる
+  await page.evaluate(() => { window.ChinchiroDemo.stage.reset(); });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.__audio.length = 0; });
+  await page.waitForTimeout(900);
+  const after = loudest(await page.evaluate(() => window.__audio));
+  assert.ok(after.peak < 0.01, `片づけたあとの最大振幅 ${after.peak.toFixed(3)}`);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+/** ションベンになる 1 投(fixDice 用。diceSeq の 1 投ぶんと同じ並び)。 */
+const shonbenThrow = (d) => [0.01, ...d.map((x) => (x - 0.5) / 6), 0.5];
+/**
+ * 演出を省かない実際の対戦で、勝負を決める投げが最後まで流れるかを、親機と子のスマホの両方で確かめる。
+ * seqText の出目で親が 1 投し、子が kidRolls 回振る(0 なら親の 1 投が勝負を決める)。最後の 1 投を測る。
+ */
+async function decidingThrowPlaysInFull(seqText, kidRolls) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(AUDIO_TAP);
+  const { page: host, errors } = await newPage(context, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  const { page: kid, errors: kidErrors } = await openListener(context, code);
+  await kid.locator('#join-name').fill('うさ');
+  await kid.click('#join-challenge');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await host.bringToFront();
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 20000 });
+  await fixDice(host, seqText);
+  await host.waitForTimeout(300);
+  const clear = async () => { for (const p of [host, kid]) await p.evaluate(() => { window.__audio.length = 0; }); };
+  await clear();
+  await host.click('#host-roll');
+  await kid.bringToFront();
+  for (let n = 0; n < kidRolls; n++) {
+    await kid.locator('#listener-roll').waitFor({ state: 'visible', timeout: 25000 });
+    await kid.waitForTimeout(300);
+    await clear();
+    await kid.click('#listener-roll');
+  }
+  // 投げの演出が終わると、結果シーンが出る
+  await host.locator('#stage .result-scene').waitFor({ state: 'visible', timeout: 25000 });
+  await kid.locator('#stage .result-scene').waitFor({ state: 'visible', timeout: 25000 });
+  for (const [name, p] of [['親機', host], ['子のスマホ', kid]]) {
+    const samples = await p.evaluate(() => window.__audio);
+    const shaking = samples.filter((x) => x.shaking);
+    const span = shaking.length ? shaking[shaking.length - 1].t - shaking[0].t : 0;
+    assert.ok(span >= 400, `${name}: 手の中で振る絵が出ていた時間 ${Math.round(span)}ms`);
+    assert.ok(loudest(shaking).rms >= 0.09, `${name}: 振っている間の実効値 ${loudest(shaking).rms.toFixed(3)}`);
+    // 振りはじめてから役が出るまで、投げ込み〜跳ねる〜止まるの時間がある(飛ばされると 0.2 秒ほどで役が出る)
+    const shown = samples.find((x) => x.t > shaking[shaking.length - 1].t && x.hand);
+    assert.ok(shown, `${name}: 役が出た`);
+    assert.ok(shown.t - shaking[0].t >= 1500, `${name}: 振りはじめてから役が出るまで ${Math.round(shown.t - shaking[0].t)}ms`);
+  }
+  assert.deepEqual(errors, []);
+  assert.deepEqual(kidErrors, []);
+  await context.close();
+}
+
+test('対戦: 勝負が決まる投げ(子の1投目で決着)でも、振る演出と音が飛ばされない', async () => {
+  await decidingThrowPlaysInFull(diceSeq([4, 4, 6], [1, 2, 3]), 1); // 親 6の目 → 子 ヒフミ
+});
+
+test('対戦: 相手の2回目の投げ(目なしのあと、2投目で決着)でも、演出と音が飛ばされない', async () => {
+  await decidingThrowPlaysInFull(diceSeq([4, 4, 6], [2, 4, 6], [2, 2, 5]), 2); // 親 6の目 → 子 目なし → 子 5の目
+});
+
+test('対戦: 子がションベンのときも、演出と音が飛ばされない', async () => {
+  await decidingThrowPlaysInFull(JSON.stringify([...JSON.parse(diceSeq([4, 4, 6])), ...shonbenThrow([2, 4, 6])]), 1);
+});
+
+test('対戦: 親がションベンのときも、演出と音が飛ばされない', async () => {
+  await decidingThrowPlaysInFull(JSON.stringify(shonbenThrow([2, 4, 6])), 0);
+});
+
 // ---------- 点数リセット ----------
 test('点数リセット: 親機のボタンで全員の点数が持ち点に戻り、勝敗も 0 に。対戦中は押せない', async () => {
   const { host, kids, context, code, errors } = await setupMatch([['うさ', 'kappa']], { start: '300' });
@@ -1427,8 +1616,6 @@ test('点数リセット: 親機のボタンで全員の点数が持ち点に戻
   assert.equal(room.state.phase, 'lobby');
   assert.equal(Object.values(room.players)[0].points, 300);
   assert.ok((await host.locator('#screen-host [data-ref="log"]').innerText()).includes('#1'), '記録は残る');
-  // キャンセルしたら変わらない
-  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T }).catch(() => {});
   assert.deepEqual(errors, []);
   await context.close();
 });

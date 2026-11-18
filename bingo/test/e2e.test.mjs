@@ -1244,3 +1244,165 @@ test('主催者: 抽選の演出の間は、リーチのお知らせを出さな
   await host.page.locator('#toast', { hasText: 'りいち さんがリーチ' }).waitFor();
   assert.deepEqual(host.errors, []);
 });
+
+// ---- 抽選の音(実際に信号が出ているかを測る) ----
+
+// 出口へつながる音を、測定用の analyser にも分ける。window.__audio.peak に、測り始めてからの最大の振幅が入る。
+async function tapAudio(context) {
+  await context.addInitScript(() => {
+    const original = AudioNode.prototype.connect;
+    window.__audio = { peak: 0 };
+    AudioNode.prototype.connect = function connect(target, ...rest) {
+      if (target instanceof AudioDestinationNode) {
+        const ctx = target.context;
+        if (!ctx.__tap) {
+          ctx.__tap = ctx.createAnalyser();
+          ctx.__tap.fftSize = 2048;
+          const buf = new Float32Array(2048);
+          setInterval(() => {
+            ctx.__tap.getFloatTimeDomainData(buf);
+            let peak = 0;
+            for (const v of buf) peak = Math.max(peak, Math.abs(v));
+            window.__audio.peak = Math.max(window.__audio.peak, peak);
+          }, 15);
+        }
+        original.call(this, ctx.__tap);
+      }
+      return original.call(this, target, ...rest);
+    };
+  });
+}
+
+async function openHostWithAudio({ motion = false, viewport = PHONE, init = null } = {}) {
+  const ctx = await browser.newContext({ viewport, reducedMotion: motion ? 'no-preference' : 'reduce' });
+  contexts.push(ctx);
+  await tapAudio(ctx);
+  if (init) await ctx.addInitScript(init);
+  const host = await openPage('/host', { context: ctx });
+  await host.page.fill('#password', HOST_PASSWORD);
+  await host.page.click('#login-btn');
+  await host.page.locator('#panel').waitFor();
+  return host;
+}
+
+const resetPeak = (page) => page.evaluate(() => { window.__audio.peak = 0; });
+const peakOf = (page) => page.evaluate(() => window.__audio.peak);
+// ms の間に鳴った音の最大の振幅
+async function loudness(page, ms) {
+  await resetPeak(page);
+  await sleep(ms);
+  return peakOf(page);
+}
+
+test('音: スイッチを入れた瞬間に確認の音が鳴り、「音を試す」でも鳴る', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio();
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'false');
+  await resetPeak(host.page);
+  await host.page.click('#sound-toggle');
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'true');
+  await sleep(500);
+  assert.ok((await peakOf(host.page)) > 0.2, `確認の音が鳴る(${await peakOf(host.page)})`);
+
+  await sleep(900);
+  await resetPeak(host.page);
+  await host.page.click('#sound-test');
+  await sleep(500);
+  assert.ok((await peakOf(host.page)) > 0.2, `試しの音が鳴る(${await peakOf(host.page)})`);
+  assert.deepEqual(host.errors, []);
+});
+
+test('音: 「ランダムに引く」で、玉の音と決定音がはっきり鳴る', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio({ motion: true });
+  await host.page.click('#sound-toggle');
+  await sleep(1200);
+  await host.page.click('#draw-btn');
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  const rolling = await loudness(host.page, 1500);
+  assert.ok(rolling > 0.2, `玉の音(${rolling})`);
+  await host.page.locator('#draw-show-ball').waitFor({ state: 'visible' });
+  const revealed = await loudness(host.page, 500);
+  assert.ok(revealed > 0.3, `決定音(${revealed})`);
+  assert.deepEqual(host.errors, []);
+});
+
+test('音: 盤面から番号を押したときも、決定音が鳴る', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio({ motion: true });
+  await host.page.click('#sound-toggle');
+  await sleep(1200);
+  await resetPeak(host.page);
+  await host.page.click('#board .num[data-n="33"]');
+  await host.page.locator('#board .num[data-n="33"].called').waitFor();
+  await sleep(500);
+  assert.ok((await peakOf(host.page)) > 0.3, `決定音(${await peakOf(host.page)})`);
+  assert.equal(await host.page.locator('#draw-show').isVisible(), false);
+  assert.deepEqual(host.errors, []);
+});
+
+test('音: 演出を切っていても、動きを減らす設定でも、決定音は鳴る', async () => {
+  await fresh(server);
+  // 動きを減らす設定の端末(演出は出ない)
+  const host = await openHostWithAudio({ motion: false });
+  await host.page.click('#sound-toggle');
+  await sleep(1200);
+  await resetPeak(host.page);
+  await host.page.click('#draw-btn');
+  await host.page.locator('#host-drawn-count', { hasText: '1個目' }).waitFor();
+  await sleep(500);
+  assert.ok((await peakOf(host.page)) > 0.3, `動きを減らす設定(${await peakOf(host.page)})`);
+
+  // 演出のスイッチを切った端末
+  const other = await openHostWithAudio({ motion: true });
+  await other.page.click('#fx-toggle');
+  assert.equal(await other.page.locator('#sound-toggle').isDisabled(), false);
+  await other.page.click('#sound-toggle');
+  await sleep(1200);
+  await resetPeak(other.page);
+  await other.page.click('#draw-btn');
+  await other.page.locator('#host-drawn-count', { hasText: '2個目' }).waitFor();
+  await sleep(500);
+  assert.ok((await peakOf(other.page)) > 0.3, `演出オフ(${await peakOf(other.page)})`);
+  assert.deepEqual([...host.errors, ...other.errors], []);
+});
+
+test('音: スイッチが切れていれば鳴らない', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio({ motion: true });
+  await host.page.click('#draw-btn');
+  await host.page.locator('#draw-show').waitFor({ state: 'visible' });
+  await host.page.locator('#draw-show').waitFor({ state: 'hidden' });
+  await host.page.click('#board .num:not(.called)');
+  await sleep(600);
+  assert.equal(await host.page.evaluate(() => window.__audio.peak), 0);
+  assert.deepEqual(host.errors, []);
+});
+
+test('音: 前回オンのまま開き直した端末でも、画面を一度さわれば鳴る', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio({ motion: false });
+  await host.page.click('#sound-toggle');
+  await host.page.reload();
+  await host.page.locator('#panel').waitFor();
+  assert.equal(await host.page.locator('#sound-toggle').getAttribute('aria-pressed'), 'true');
+  await sleep(300);
+  await resetPeak(host.page);
+  await host.page.click('#board .num[data-n="12"]');
+  await host.page.locator('#board .num[data-n="12"].called').waitFor();
+  await sleep(500);
+  assert.ok((await peakOf(host.page)) > 0.3, `開き直したあと(${await peakOf(host.page)})`);
+  assert.deepEqual(host.errors, []);
+});
+
+test('音: iPhone の消音モードでも鳴るよう、音の種類を「再生」にする', async () => {
+  await fresh(server);
+  // iPhone の Safari にある audioSession を真似る
+  const host = await openHostWithAudio({
+    init: () => { Object.defineProperty(navigator, 'audioSession', { value: { type: 'auto' }, configurable: true }); },
+  });
+  assert.equal(await host.page.evaluate(() => navigator.audioSession.type), 'auto');
+  await host.page.click('#sound-toggle');
+  assert.equal(await host.page.evaluate(() => navigator.audioSession.type), 'playback');
+  assert.deepEqual(host.errors, []);
+});

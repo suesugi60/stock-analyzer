@@ -2,7 +2,7 @@
 import { connect } from './net.mjs';
 import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderWinners, renderWaiting, toast, confirmDialog, letterOf } from './view.mjs';
-import { playDraw, cancelDraw } from './draw-show.mjs';
+import { playDraw, cancelDraw, canAnimate } from './draw-show.mjs';
 import { createDrawSound } from './draw-sound.mjs';
 
 const PASSWORD_KEY = 'bingo.v1.hostpw';
@@ -89,7 +89,12 @@ function onMessage(msg) {
       let show = Promise.resolve();
       if (before !== null && msg.draws.length === before + 1) {
         // 新しい番号が1つ出た。ランダムに引いたとき(と、別の端末で出たとき)は抽選機を見せる。
-        if (!manualCall && fxOn) show = playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
+        // 抽選機を見せないとき(盤面から押した・演出オフ・動きを減らす設定)も、音がオンなら決定音だけは鳴らす。
+        if (!manualCall && fxOn && canAnimate()) {
+          show = playDraw({ n: msg.draws[msg.draws.length - 1], sound: soundOn ? drawSound : null });
+        } else if (soundOn) {
+          drawSound.reveal();
+        }
       } else if (before !== null && msg.draws.length < before) {
         cancelDraw(); // 取り消し・次のゲーム・リセット
       }
@@ -206,7 +211,6 @@ function render() {
   dom.fxToggle.textContent = `抽選の演出: ${fxOn ? 'オン' : 'オフ'}`;
   dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
   dom.soundToggle.textContent = `抽選の音: ${soundOn ? 'オン' : 'オフ'}`;
-  dom.soundToggle.disabled = !fxOn; // 音は演出と一緒に鳴る
 
   renderRequests();
   renderNumbers();
@@ -431,12 +435,21 @@ dom.fxToggle.addEventListener('click', () => {
 dom.soundToggle.addEventListener('click', () => {
   soundOn = !soundOn;
   saveSetting(SOUND_KEY, soundOn ? '1' : '0');
-  if (soundOn) drawSound.unlock(); // 押した操作のうちに、音を出せる状態にしておく
+  // 押した操作のうちに音を出せる状態にし、鳴ることをその場で確かめられるようにする
+  if (soundOn) { drawSound.unlock(); drawSound.confirm(); } else drawSound.stop();
   render();
 });
 
+$('sound-test').addEventListener('click', () => {
+  drawSound.unlock();
+  drawSound.confirm();
+});
+
+// 音をオンにしたまま開き直した端末は、まだ音を出せない。画面を一度さわったときに出せる状態にする。
+document.addEventListener('pointerdown', () => { if (soundOn) drawSound.unlock(); }, { passive: true });
+
 dom.drawBtn.addEventListener('click', () => {
-  if (soundOn && fxOn) drawSound.unlock();
+  if (soundOn) drawSound.unlock();
   busyDraw = true;
   dom.drawBtn.disabled = true;
   net.send({ t: 'draw' });
