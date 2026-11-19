@@ -179,7 +179,7 @@ const RouletteSync = (() => {
     const code = err && typeof err === 'object' ? String(err.code || '') : '';
     const msg = err && typeof err === 'object' ? String(err.message || '') : String(err);
     if (code === 'auth/admin-restricted-operation' || code === 'auth/operation-not-allowed') return '匿名ログインが有効になっていません。Firebase の Authentication →「ログイン方法」→「匿名」を有効にしてください。';
-    if (code === 'auth/unauthorized-domain') return 'このサイトが Firebase に許可されていません。Authentication →「設定」→「承認済みドメイン」に suesugi60.github.io を追加してください。';
+    if (code === 'auth/unauthorized-domain') return `このサイトが Firebase に許可されていません。Authentication →「設定」→「承認済みドメイン」に ${typeof location !== 'undefined' ? location.hostname : 'このサイトのドメイン'} を追加してください。`;
     if (code === 'auth/network-request-failed') return 'ネットワークに接続できません。電波の良いところで再読み込みしてください。';
     if (code === 'PERMISSION_DENIED' || /PERMISSION_DENIED|permission_denied/i.test(msg)) return '書き込みが拒否されました。Realtime Database の「ルール」に chinchiro/firebase-rules.json の内容を貼って「公開」してください(チンチロと同じルールを使います)。';
     return msg;

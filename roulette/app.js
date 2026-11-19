@@ -1,4 +1,4 @@
-// ===== 表示層: 役割の判定、配信者・リスナー・表示専用の画面 =====
+// ===== 表示層: 役割の判定、配信者(ディーラー)・リスナー・表示専用の画面 =====
 (() => {
   'use strict';
   const L = RouletteLogic;
@@ -12,12 +12,14 @@
   const IS_STAGE = params.get('stage') === '1';
   const QUICK = params.get('quick') === '1';          // 回る演出を一瞬で終える(テスト用)
   const SHARED_UID = params.get('shareduid') === '1'; // mock で uid をタブ間で共有(テスト用)
+  const FORCE_N = params.get('n');                    // mock のときだけ: 出る数字を決め打ち(テスト用)
   const KEY_HOST = 'roulette.host';
   const KEY_MUTED = 'roulette.muted';
+  const KEY_CHIP = 'roulette.chip';
   const MAX_PRESENCE = 80; // 無料枠(同時100接続)の安全装置
-  const WAIT_HOST_MS = Number(params.get('waitms')) || 6000; // 「回す」に配信者の画面が応えないとき案内を出すまで
-  const SAVE_MS = 350;     // 項目を打ち終えてから保存するまで
-  const MAX_ROWS = 100;    // 参加者の一覧に出す人数
+  const WAIT_HOST_MS = Number(params.get('waitms')) || 6000; // 賭けに配信者の画面が応えないとき案内を出すまで
+  const TOP_ROWS = 10;     // リスナー・表示専用に出す順位の数
+  const MAX_ROWS = 100;    // 配信者の一覧に出す人数
 
   // リスナーのアイコン。id はチンチロと同じ Firebase ルール(char に入れてよい 12 個の名前)に合わせた合言葉で、
   // このアプリでは絵文字の番号としてだけ使う。
@@ -39,12 +41,21 @@
   };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const safeName = (s) => String(s ?? '').trim().slice(0, 12);
+  const fmt = (n) => Number(n).toLocaleString('ja-JP');
+  const signed = (n) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '±0');
   /** 同じ中身なら DOM を触らない(ボタンを押している最中に作り直さない)。 */
   function setHtml(el, html) { if (el && el.__last !== html) { el.__last = html; el.innerHTML = html; } }
-  /** 結果を決める乱数。端末の暗号用の乱数を使う(無ければ Math.random)。 */
+  /** 出る数字を決める乱数。端末の暗号用の乱数を使う(無ければ Math.random)。 */
   const fairRandom = () => {
     try { return crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296; } catch { return Math.random(); }
   };
+  /** テスト用: 最初の 1 回(= 出る数字)だけ決め打ちする乱数。本番(Firebase)では使えない。 */
+  function spinRandom() {
+    const n = Number(FORCE_N);
+    if (!MOCK || FORCE_N === null || !Number.isInteger(n) || n < 0 || n > 36) return fairRandom;
+    let first = true;
+    return () => { if (first) { first = false; return (n + 0.5) / 37; } return fairRandom(); };
+  }
 
   const sounds = WH.createSounds();
   sounds.setMuted(store.get(KEY_MUTED) === true);
@@ -71,7 +82,7 @@
   let backend = null;
   let code = null;      // いまの部屋コード
   let room;             // 同期された部屋(最新)。配信者の進行はこれを使う。undefined: まだ届いていない / null: 部屋が無い
-  let shown = null;     // 画面に出している部屋。盤が止まるまで古いまま(結果の先バレ防止)
+  let shown = null;     // 画面に出している部屋。玉が止まるまで古いまま(結果の先バレ防止)
   let role = null;      // 'host' | 'stage' | 'listener'
   let wheel = null;
   let unsubRoom = null;
@@ -97,30 +108,27 @@
     if (seenSpin === null) seenSpin = sp ? sp.id : 0;       // 途中から開いた端末は、最後の回転を再生しない
     else if (sp && sp.id !== seenSpin) { seenSpin = sp.id; play(sp); }
     if (!playing) shown = room;
+    if (role === 'listener') syncPending();
     render();
   }
 
-  /** 非表示にされた人の名前は、盤・結果・記録のどこでも ？？？ にする。 */
-  const isHidden = (players, uid) => !!(uid && players && players[uid] && players[uid].hidden);
-  const displaySegs = (segs, players) => segs.map((s) => (isHidden(players, s.u) ? { ...s, t: '？？？' } : s));
-
-  /** 新しい回転を再生する。止まるまで画面の一覧は古いまま、止まったら最新に切り替えて結果を出す。 */
+  /** 新しい回転を再生する。止まるまで画面のチップや出目は古いまま、止まったら最新に切り替えて結果を出す。 */
   async function play(sp) {
     const token = ++playToken;
     playing = true;
     hideConfetti();
-    await wheel.spin({ ...sp, segs: displaySegs(sp.segs, room.players) }, { quick: QUICK });
+    if (role === 'listener' && listenerView.refs.wheel) { try { listenerView.refs.wheel.scrollIntoView({ block: 'center', behavior: QUICK ? 'auto' : 'smooth' }); } catch { /* 古いブラウザ */ } }
+    await wheel.spin(sp, { quick: QUICK });
     if (token !== playToken) return; // もっと新しい回転に替わった
     playing = false;
     shown = room;
     render();
-    if (room && L.showingResult(room.state) && room.state.spin.id === sp.id) celebrate(sp);
+    if (room && room.state.phase === 'done' && room.state.spin && room.state.spin.id === sp.id) celebrate();
   }
 
   const CONFETTI = ['#ff2e88', '#ff8ab5', '#ffffff', '#ffd166', '#c9a7ff', '#ff6f91'];
   function hideConfetti() { const box = $('confetti'); if (!box.hidden) { box.hidden = true; box.innerHTML = ''; } }
-  function celebrate(sp) {
-    sounds.fanfare();
+  function showConfetti() {
     const box = $('confetti');
     box.innerHTML = '';
     for (let i = 0; i < 60; i++) {
@@ -134,11 +142,22 @@
       box.appendChild(piece);
     }
     box.hidden = false;
-    const hit = sp.segs[sp.index];
-    if (role === 'listener' && hit && hit.u === backend.uid) { try { navigator.vibrate?.([200, 100, 200]); } catch { /* 非対応 */ } }
+  }
+  /** 止まった瞬間の演出。リスナーは自分の勝ち負け、配信者と表示専用は当たった人がいるかで変える。 */
+  function celebrate() {
+    const res = L.results(room.state);
+    if (role === 'listener') {
+      const mine = res[backend.uid];
+      if (mine && mine.net > 0) { sounds.fanfare(); showConfetti(); try { navigator.vibrate?.([200, 100, 200]); } catch { /* 非対応 */ } }
+      else if (mine && mine.net < 0) sounds.lose();
+      else sounds.ding();
+      return;
+    }
+    const anyWin = Object.values(res).some((r) => r.net > 0);
+    if (anyWin) { sounds.fanfare(); showConfetti(); } else sounds.ding();
   }
 
-  // ---------- 画面の共通部分(盤・結果・参加者・記録) ----------
+  // ---------- 画面の共通部分(盤・結果・出目・テーブル・順位) ----------
   const hostView = { root: null, refs: {} };
   const stageView = { root: null, refs: {} };
   const listenerView = { root: null, refs: {} };
@@ -178,89 +197,81 @@
     window.QRCode.toCanvas(canvas, text, { width: 96, margin: 1 }, (err) => { if (err) canvas.hidden = true; });
   }
 
-  const nameOf = (players, uid, fallback = 'リスナー') => {
-    const p = players && players[uid];
-    return p ? (p.hidden ? '？？？' : (safeName(p.name) || fallback)) : fallback;
-  };
+  const dispName = (m) => (m.hidden ? '？？？' : m.name);
+  /** いま画面に見せる段階。'bet' 賭けの受付中 / 'spin' 回っている / 'done' 結果 / 'closed'。 */
+  const viewPhase = () => (playing ? 'spin' : room.state.phase);
+  const discHtml = (n, cls = '') => `<span class="disc ${L.colorOf(n)} ${cls}" data-n="${n}">${n}</span>`;
 
-  function statusHtml(rm) {
-    const live = room.state;
-    const players = rm.players || {};
-    if (playing && live.spin) {
-      const who = live.spin.by ? `${esc(nameOf(room.players, live.spin.by, live.spin.byName || 'リスナー'))} さんが回しています…` : '回っています…';
-      return `<span class="spinning-note">${who}</span>`;
-    }
+  function statusHtml(st, phase) {
+    if (phase === 'spin') return '<span class="spinning-note">ノーモアベット! 回っています…</span>';
+    if (phase === 'done') return `第${st.round}ゲームの結果`;
+    const t = L.totals(st);
+    return `第${st.round}ゲーム ・ <b>ベット受付中</b>` + (t.players ? ` ・ ${t.players}人 / 合計 <b>${fmt(t.total)}</b>` : '');
+  }
+
+  function resultHtml(rm) {
     const st = rm.state;
-    if (live.turn) return `💗 <b>${esc(nameOf(players, live.turn))}</b> さんの番(スマホで回せます)`;
-    if (st.kind === 'names') {
-      const all = L.entrants(rm);
-      const target = L.nameSegs(rm).length;
-      const out = all.length - target;
-      return `🙋 リスナー抽選 ・ 対象 <b>${target}</b>人${out > 0 ? ` <small>(当選済みの ${out}人は対象外)</small>` : ''}`;
+    const n = st.spin.n;
+    const res = L.results(st);
+    const byUid = Object.fromEntries(L.members(rm).map((m) => [m.uid, m]));
+    const rows = Object.entries(res).filter(([uid]) => byUid[uid]).map(([uid, r]) => ({ ...r, m: byUid[uid] })).sort((a, b) => b.net - a.net);
+    const winners = rows.filter((r) => r.net > 0);
+    let list;
+    if (!rows.length) list = '<div class="rsub">だれも賭けていませんでした</div>';
+    else if (!winners.length) list = '<div class="rsub">全員はずれ… 配信者の総取り!</div>';
+    else {
+      list = '<div class="winners">' + winners.slice(0, 5).map((r) =>
+        `<div class="winner"><span class="avatar sm" style="--c:${colorFor(r.m.uid)}">${iconOf(r.m.char)}</span><span class="wname">${esc(dispName(r.m))}</span>` +
+        `<b class="plus">${signed(r.net)}</b>${r.hits.some((s) => s <= 36) ? '<span class="tag won">数字ぴったり!</span>' : ''}</div>`).join('') +
+        (winners.length > 5 ? `<div class="rsub">ほか ${winners.length - 5}人が当たり</div>` : '') + '</div>';
     }
-    return `🎀 お題ルーレット ・ <b>${st.items.length}</b>項目`;
+    return `<div class="rcap">出た数字は…</div><div class="rmain">${discHtml(n, 'big')}<div class="rdesc">${esc(L.describe(n))}</div></div>${list}`;
   }
 
-  function resultHtml(st, players) {
-    const sp = st.spin;
-    const hit = sp.segs[sp.index];
-    const sizeCls = (text) => { const n = Array.from(text).length; return n > 14 ? ' xlong' : n > 8 ? ' long' : ''; };
-    if (sp.kind === 'names') {
-      const p = hit.u ? players[hit.u] : null;
-      const name = isHidden(players, hit.u) ? '？？？' : hit.t;
-      return `<div class="rcap">🎉 当たり!</div><div class="rwho"><span class="avatar lg" style="--c:${colorFor(hit.u)}">${iconOf(p && p.char)}</span>` +
-        `<div class="rbig${sizeCls(name)}" data-uid="${esc(hit.u || '')}">${esc(name)}<small> さん</small></div></div>`;
-    }
-    const by = sp.by ? nameOf(players, sp.by, sp.byName || 'リスナー') : '';
-    return `<div class="rcap">結果は…</div><div class="rbig${sizeCls(hit.t)}">${esc(hit.t)}</div>` +
-      (by ? `<div class="rsub">${esc(by)} さんが回しました</div>` : '');
-  }
-
-  function membersHtml(rm, isHost) {
-    const list = L.entrants(rm);
-    if (!list.length) return '<div class="empty-note">まだ誰もいません。QR か URL から入ってもらおう</div>';
-    const turn = room.state.turn;
-    const rows = list.slice(0, MAX_ROWS).map((e) => {
-      const tags = (turn === e.uid ? '<span class="tag turn">回す番</span>' : '') + (e.won ? '<span class="tag won">当選済み</span>' : '') + (e.online ? '' : '<span class="tag off">オフライン</span>');
+  function rankingHtml(rm, isHost) {
+    const all = L.ranking(rm);
+    if (!all.length) return '<div class="empty-note">まだ誰もいません。QR か URL から入ってもらおう</div>';
+    const limit = isHost ? MAX_ROWS : TOP_ROWS;
+    const rows = all.slice(0, limit).map((m, i) => ({ m, rank: i + 1 }));
+    const meIdx = all.findIndex((m) => m.uid === backend.uid);
+    if (!isHost && meIdx >= limit) rows.push({ m: all[meIdx], rank: meIdx + 1 }); // 自分が圏外でも自分の行は出す
+    const html = rows.map(({ m, rank }) => {
+      const tags = (m.rebuys ? `<span class="tag">おかわり×${m.rebuys}</span>` : '') + (m.online ? '' : '<span class="tag off">オフライン</span>');
       const acts = isHost
-        ? `<span class="qacts"><button type="button" class="btn" data-act="turn">回してもらう</button><button type="button" class="btn" data-act="hide">${e.hidden ? '表示' : '非表示'}</button>` +
-          '<button type="button" class="btn" data-act="kick">外す</button><button type="button" class="btn ban" data-act="ban">ブロック</button></span>'
+        ? `<span class="qacts"><button type="button" class="btn" data-act="hide">${m.hidden ? '表示' : '非表示'}</button><button type="button" class="btn ban" data-act="ban">ブロック</button></span>`
         : '';
-      return `<div class="member-row${e.uid === backend.uid ? ' me' : ''}${turn === e.uid ? ' turn' : ''}" data-uid="${esc(e.uid)}">` +
-        `<span class="avatar sm" style="--c:${colorFor(e.uid)}">${iconOf(e.char)}</span><span class="qname">${e.hidden ? '？？？' : esc(e.name)}${tags}</span>${acts}</div>`;
+      return `<div class="member-row${m.uid === backend.uid ? ' me' : ''}" data-uid="${esc(m.uid)}"><span class="rno">${rank}</span>` +
+        `<span class="avatar sm" style="--c:${colorFor(m.uid)}">${iconOf(m.char)}</span><span class="qname">${esc(dispName(m))}${tags}</span>` +
+        `<b class="pts">${fmt(m.chips)}</b>${acts}</div>`;
     }).join('');
-    return rows + (list.length > MAX_ROWS ? `<div class="empty-note">ほか ${list.length - MAX_ROWS}人</div>` : '');
+    return html + (all.length > rows.length ? `<div class="empty-note">ぜんぶで ${all.length}人</div>` : '');
   }
 
-  function historyHtml(st, players) {
-    if (!st.history.length) return '<div class="empty-note">まだありません</div>';
-    return st.history.map((h) => {
-      const text = h.k === 'names' ? `🙋 ${esc(isHidden(players, h.u) ? '？？？' : h.t)} さん` : esc(h.t);
-      return `<div class="hist-row"><span class="rno">${h.id}</span><span class="dot" style="background:${L.COLORS[h.c]}"></span><span class="qname">${text}</span>` +
-        (h.by ? `<small>${esc(h.by)} さんが回した</small>` : '') + '</div>';
-    }).join('');
-  }
-
-  function renderBoard(view, isHost) {
+  function renderBoard(view, opts = {}) {
     if (!view.root || !shown) return;
     const rm = shown;
     const st = rm.state;
-    const players = rm.players || {};
+    const phase = viewPhase();
     const r = view.refs;
+    view.root.dataset.phase = phase;
     if (r.code) r.code.textContent = code;
     if (r.url) r.url.textContent = joinUrl(code);
     if (r.qr) drawQr(view, joinUrl(code));
-    const result = !playing && L.showingResult(st);
-    if (!playing) {
-      if (result) wheel.setWheel(displaySegs(st.spin.segs, players), { rotation: st.spin.to, win: st.spin.index });
-      else wheel.setWheel(L.liveSegs(rm), { rotation: L.restAngle(st), empty: st.kind === 'names' ? '参加者を待っています' : '項目を入れてね' });
-    }
-    if (r.result) { setHtml(r.result, result ? resultHtml(st, players) : ''); r.result.hidden = !result; }
-    if (!result || playing) hideConfetti();
-    setHtml(r.status, statusHtml(rm));
-    if (r.count) r.count.textContent = `${L.entrants(rm).length}人`;
-    setHtml(r.members, membersHtml(rm, isHost));
-    setHtml(r.history, historyHtml(st, players));
+    const done = phase === 'done' && !!st.spin;
+    if (!playing) wheel.rest(st.spin, { win: done });
+    setHtml(r.status, statusHtml(st, phase));
+    setHtml(r.hist, st.history.length ? `<span class="rlabel">これまでの出目(左が新しい)</span>${st.history.slice(0, 12).map((n) => discHtml(n)).join('')}` : '');
+    if (r.result) { setHtml(r.result, done ? resultHtml(rm) : ''); r.result.hidden = !done; }
+    if (!done) hideConfetti();
+    const t = L.totals(st);
+    const mine = opts.mine || {};
+    const bySpot = { ...t.bySpot };
+    for (const [s, v] of Object.entries(opts.extra || {})) bySpot[s] = { sum: (bySpot[s] ? bySpot[s].sum : 0) + v, count: 0 }; // まだ届いていない自分の賭けも足す
+    if (r.table) WH.renderTable(r.table, { mine, totals: bySpot, win: done ? st.spin.n : null, interactive: !!opts.interactive });
+    if (r.tsum) r.tsum.textContent = t.total ? `合計 ${fmt(t.total)}` : '';
+    if (r.count) r.count.textContent = `${L.members(rm).length}人`;
+    setHtml(r.ranking, rankingHtml(rm, !!opts.isHost));
+    if (r.house) r.house.textContent = `配信者(ディーラー)の収支 ${signed(st.house)}`;
   }
 
   function render() {
@@ -270,11 +281,13 @@
       return;
     }
     if (!shown) shown = room;
-    // リスナーの「回す」要求は、配信者の画面の演出が終わってから処理する
-    if (role === 'host' && !playing) hostQueue = hostQueue.then(processActions).catch((e) => console.warn('要求の処理に失敗', e));
-    if (role === 'host') { renderBoard(hostView, true); renderHost(); }
-    if (role === 'stage') renderBoard(stageView, false);
-    if (role === 'listener') { renderBoard(listenerView, false); renderListener(); }
+    if (role === 'host') {
+      hostQueue = hostQueue.then(processActions).catch((e) => console.warn('合図の処理に失敗', e));
+      renderBoard(hostView, { isHost: true });
+      renderHost();
+    }
+    if (role === 'stage') renderBoard(stageView);
+    if (role === 'listener') renderListener();
   }
 
   /** ミュートでないのに音を鳴らせない間だけ「タップで音をオン」を出す。 */
@@ -295,12 +308,12 @@
   }
   async function createRoom() {
     const c = await SY.allocateRoomCode(backend);
-    await backend.set(SY.roomPath(c), { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings: { app: 'roulette' }, state: L.createState() });
+    await backend.set(SY.roomPath(c), { hostUid: backend.uid, createdAt: backend.serverTimestamp(), settings: { app: 'roulette' }, state: L.serializeState(L.createState()) });
     store.set(KEY_HOST, { code: c, uid: backend.uid });
     await enterHost(c);
   }
 
-  /** 配信者の画面は1タブだけ(2つ開くと同じ「回す」を二重に処理する)。Web Locks でロックを持ち続ける。 */
+  /** 配信者の画面は1タブだけ(2つ開くと同じ賭けを二重に処理する)。Web Locks でロックを持ち続ける。 */
   function acquireHostLock(c) {
     if (!navigator.locks) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -322,7 +335,6 @@
     sounds.setKeepAlive(true);
     bind(hostView, $('screen-host'));
     wheel = WH.create(hostView.refs.wheel, sounds);
-    buildPresets();
     subscribe(c);
     show('screen-host');
     renderMute();
@@ -333,7 +345,7 @@
     sounds.setMuted(true); // 表示専用は音なし(配信ソフトで二重に鳴らさない)
     const clone = $('screen-host').cloneNode(true);
     clone.id = 'screen-stage';
-    for (const el of clone.querySelectorAll('button, input, label, [data-host-only]')) el.remove();
+    for (const el of clone.querySelectorAll('[data-host-only]')) el.remove();
     for (const el of clone.querySelectorAll('[id]')) el.removeAttribute('id');
     $('app').appendChild(clone);
     bind(stageView, clone);
@@ -345,117 +357,132 @@
   // ---------- 配信者: 進行(state を書けるのは配信者の画面だけ) ----------
   let hostQueue = Promise.resolve();
   const hostDo = (fn) => { hostQueue = hostQueue.then(fn).catch((e) => { console.warn(e); alert('うまくいきませんでした: ' + SY.explainError(e)); }); return hostQueue; };
-  const writeState = (st) => backend.set(path('state'), JSON.parse(JSON.stringify(st)));
+  const writeState = (st) => backend.set(path('state'), JSON.parse(JSON.stringify(L.serializeState(st))));
 
-  async function hostSpin(byUid) {
-    if (playing || !room || room.state.phase !== 'open') return;
-    const segs = L.liveSegs(room);
-    const next = L.startSpin(room.state, segs, { by: byUid || null, byName: byUid ? nameOf(room.players, byUid) : '', rng: fairRandom });
+  async function hostSpin() {
+    if (playing || !room) return;
+    const next = L.spin(room.state, spinRandom());
     if (next) await writeState(next);
   }
-  /** リスナーの「回す」要求を処理する。指名されている人の要求だけ受け付け、それ以外は捨てる。 */
+  async function hostNext() {
+    if (playing || !room || room.state.phase !== 'done') return;
+    await writeState(L.nextRound(room.state));
+  }
+  /**
+   * リスナーの合図(賭ける・取り消す・おかわり)を処理する。いま届いている分をまとめて 1 回で書き込む
+   * (1 つずつ書くと、人数が多いときに順番待ちで遅れる)。受け付けた分のチップの動きと、合図の片づけは同じ書き込みなので、二重に数えない。
+   */
   async function processActions() {
     if (!room || !room.actions) return;
+    let st = room.state;
+    const upd = {};
     for (const [uid, a] of Object.entries(room.actions)) {
-      await backend.remove(path(`actions/${uid}`));
-      if (a && a.type === 'roll' && room.state.turn === uid && !playing) await hostSpin(uid);
+      const p = (room.players || {})[uid];
+      const op = a && a.type === 'roll' ? L.decodeOp(a.at) : null;
+      const patch = p && typeof p.name === 'string' && p.name && !p.banned ? L.applyOp(st, uid, op) : null;
+      upd[`actions/${uid}`] = null;
+      if (!patch) continue;
+      st = L.applyPatch(st, patch);
+      for (const [k, v] of Object.entries(patch)) upd[`state/${k}`] = v;
     }
+    await backend.update(SY.roomPath(code), upd);
   }
   async function moderate(act, uid) {
     const p = (room.players || {})[uid] || {};
-    if (act === 'turn') { await writeState(L.setTurn(room.state, uid)); return; }
     if (act === 'hide') { await backend.update(path(`players/${uid}`), { hidden: !p.hidden }); return; }
-    if (act === 'ban') await backend.update(path(`players/${uid}`), { banned: true });
-    if (act === 'kick' || act === 'ban') {
-      await backend.remove(path(`queue/${uid}`));
-      if (room.state.turn === uid) await writeState(L.setTurn(room.state, null));
+    if (act === 'ban') {
+      const upd = { [`players/${uid}/banned`]: true };
+      if (room.state.phase === 'bet' && L.stakeOf(room.state, uid) > 0) upd[`state/bets/${uid}`] = null; // 置いてある賭けは片づける
+      await backend.update(SY.roomPath(code), upd);
     }
   }
-
-  // ---------- 配信者: 中身の編集 ----------
-  // 打った内容は ed.items に持ち、少し待ってからまとめて保存する。保存が届くまでは同期で上書きしない。
-  const ed = { items: null, dirty: false, rev: 0, timer: 0 };
-  const sameItems = (a, b) => JSON.stringify(L.sanitizeItems(a)) === JSON.stringify(L.sanitizeItems(b));
-  function paintDots() {
-    const valid = ed.items.map((it) => !!L.cutLabel(it.t, L.MAX_LABEL));
-    const n = valid.filter(Boolean).length;
-    let k = 0;
-    $('items').querySelectorAll('.item-row').forEach((row, i) => { row.querySelector('.dot').style.background = valid[i] ? L.COLORS[L.colorIndex(k++, n)] : '#f1dbe6'; });
-  }
-  function renderEditorRows() {
-    $('items').innerHTML = ed.items.map((it, i) => `<div class="item-row" data-i="${i}"><span class="dot"></span>` +
-      `<input class="item-text" type="text" maxlength="${L.MAX_LABEL}" value="${esc(it.t)}" placeholder="項目 ${i + 1}" aria-label="項目 ${i + 1}">` +
-      '<button type="button" class="btn wbtn" data-act="minus" aria-label="当たりにくくする">−</button>' +
-      `<span class="wnum" title="当たりやすさ">${it.w}</span>` +
-      '<button type="button" class="btn wbtn" data-act="plus" aria-label="当たりやすくする">＋</button>' +
-      '<button type="button" class="btn wbtn del" data-act="del" aria-label="この項目を消す">✕</button></div>').join('');
-    $('add-item').disabled = ed.items.length >= L.MAX_ITEMS;
-    paintDots();
-  }
-  function syncEditor() {
-    if (playing) return; // 回っている間は、消える項目を先に見せない
-    if (ed.items === null || (!ed.dirty && !sameItems(ed.items, room.state.items))) {
-      ed.items = room.state.items.map((x) => ({ ...x }));
-      renderEditorRows();
-    }
-  }
-  function touchItems() { ed.dirty = true; ed.rev++; clearTimeout(ed.timer); ed.timer = setTimeout(saveItems, SAVE_MS); }
-  function saveItems() {
-    clearTimeout(ed.timer);
-    if (!ed.dirty) return hostQueue;
-    const rev = ed.rev;
-    return hostDo(async () => {
-      if (!sameItems(ed.items, room.state.items)) await writeState(L.setItems(room.state, ed.items));
-      if (ed.rev === rev) ed.dirty = false;
-    });
-  }
-  function buildPresets() {
-    const box = $('presets');
-    if (box.querySelector('button')) return;
-    for (const [key, p] of Object.entries(L.PRESETS)) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'btn btn-ghost';
-      b.dataset.preset = key;
-      b.textContent = p.label;
-      box.appendChild(b);
-    }
-  }
-  const looksLikeDrink = (items) => items.some((it) => /飲|乾杯|[0-9０-９一二三半]\s*(口|杯)/.test(it.t));
 
   function renderHost() {
-    const st = room.state; // ボタンの出し分けは最新の状態で決める
-    const result = !playing && L.showingResult(st);
-    for (const b of $('kind-switch').querySelectorAll('[data-kind]')) { b.setAttribute('aria-pressed', String(b.dataset.kind === st.kind)); b.disabled = playing; }
-    const segs = L.liveSegs(room);
-    const canSpin = !playing && segs.length >= 2;
+    const phase = viewPhase();
     const spinBtn = $('spin');
-    spinBtn.disabled = !canSpin;
-    spinBtn.textContent = playing ? '回っています…' : st.turn ? '代わりに回す' : '💗 回す';
-    let hint = '';
-    if (!playing && segs.length < 2) hint = st.kind === 'names' ? '抽選の対象が2人以上になると回せます' : '項目を2つ以上入れると回せます';
-    else if (!playing && st.turn) hint = `${nameOf(room.players, st.turn)} さんのスマホに「回す」ボタンが出ています`;
-    $('spin-hint').textContent = hint;
-    $('dismiss').hidden = !result;
-    const hit = result ? L.winnerOf(st) : null;
-    $('winner-spin').hidden = !(result && st.spin.kind === 'names' && hit && hit.u && L.entrants(room).some((e) => e.uid === hit.u));
-    $('cancel-turn').hidden = playing || !st.turn;
-    $('opt-remove-hit').checked = st.removeHit;
-    $('opt-remove-winner').checked = st.removeWinner;
-    $('reset-won').hidden = Object.keys(st.won).length === 0;
-    $('editor-box').classList.toggle('busy', playing);
-    syncEditor();
-    $('drink-note').hidden = !looksLikeDrink(st.items);
+    spinBtn.hidden = phase === 'done';
+    spinBtn.disabled = phase !== 'bet';
+    spinBtn.textContent = phase === 'spin' ? '回っています…' : '💗 ベット締め切り → 回す';
+    $('next').hidden = phase !== 'done';
+    $('reset-chips').disabled = phase === 'spin';
+    const t = L.totals(room.state);
+    $('spin-hint').textContent = phase === 'bet'
+      ? (t.players ? `${t.players}人が賭けています。そろったら「回す」を押してね` : 'リスナーがスマホでチップを賭けます。そろったら「回す」を押してね')
+      : phase === 'done' ? '「次のゲームへ」で、テーブルを片づけて賭けの受付を始めます' : '';
   }
 
   // ---------- リスナー ----------
   let join = { name: '', char: ICONS[Math.floor(Math.random() * ICONS.length)].id };
   let joined = false;       // 参加したことがある(online を管理する)
-  let lastTurn = false;
-  let spinRequested = false;
-  let reqSeq = 0;
-  let hostAbsent = false;   // 「回す」に配信者の画面が応えない
+  let chipValue = L.CHIP_VALUES.includes(store.get(KEY_CHIP)) ? store.get(KEY_CHIP) : L.CHIP_VALUES[0];
   const keyListener = () => `roulette.listener.${code}`;
+  const isPlayer = () => !!(room && (room.players || {})[backend.uid] && (room.players || {})[backend.uid].name);
+
+  // まだ配信者に届いていない自分の操作。通信の決まりで一度に送れる合図は 1 つなので、順番に 1 つずつ送る。
+  //   queue: これから送る賭け(場所 → チップ。同じ場所はまとめる) / special: 取り消し・おかわり / inflight: 送って返事を待っているもの
+  const pend = { queue: new Map(), special: null, inflight: null, round: 0, absent: false, timer: 0 };
+  const pendingBets = () => {
+    const out = {};
+    for (const [s, v] of pend.queue) out[s] = (out[s] || 0) + v;
+    if (pend.inflight && pend.inflight.code < L.SPOT_COUNT) out[pend.inflight.code] = (out[pend.inflight.code] || 0) + pend.inflight.amount;
+    return out;
+  };
+  const pendingSum = () => Object.values(pendingBets()).reduce((s, v) => s + v, 0);
+
+  function sendOp(opCode, amount) {
+    const round = room.state.round;
+    pend.inflight = { code: opCode, amount, round };
+    pend.absent = false;
+    clearTimeout(pend.timer);
+    pend.timer = setTimeout(() => { if (pend.inflight) { pend.absent = true; render(); } }, WAIT_HOST_MS);
+    backend.set(path(`actions/${backend.uid}`), { type: 'roll', at: L.encodeOp(round, opCode, amount) })
+      .catch((e) => { console.warn('合図を送れませんでした', e); pend.inflight = null; pend.queue.clear(); pend.special = null; toast('送れませんでした。電波を確かめてね'); render(); });
+  }
+  /** 次の合図を送る(返事待ちが無いときだけ)。 */
+  function pump() {
+    if (pend.inflight || !room) return;
+    if (pend.special !== null) { const c = pend.special; pend.special = null; sendOp(c, 0); return; }
+    if (room.state.phase !== 'bet') { pend.queue.clear(); return; }
+    const first = pend.queue.entries().next();
+    if (first.done) return;
+    const [spot, amount] = first.value;
+    pend.queue.delete(spot);
+    sendOp(spot, amount);
+  }
+  /** 部屋の最新が届くたびに、返事待ちの片づけと次の送信をする。 */
+  function syncPending() {
+    if (pend.inflight && !(room.actions && room.actions[backend.uid])) { pend.inflight = null; pend.absent = false; clearTimeout(pend.timer); } // 配信者が受け取った
+    const st = room.state;
+    if (st.round !== pend.round || st.phase !== 'bet') {
+      if (pend.queue.size && pend.round === st.round) toast('ベットは締め切られました');
+      pend.queue.clear();
+    }
+    pend.round = st.round;
+    pump();
+  }
+
+  function tapSpot(spot) {
+    if (!room || playing || room.state.phase !== 'bet' || !isPlayer()) return;
+    const avail = L.chipsOf(room.state, backend.uid) - pendingSum();
+    if (avail < chipValue) { toast(avail < L.MIN_BET ? 'チップがありません' : `チップが足りません(のこり ${fmt(avail)})`); return; }
+    pend.queue.set(spot, (pend.queue.get(spot) || 0) + chipValue);
+    sounds.chip();
+    pump();
+    render();
+  }
+  function clearBets() {
+    if (!room || room.state.phase !== 'bet') return;
+    pend.queue.clear();
+    if (L.stakeOf(room.state, backend.uid) > 0 || pend.inflight) pend.special = L.OP.CLEAR;
+    pump();
+    render();
+  }
+  function rebuy() {
+    if (!room || !L.isBroke(room.state, backend.uid)) return;
+    pend.special = L.OP.REBUY;
+    pump();
+    render();
+  }
 
   function renderJoin() {
     $('join-code').textContent = code;
@@ -497,7 +524,7 @@
         }
       } catch (e) { console.warn('presence の更新に失敗', e); }
     });
-    if (me) { // 再読み込み: 参加済みなら自分の画面へ直接戻る
+    if (me && me.name) { // 再読み込み: 参加済みなら自分の画面へ直接戻る
       joined = true;
       await backend.update(path(`players/${backend.uid}`), { online: true });
       await backend.onDisconnectSet(path(`players/${backend.uid}/online`), false);
@@ -514,7 +541,6 @@
     join.name = safeName($('join-name').value) || 'リスナー';
     const base = path(`players/${backend.uid}`);
     await backend.update(base, { name: join.name, char: join.char, joinedAt: backend.serverTimestamp(), online: true });
-    await backend.set(path(`queue/${backend.uid}`), { joinedAt: backend.serverTimestamp() });
     await backend.onDisconnectSet(`${base}/online`, false);
     joined = true;
     store.set(keyListener(), join);
@@ -526,6 +552,16 @@
     if (!listenerView.root) {
       bind(listenerView, $('screen-listener'));
       wheel = WH.create(listenerView.refs.wheel, sounds);
+      const box = $('chip-values');
+      for (const v of L.CHIP_VALUES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `chipbtn c${v}`;
+        b.dataset.v = String(v);
+        b.textContent = String(v);
+        b.setAttribute('aria-label', `${v} チップを選ぶ`);
+        box.appendChild(b);
+      }
       subscribe(code);
     }
     show('screen-listener');
@@ -535,56 +571,61 @@
 
   function renderListener() {
     const live = room.state;
-    const me = (room.players || {})[backend.uid] || null;
+    const uid = backend.uid;
+    const me = (room.players || {})[uid] || null;
     if (me && me.banned) { show('screen-banned'); return; }
     if (live.phase === 'closed') { show('screen-closed'); return; }
-    const inQueue = !!me && !!(room.queue || {})[backend.uid];
-    const myTurn = live.turn === backend.uid && !playing;
-    sounds.setKeepAlive(myTurn); // 自分が回す番のときだけ無音を流す(見ているだけの人の音楽を止めない)
-    updateAudioBadge();
-    if (myTurn && !lastTurn) { try { navigator.vibrate?.(200); } catch { /* 非対応 */ } sounds.chime(); }
-    lastTurn = myTurn;
-    if (live.turn !== backend.uid || live.seq !== reqSeq) spinRequested = false;
-    if (live.turn !== backend.uid) hostAbsent = false;
+    const player = !!(me && me.name);
+    const phase = viewPhase();
+    const betting = phase === 'bet' && player;
+    const pb = betting ? pendingBets() : {};
+    const st = shown.state; // 玉が止まるまで、チップや結果は古いまま
+    const confirmed = L.betsOf(st, uid);
+    const mine = { ...confirmed };
+    for (const [s, v] of Object.entries(pb)) mine[s] = (mine[s] || 0) + v;
+    renderBoard(listenerView, { mine: player ? mine : {}, extra: pb, interactive: betting });
 
-    const st = shown.state; // 「当たり」は盤が止まってから出す
-    const hit = !playing && L.showingResult(st) ? L.winnerOf(st) : null;
+    sounds.setKeepAlive(false); // リスナーは無音を流さない(聴いている音楽を止めない)
+    updateAudioBadge();
+    const pendSum = Object.values(pb).reduce((s, v) => s + v, 0);
+    const chips = L.chipsOf(st, uid) - pendSum;
+    const stake = Object.values(mine).reduce((s, v) => s + v, 0);
+    const broke = player && !playing && L.isBroke(live, uid) && pend.special === null && !pend.inflight;
     let big = '見ているだけ';
-    let sub = '「参加する」を押すと、抽選に当たったり、回す役に選ばれたりします';
-    if (myTurn) { big = 'あなたの番! ルーレットを回して!'; sub = hostAbsent ? '配信者の画面を待っています…' : '下の「回す!」を押してね'; }
-    else if (hit && hit.u === backend.uid) { big = '🎉 当たり! あなたが選ばれました!'; sub = ''; }
-    else if (inQueue) {
-      const out = st.kind === 'names' && st.removeWinner && st.won[backend.uid];
-      big = out ? '当選済み' : st.kind === 'names' ? '抽選に参加中! 当たるかも' : '参加中';
-      sub = out ? '次の抽選からは対象外です(配信者が元に戻すこともあります)' : `${me.name} さん ・ 回す役に選ばれることもあります`;
-    } else if (me) { big = '参加していません'; sub = 'もう一度入るなら「参加する」'; }
+    let sub = '「参加する」を押すと、チップをもらって賭けられます';
+    let mood = '';
+    if (player) {
+      if (phase === 'spin') { big = 'ノーモアベット!'; sub = stake ? `${fmt(stake)} チップを賭けました。玉の行方は…` : '今回は賭けていません'; }
+      else if (phase === 'done') {
+        const res = L.results(st)[uid];
+        if (!res) { big = '今回は賭けていません'; sub = '次のゲームをお待ちください'; }
+        else if (res.net > 0) { big = `🎉 当たり! ${signed(res.net)}`; sub = `${fmt(res.stake)} 賭けて ${fmt(res.payout)} もどりました`; mood = 'won'; }
+        else if (res.net === 0) { big = 'ひきわけ ±0'; sub = `${fmt(res.stake)} 賭けて ${fmt(res.payout)} もどりました`; }
+        else { big = `ざんねん… ${signed(res.net)}`; sub = res.payout ? `${fmt(res.stake)} 賭けて ${fmt(res.payout)} もどりました` : '次のゲームでとりかえそう'; mood = 'lost'; }
+      } else if (pend.absent) { big = '配信者の画面を待っています…'; sub = '配信者の画面が開いていないと賭けられません'; }
+      else if (broke) { big = 'チップがなくなりました'; sub = '「おかわり」でもう一度もらえます'; }
+      else if (stake) { big = `${fmt(stake)} チップを賭けています`; sub = 'さらに置く・「取り消す」でやり直せます'; }
+      else { big = 'ベットしてね!'; sub = 'チップをえらんで、テーブルの場所をタップ'; mood = 'turn'; }
+    }
     $('my-status').textContent = big;
     $('my-sub').textContent = sub;
-    document.querySelector('.mystatus').classList.toggle('turn', myTurn);
-    document.querySelector('.mystatus').classList.toggle('won', !!(hit && hit.u === backend.uid));
-    if (me) setAvatar($('my-avatar'), me.char, colorFor(backend.uid));
-    $('my-avatar').hidden = !me;
-    $('listener-spin').hidden = !myTurn;
-    $('listener-spin').disabled = spinRequested;
-    $('listener-spin').textContent = spinRequested ? '回しています…' : '💗 回す!';
-    $('rejoin').hidden = inQueue;
-    $('leave').hidden = !inQueue;
-  }
-
-  async function listenerSpin() {
-    if (spinRequested || !room || playing || room.state.turn !== backend.uid) return;
-    spinRequested = true;
-    hostAbsent = false;
-    reqSeq = room.state.seq;
-    renderListener();
-    await backend.set(path(`actions/${backend.uid}`), { type: 'roll', at: backend.serverTimestamp() });
-    const seq = reqSeq;
-    setTimeout(() => {
-      if (!spinRequested || !room || room.state.seq !== seq) return; // もう処理された
-      spinRequested = false;
-      hostAbsent = true;
-      renderListener();
-    }, WAIT_HOST_MS);
+    const card = document.querySelector('.mystatus');
+    card.classList.toggle('turn', mood === 'turn');
+    card.classList.toggle('won', mood === 'won');
+    card.classList.toggle('lost', mood === 'lost');
+    if (player) setAvatar($('my-avatar'), me.char, colorFor(uid));
+    $('my-avatar').hidden = !player;
+    $('my-chips-box').hidden = !player;
+    $('my-chips').textContent = fmt(chips);
+    $('betbar').hidden = !betting || broke;
+    for (const b of $('chip-values').children) {
+      const v = Number(b.dataset.v);
+      b.setAttribute('aria-pressed', String(v === chipValue));
+      b.disabled = v > chips;
+    }
+    $('clear-bets').disabled = stake === 0;
+    $('rebuy').hidden = !broke;
+    $('rejoin').hidden = player;
   }
 
   // ---------- 初期化 ----------
@@ -625,66 +666,18 @@
   });
 
   // 配信者の操作
-  $('spin').addEventListener('click', () => { $('spin').disabled = true; saveItems(); hostDo(() => hostSpin(null)).then(render); }); // 回せなかったときもボタンを元に戻す
-  $('dismiss').addEventListener('click', () => hostDo(() => writeState(L.dismiss(room.state))));
-  $('cancel-turn').addEventListener('click', () => hostDo(() => writeState(L.setTurn(room.state, null))));
-  $('winner-spin').addEventListener('click', () => hostDo(() => {
-    const hit = L.winnerOf(room.state);
-    if (hit && hit.u) return writeState(L.setTurn(L.setKind(room.state, 'items'), hit.u));
-  }));
-  $('kind-switch').addEventListener('click', (ev) => {
-    const b = ev.target.closest('[data-kind]');
-    if (!b || playing) return;
-    saveItems();
-    hostDo(() => writeState(L.setKind(room.state, b.dataset.kind)));
+  $('spin').addEventListener('click', () => { $('spin').disabled = true; hostDo(hostSpin).then(render); });
+  $('next').addEventListener('click', () => hostDo(hostNext));
+  $('reset-chips').addEventListener('click', () => {
+    if (playing || !confirm('全員のチップを 1,000 に戻します。置いてある賭けと「おかわり」の回数も消えます。よろしいですか?')) return;
+    hostDo(() => writeState(L.resetChips(room.state)));
   });
-  $('opt-remove-hit').addEventListener('change', (ev) => hostDo(() => writeState(L.setOption(room.state, 'removeHit', ev.target.checked))));
-  $('opt-remove-winner').addEventListener('change', (ev) => hostDo(() => writeState(L.setOption(room.state, 'removeWinner', ev.target.checked))));
-  $('reset-won').addEventListener('click', () => hostDo(() => writeState(L.resetWon(room.state))));
-  $('members').addEventListener('click', (ev) => {
+  $('ranking').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-act]');
     if (!btn) return;
     const uid = btn.closest('.member-row').dataset.uid;
     if (btn.dataset.act === 'ban' && !confirm('この人をブロックしますか?(この部屋に入れなくなります)')) return;
     hostDo(() => moderate(btn.dataset.act, uid));
-  });
-  $('items').addEventListener('input', (ev) => {
-    const row = ev.target.closest('.item-row');
-    if (!row || !ev.target.classList.contains('item-text')) return;
-    ed.items[Number(row.dataset.i)].t = ev.target.value;
-    paintDots();
-    touchItems();
-  });
-  $('items').addEventListener('click', (ev) => {
-    const btn = ev.target.closest('[data-act]');
-    if (!btn) return;
-    const row = btn.closest('.item-row');
-    const i = Number(row.dataset.i);
-    const act = btn.dataset.act;
-    if (act === 'del') { ed.items.splice(i, 1); renderEditorRows(); }
-    else {
-      ed.items[i].w = Math.min(L.MAX_WEIGHT, Math.max(1, ed.items[i].w + (act === 'plus' ? 1 : -1)));
-      row.querySelector('.wnum').textContent = String(ed.items[i].w);
-    }
-    touchItems();
-    saveItems();
-  });
-  $('add-item').addEventListener('click', () => {
-    if (ed.items.length >= L.MAX_ITEMS) return;
-    ed.items.push({ t: '', w: 1 });
-    renderEditorRows();
-    const inputs = $('items').querySelectorAll('.item-text');
-    inputs[inputs.length - 1].focus();
-  });
-  $('presets').addEventListener('click', (ev) => {
-    const b = ev.target.closest('[data-preset]');
-    if (!b || playing) return;
-    const p = L.PRESETS[b.dataset.preset];
-    if (!p || !confirm(`いまの中身を「${p.label}」の見本と入れ替えます。よろしいですか?`)) return;
-    ed.items = L.sanitizeItems(p.items);
-    renderEditorRows();
-    touchItems();
-    saveItems();
   });
   $('copy-url').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(joinUrl(code)); toast('リスナー用のURLをコピーしました'); } catch { toast('コピーできませんでした。URLを長押ししてコピーしてください'); }
@@ -704,12 +697,20 @@
   $('join-name').addEventListener('input', () => { join.name = $('join-name').value; });
   $('join-enter').addEventListener('click', () => { $('join-enter').disabled = true; joinRoom().catch(fail('参加できませんでした')).finally(() => { $('join-enter').disabled = false; }); });
   $('join-watch').addEventListener('click', () => enterListener());
-  $('rejoin').addEventListener('click', () => {
-    if (!(room && (room.players || {})[backend.uid])) { renderJoin(); show('screen-join'); return; } // 見るだけの人は名前を決めてから
-    backend.set(path(`queue/${backend.uid}`), { joinedAt: backend.serverTimestamp() }).catch(fail('参加できませんでした'));
+  $('rejoin').addEventListener('click', () => { renderJoin(); show('screen-join'); });
+  $('my-table').addEventListener('click', (ev) => {
+    const cell = ev.target.closest('[data-spot]');
+    if (cell && !cell.disabled) tapSpot(Number(cell.dataset.spot));
   });
-  $('leave').addEventListener('click', () => backend.remove(path(`queue/${backend.uid}`)).catch(fail('操作できませんでした')));
-  $('listener-spin').addEventListener('click', () => listenerSpin().catch(fail('回せませんでした')));
+  $('chip-values').addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-v]');
+    if (!b || b.disabled) return;
+    chipValue = Number(b.dataset.v);
+    store.set(KEY_CHIP, chipValue);
+    render();
+  });
+  $('clear-bets').addEventListener('click', clearBets);
+  $('rebuy').addEventListener('click', rebuy);
 
   // 音: ミュートの切り替えと、最初のタップ・キー操作・タブに戻ったときの解錠
   for (const id of ['mute', 'mute-l']) $(id).addEventListener('click', () => { sounds.setMuted(!sounds.muted); store.set(KEY_MUTED, sounds.muted); renderMute(); });

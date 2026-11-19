@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffb9d5">
 <title>みんなでルーレット</title>
-<link rel="stylesheet" href="style.css?v=0848083dd5">
+<link rel="stylesheet" href="style.css?v=32e4087f31">
 </head>
 <body>
 <div class="bg-deco" aria-hidden="true"></div>
@@ -29,13 +29,14 @@
     <button id="resume-room" class="btn btn-primary">前回の部屋を続ける</button>
   </div>
   <div class="panel steps">
-    <p><b>配信でリスナーと遊べるルーレットです。</b></p>
+    <p><b>配信でリスナーと遊べる、カジノ式のルーレットです。</b></p>
     <ol>
-      <li>下のボタンで部屋を作る</li>
+      <li>下のボタンで部屋を作る(あなたがディーラー)</li>
       <li>出てきた QR コード(またはURL)を配信に映して、リスナーに入ってもらう</li>
-      <li>「回す」を押すと、みんなの画面で同じルーレットが回る</li>
+      <li>リスナーが自分のスマホで、数字や赤・黒にチップを賭ける</li>
+      <li>「回す」を押すと玉が転がり、当たった人のチップが増える</li>
     </ol>
-    <p class="hint-text">お題を入れて回す「お題ルーレット」と、参加した人から1人を選ぶ「リスナー抽選」があります。リスナーに回してもらうこともできます。</p>
+    <p class="hint-text">チップは遊び用の点数です。お金や景品とは交換できません。</p>
   </div>
   <button id="create-room" class="btn btn-primary">ルーレットを始める(部屋を作る)</button>
   <h2>リスナーの人はこちら</h2>
@@ -53,55 +54,43 @@
       <canvas data-ref="qr" width="96" height="96" hidden></canvas>
       <div class="urlbox"><span class="rlabel">リスナー用のURL(QRコードでも入れます)</span><span class="url" data-ref="url"></span></div>
     </div>
-    <div class="hostbar-buttons">
+    <div class="hostbar-buttons" data-host-only>
       <button id="copy-url" class="btn btn-ghost">URLをコピー</button>
       <button id="mute" class="btn mute" aria-label="音の切り替え">🔊</button>
       <button id="close-room" class="btn btn-ghost">部屋を閉じる</button>
     </div>
   </header>
-  <div class="kind-switch" id="kind-switch" data-host-only>
-    <button type="button" class="choice" data-kind="items"><span class="big">🎀 お題ルーレット</span><span class="hint">入れた項目から1つ</span></button>
-    <button type="button" class="choice" data-kind="names"><span class="big">🙋 リスナー抽選</span><span class="hint">参加した人から1人</span></button>
-  </div>
   <div class="host-main">
     <div class="main-col">
       <div class="wheel-area panel">
         <div class="status" data-ref="status"></div>
+        <div class="hist" data-ref="hist"></div>
         <div class="wheel-box" data-ref="wheel"></div>
         <div class="result" data-ref="result" hidden></div>
       </div>
-      <div class="controls" id="host-controls">
-        <button id="spin" class="btn btn-primary spin-btn">💗 回す</button>
-        <button id="winner-spin" class="btn" hidden>当たった人にお題を回してもらう</button>
-        <button id="dismiss" class="btn" hidden>結果を閉じる</button>
-        <button id="cancel-turn" class="btn" hidden>指名を取り消す</button>
+      <div class="controls" data-host-only>
+        <button id="spin" class="btn btn-primary spin-btn">💗 ベット締め切り → 回す</button>
+        <button id="next" class="btn btn-primary spin-btn" hidden>次のゲームへ</button>
       </div>
       <p class="hint-text center" id="spin-hint" data-host-only></p>
     </div>
-    <div class="side">
-      <section class="panel box" id="editor-box" data-host-only>
-        <h3>ルーレットの中身 <small>(お題ルーレット)</small></h3>
-        <div id="items"></div>
-        <button id="add-item" class="btn btn-ghost" type="button">＋ 項目を足す</button>
-        <p class="hint-text">右の数字は当たりやすさ。大きいほど広くなって当たりやすい。</p>
-        <label class="opt"><input type="checkbox" id="opt-remove-hit"> 当たった項目は消していく</label>
-        <div class="presets" id="presets"><span class="rlabel">見本から入れる(いまの中身と入れ替え)</span></div>
-        <p class="notice panel" id="drink-note" hidden>飲めない人はソフトドリンクでOK。無理な飲酒は絶対にしないこと。</p>
-      </section>
-      <section class="panel box">
-        <h3>参加者 <small data-ref="count"></small></h3>
-        <label class="opt" data-host-only><input type="checkbox" id="opt-remove-winner"> 抽選で当たった人は、次の抽選から外す</label>
-        <div id="members" data-ref="members"></div>
-        <button id="reset-won" class="btn btn-ghost" type="button" data-host-only hidden>当選済みを元に戻す</button>
-      </section>
-      <section class="panel box"><h3>結果の記録</h3><div data-ref="history"></div></section>
-    </div>
+    <section class="panel box table-col">
+      <h3>テーブル <small data-ref="tsum"></small></h3>
+      <div data-ref="table"></div>
+      <p class="hint-text legend">数字にぴったり 36倍 ・ 1〜12 など / たて1列 3倍 ・ 赤黒 / 奇数偶数 / 1〜18・19〜36 2倍。<br>0 が出たら、0 に賭けた人だけ当たり。</p>
+    </section>
+    <section class="panel box side">
+      <h3>チップの順位 <small data-ref="count"></small></h3>
+      <div id="ranking" data-ref="ranking"></div>
+      <p class="house" data-ref="house"></p>
+      <button id="reset-chips" class="btn btn-ghost" type="button" data-host-only>チップを配り直す</button>
+    </section>
   </div>
 </section>
 
 <section id="screen-join" class="screen" hidden>
   <h1 class="title small">みんなでルーレット</h1>
-  <div class="notice panel">部屋 <b id="join-code"></b> に参加します。抽選に当たったり、ルーレットを回す役に選ばれるかも!</div>
+  <div class="notice panel">部屋 <b id="join-code"></b> に参加します。1,000 チップをもらって、数字や赤・黒に賭けよう!<br><small>チップは遊び用の点数です。お金や景品とは交換できません。</small></div>
   <h2>名前とアイコン</h2>
   <div class="player-row">
     <span class="avatar lg" id="join-avatar"></span>
@@ -116,20 +105,31 @@
   <div class="panel mystatus">
     <span class="avatar lg" id="my-avatar" hidden></span>
     <div class="mytext"><div id="my-status" class="mybig"></div><div id="my-sub" class="hint-text"></div></div>
+    <div class="mychips" id="my-chips-box" hidden><span class="rlabel">チップ</span><b id="my-chips"></b></div>
     <button id="mute-l" class="btn mute" aria-label="音の切り替え">🔊</button>
   </div>
-  <button id="listener-spin" class="btn btn-primary spin-btn" hidden>💗 回す!</button>
   <div class="wheel-area panel">
     <div class="status" data-ref="status"></div>
+    <div class="hist" data-ref="hist"></div>
     <div class="wheel-box" data-ref="wheel"></div>
     <div class="result" data-ref="result" hidden></div>
   </div>
-  <div class="controls">
-    <button id="rejoin" class="btn btn-primary" hidden>参加する</button>
-    <button id="leave" class="btn" hidden>参加をやめる</button>
+  <button id="rebuy" class="btn btn-primary" hidden>おかわり(1,000 チップをもらう)</button>
+  <button id="rejoin" class="btn btn-primary" hidden>参加する</button>
+  <section class="panel box table-col">
+    <h3>テーブル <small data-ref="tsum"></small></h3>
+    <div id="my-table" data-ref="table"></div>
+    <p class="hint-text legend">数字にぴったり 36倍 ・ 1〜12 など / たて1列 3倍 ・ 赤黒 / 奇数偶数 / 1〜18・19〜36 2倍。<br>0 が出たら、0 に賭けた人だけ当たり。ピンクの丸が自分、白い丸がみんなの合計。</p>
+  </section>
+  <div class="betbar panel" id="betbar" hidden>
+    <div class="chipvals" id="chip-values" role="group" aria-label="置くチップをえらぶ"></div>
+    <button id="clear-bets" class="btn btn-ghost" type="button">取り消す</button>
   </div>
-  <section class="panel box"><h3>参加者 <small data-ref="count"></small></h3><div data-ref="members"></div></section>
-  <section class="panel box"><h3>結果の記録</h3><div data-ref="history"></div></section>
+  <section class="panel box">
+    <h3>チップの順位 <small data-ref="count"></small></h3>
+    <div data-ref="ranking"></div>
+    <p class="house" data-ref="house"></p>
+  </section>
   <p class="hint-text">🔊 音が出ないときは、画面を一度タップして、スマホの消音スイッチ(マナーモード)をオフにしてね</p>
 </section>
 
@@ -164,9 +164,9 @@
 <div id="confetti" class="confetti" hidden></div>
 
 <script src="firebase-config.js"></script>
-<script src="logic.js?v=a3d809f130"></script>
-<script src="sync.js?v=69c45ab4be"></script>
-<script src="wheel.js?v=a1a4aadb86"></script>
-<script src="app.js?v=5395b7a475"></script>
+<script src="logic.js?v=c4ac1bcc98"></script>
+<script src="sync.js?v=2d92b57f46"></script>
+<script src="wheel.js?v=53bd594109"></script>
+<script src="app.js?v=0403b9e320"></script>
 </body>
 </html>
