@@ -1053,7 +1053,7 @@ test('音: 表示専用(stage=1)にはバッジが出ず、ループも回らな
 });
 
 // ---------- リーチ演出 ----------
-test('リーチ: 1,1,1 を reach=3 で投げると「ピンゾロリーチ」「激アツ」「あと 1 で ピンゾロ ×5」のカットインと暗転・ズームの後に、5秒以上溜めてピンゾロ', async () => {
+test('リーチ: 1,1,1 を reach=3 で投げると「ピンゾロリーチ」「激アツ」「あと 1 で ピンゾロ ×5」のカットインと暗転・ズームの後に、7秒以上溜めてピンゾロ', async () => {
   const { page, context, errors } = await newPage(null, 'index.html?demo=1&dice=1,1,1&seed=7&reach=3');
   await page.locator('#stage .cutin').waitFor({ state: 'visible', timeout: 10000 });
   const t0 = Date.now();
@@ -1064,8 +1064,8 @@ test('リーチ: 1,1,1 を reach=3 で投げると「ピンゾロリーチ」「
   assert.equal(await page.locator('#stage .table.reach.zoom.reach-l3').count(), 1);
   assert.equal(await page.locator('#stage .cube.hold').count(), 1);
   assert.equal(await page.locator('#stage .result-stamp').innerText(), ''); // 溜め中は結果なし
-  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 12000 });
-  assert.ok(Date.now() - t0 >= 4500, '強い役のリーチは長く溜める: ' + (Date.now() - t0));
+  await page.locator('#stage .result-stamp[data-hand="pinzoro"]').waitFor({ state: 'visible', timeout: 16000 });
+  assert.ok(Date.now() - t0 >= 7000, '激アツ×ピンゾロのリーチは長く溜める: ' + (Date.now() - t0));
   assert.equal(await page.locator('#stage .table.reach').count(), 0);
   assert.equal(await page.locator('#stage .cube.hold').count(), 0);
   assert.deepEqual(errors, []);
