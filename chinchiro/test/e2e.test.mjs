@@ -1637,3 +1637,58 @@ test('点数リセット: 確認でキャンセルすると何も変わらない
   assert.equal((await readRoom(host, code)).state.phase, 'result');
   await context.close();
 });
+
+// ---------- 消音(前回の消音を忘れて「最初から鳴らない」にならない) ----------
+test('消音: 前に消音にしたまま閉じても、開き直せば音が出る', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(AUDIO_TAP);
+  await context.addInitScript(() => { try { localStorage.setItem('chinchiro.muted', 'true'); } catch { /* 保存できない環境 */ } }); // 前回、消音にしたまま閉じた
+  const { page: host, errors } = await newPage(context, 'index.html?mock=1', { width: 1280, height: 720 });
+  const code = await createRoom(host);
+  assert.equal((await host.locator('#mute').innerText()).trim(), '🔊', '開いたときは音が出る状態');
+  const { page: kid } = await openListener(context, code);
+  await kid.locator('#join-name').fill('うさ');
+  await kid.click('#join-challenge');
+  await host.locator('#queue .queue-row').first().waitFor({ state: 'visible', ...T });
+  await host.bringToFront();
+  await host.click('#start-match');
+  await host.locator('#host-roll').waitFor({ state: 'visible', timeout: 20000 });
+  await fixDice(host, diceSeq([2, 4, 6]));
+  await host.waitForTimeout(300);
+  await host.evaluate(() => { window.__audio.length = 0; });
+  await host.click('#host-roll');
+  await host.locator('#stage .hand.rattle').waitFor({ state: 'attached', ...T });
+  await host.locator('#stage .hand.rattle').waitFor({ state: 'detached', ...T });
+  const shaking = loudest((await host.evaluate(() => window.__audio)).filter((x) => x.shaking));
+  assert.ok(shaking.rms >= 0.09, `振っている間の実効値 ${shaking.rms.toFixed(3)}`);
+  assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('消音: ボタンを押すと「消音中」とはっきり出て、もう一度押すと確認の音が鳴って元に戻る', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await context.addInitScript(AUDIO_TAP);
+  const { page: host, errors } = await newPage(context, 'index.html?mock=1', { width: 1280, height: 720 });
+  await createRoom(host);
+  const mute = host.locator('#mute');
+  assert.equal((await mute.innerText()).trim(), '🔊');
+  assert.equal(await mute.getAttribute('aria-pressed'), 'false');
+  await mute.click();
+  assert.ok((await mute.innerText()).includes('消音中'), `消音中の表示: ${await mute.innerText()}`);
+  assert.equal(await mute.getAttribute('aria-pressed'), 'true');
+  assert.ok(await mute.evaluate((el) => el.classList.contains('muted')), '消音中は目立つ見た目');
+  await host.evaluate(() => { window.__audio.length = 0; });
+  await mute.click();
+  assert.equal((await mute.innerText()).trim(), '🔊');
+  assert.equal(await mute.getAttribute('aria-pressed'), 'false');
+  await host.waitForTimeout(600);
+  const heard = loudest(await host.evaluate(() => window.__audio));
+  assert.ok(heard.peak >= 0.05, `戻したときの確認の音(最大振幅 ${heard.peak.toFixed(3)})`);
+  // 消音は覚えない(開き直したら音が出る)
+  await mute.click();
+  await host.reload();
+  await host.locator('#screen-host').waitFor({ state: 'visible', ...T });
+  assert.equal((await host.locator('#mute').innerText()).trim(), '🔊', '開き直したら音が出る状態');
+  assert.deepEqual(errors, []);
+  await context.close();
+});

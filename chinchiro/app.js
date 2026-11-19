@@ -57,7 +57,8 @@
     }));
   })();
   const sounds = ChinchiroAnim.createSounds({ voiceFiles, voiceReady });
-  sounds.setMuted(store.get(KEY_MUTED) === true);
+  // 消音は覚えない: 開き直したら必ず音が出る(前に消音にしたのを忘れて「最初から鳴らない」にならないように)。前の版が保存した値は消す
+  store.del(KEY_MUTED);
   const stage = ChinchiroAnim.createDiceStage($('stage'), sounds);
 
   function show(id) {
@@ -465,7 +466,14 @@
     $('reset-scores').hidden = playing || !(st.phase === 'lobby' || st.phase === 'result');
   }
 
-  function renderMute() { $('mute').textContent = sounds.muted ? '🔇' : '🔊'; $('stage-overlay').dataset.muted = String(sounds.muted); updateAudioBadge(); }
+  function renderMute() {
+    const b = $('mute');
+    b.textContent = sounds.muted ? '🔇 消音中' : '🔊'; // 消音中は文字と色ではっきり見せる(絵文字だけだと気づきにくい)
+    b.classList.toggle('muted', sounds.muted);
+    b.setAttribute('aria-pressed', String(sounds.muted));
+    $('stage-overlay').dataset.muted = String(sounds.muted);
+    updateAudioBadge();
+  }
 
   function render() {
     if (!room) {
@@ -898,7 +906,11 @@
   });
   $('rematch').addEventListener('click', () => hostDo(() => { const uid = room.state.match && room.state.match.childUid; if (uid) return hostStartMatch(uid); }));
   $('listener-roll').addEventListener('click', () => listenerRoll().catch((e) => alert('振れませんでした: ' + e.message)));
-  $('mute').addEventListener('click', () => { sounds.setMuted(!sounds.muted); store.set(KEY_MUTED, sounds.muted); renderMute(); });
+  $('mute').addEventListener('click', () => {
+    sounds.setMuted(!sounds.muted);
+    renderMute();
+    if (!sounds.muted) { sounds.unlock(); sounds.chime(); } // 戻したときは確認の音を鳴らす(鳴らなければパソコン側の音量・消音が原因)
+  });
   $('close-room').addEventListener('click', async () => {
     if (!confirm('部屋を閉じますか? リスナーには「終了しました」と表示されます')) return;
     await backend.update(`rooms/${code}/state`, { phase: 'closed' });
