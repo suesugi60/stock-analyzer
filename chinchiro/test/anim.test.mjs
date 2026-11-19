@@ -69,9 +69,9 @@ test('reachPlan: レベルの分布(信頼度)', () => {
   const me = dist([3, 3, 5]); assert.ok(me[0] > 0.75 && me[3] < 0.05, JSON.stringify(me)); // 半分は形なし(L0)なので L0 が多い
   const hf = dist([1, 2, 3]); assert.equal(hf[3], 0); assert.ok(hf[2] > 0.5, JSON.stringify(hf));
   const sg = dist([4, 5, 6]); assert.ok(sg[0] === 0 && sg[3] > 0.2, JSON.stringify(sg));
-  assert.deepEqual(A.REACH_HOLD_MS, { 1: 1400, 2: 2400, 3: 3600 });
+  assert.deepEqual(A.REACH_HOLD_MS, { 1: 1400, 2: 2400, 3: 5500 }); // 激アツは長く
   // 強い役のリーチほど長く: ピンゾロ 1.5 倍、ゾロ目 1.25 倍、シゴロ・ピンチ 1 倍
-  assert.equal(A.holdMs(3, 'pinzoro'), 5400); assert.equal(A.holdMs(2, 'zoro'), 3000); assert.equal(A.holdMs(1, 'shigoro'), 1400); assert.equal(A.holdMs(2, 'pinch'), 2400);
+  assert.equal(A.holdMs(3, 'pinzoro'), 8250); assert.equal(A.holdMs(2, 'zoro'), 3000); assert.equal(A.holdMs(1, 'shigoro'), 1400); assert.equal(A.holdMs(2, 'pinch'), 2400);
   assert.equal(A.holdMs(0, 'zoro'), 0);
   assert.deepEqual(Object.keys(A.REACH_WEIGHTS).sort(), ['hifumi', 'me', 'nonePinch', 'noneShigoro', 'pinzoro', 'shigoro', 'zoro']);
 });

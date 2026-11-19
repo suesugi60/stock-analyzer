@@ -70,7 +70,7 @@ const ChinchiroAnim = (() => {
   /** レベル 0〜3(なし/ノーマル/スーパー/激アツ)の重み。結果ごとに引くので「強い役ほど激アツが出やすいが確定ではない」。 */
   const REACH_WEIGHTS = { pinzoro: [0, 5, 25, 70], zoro: [0, 20, 45, 35], shigoro: [0, 25, 45, 30], me: [70, 22, 6, 2], noneShigoro: [75, 18, 5, 2], hifumi: [10, 30, 60, 0], nonePinch: [80, 15, 5, 0] };
   /** 溜めの長さ(2 個目が止まってから最後の 1 個を落とすまで)。レベル別の基本値。 */
-  const REACH_HOLD_MS = { 1: 1400, 2: 2400, 3: 3600 };
+  const REACH_HOLD_MS = { 1: 1400, 2: 2400, 3: 5500 }; // 激アツはたっぷり溜める
   /** 見えている形(狙える役)が強いほど長く溜める。 */
   const KIND_FACTOR = { pinzoro: 1.5, zoro: 1.25, shigoro: 1, pinch: 1 };
   function holdMs(level, kind) { return level > 0 ? Math.round((REACH_HOLD_MS[level] || REACH_HOLD_MS[1]) * (KIND_FACTOR[kind] || 1)) : 0; }
@@ -381,7 +381,7 @@ const ChinchiroAnim = (() => {
         // レベルが高いほど速く。激アツは終わりに向かって加速
         let t = 0; let gap = level >= 3 ? 520 : level === 2 ? 380 : 480;
         const end = Math.max(0, ms - (level >= 3 ? 400 : 0)); // 激アツの最後 400ms は無音の溜め
-        while (t < end) { timers.push(setTimeout(beat, t)); t += gap; if (level >= 3) gap = Math.max(140, gap * 0.86); }
+        while (t < end) { timers.push(setTimeout(beat, t)); t += gap; if (level >= 3) gap = Math.max(140, gap * 0.93); } // 激アツは長い溜めの間にじわじわ加速
         if (level >= 3 && ms > 1600) timers.push(setTimeout(() => sweep(200, 1800, 1.2, 0.35), end - 1200));
         return { stop() { for (const t2 of timers) clearTimeout(t2); } };
       },
