@@ -9,9 +9,13 @@ REPO="git@github.com:suesugi60/stock-analyzer.git"
 if [ ! -d "$DEST/.git" ]; then
   gh repo clone suesugi60/stock-analyzer "$DEST" || git clone "$REPO" "$DEST"
 fi
+# 同期しないフォルダ: 配信アプリ(bingo / chinchiro / roulette / sugoroku)と docs。
+# これらは GitHub 側で作って直しているので、ここから外しておく。外したフォルダは --delete でも消えず、
+# 元フォルダの古い内容で上書きされることもない。配信アプリのフォルダを足したら、ここにも足すこと。
 rsync -a --delete \
   --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'data/' \
   --exclude '.dashboard.*.log' --exclude 'install/' --exclude 'kabu' --exclude '.streamlit/secrets.toml' \
+  --exclude '/bingo/' --exclude '/chinchiro/' --exclude '/roulette/' --exclude '/sugoroku/' --exclude '/docs/' \
   "$SRC/" "$DEST/"
 cd "$DEST"
 git add -A
