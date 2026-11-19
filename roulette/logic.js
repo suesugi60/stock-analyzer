@@ -1,236 +1,302 @@
-// ===== ルーレットのロジック(純粋関数。画面にも通信にも触らない) =====
-// 角度は「度」。盤の上の位置は、針(右・3時)の向きを 0 として時計回りに数える。
-// 盤を R 度だけ時計回りに回すと、盤の上の角度 θ の場所は画面の θ + R に来る。針が指すのは θ ≡ -R の場所。
+// ===== カジノ式ルーレットのロジック(純粋関数。画面にも通信にも触らない) =====
+// ヨーロピアン式(0 が 1 つ、0〜36 の 37 マス)。チップは遊び用の点数。
+// 角度は「度」。盤の上の位置は、真上(12時)を 0 として時計回りに数える。
 const RouletteLogic = (() => {
   'use strict';
 
-  const MAX_ITEMS = 30;    // 項目の数
-  const MAX_LABEL = 20;    // 項目の文字数
-  const MAX_WEIGHT = 9;    // 当たりやすさ(1〜9)
-  const MAX_HISTORY = 30;  // 残す記録の数
-  const MAX_SEGS = 120;    // 盤に並べる数の上限(抽選の人数)
-  // 盤の色(ピンク基調。こい色とうすい色を交互に並べて、隣どうしの境目が分かるようにする)
-  const COLORS = ['#ff4f93', '#ffc7dc', '#ff85b3', '#c9a7ff', '#ff6f91', '#ffe7a3', '#f04bb0', '#ffb0cf', '#ff9e80', '#b784f5'];
+  const START_CHIPS = 1000;        // 最初に持っているチップ(おかわりでもこの数に戻る)
+  const MIN_BET = 10;              // 賭けの最小単位
+  const CHIP_VALUES = [10, 50, 100, 500];
+  const MAX_CHIPS = 999999999;
+  const MAX_HISTORY = 20;          // 残す出目の数
+  const SETTLE_MS = 1600;          // 玉がマスに収まってから盤が止まるまで
 
-  const PRESETS = {
-    atari: { label: '当たりはずれ', items: [{ t: '大当たり', w: 1 }, { t: 'はずれ', w: 3 }, { t: '当たり', w: 2 }, { t: 'はずれ', w: 3 }, { t: '当たり', w: 2 }, { t: 'はずれ', w: 3 }] },
-    batsu: { label: '罰ゲーム', items: ['モノマネ', '変顔', '早口ことば', '一発ギャグ', '秘密をひとつ', '歌をワンフレーズ', 'セーフ!', 'もう一回まわす'].map((t) => ({ t, w: 1 })) },
-    nomi: { label: '飲み', drink: true, items: ['1口', '2口', '半分', '1杯', 'セーフ!', 'みんなで乾杯', '配信者が飲む', '水を飲む'].map((t) => ({ t, w: 1 })) },
-    number: { label: '数字 1〜6', items: ['1', '2', '3', '4', '5', '6'].map((t) => ({ t, w: 1 })) },
-    yesno: { label: 'はい・いいえ', items: ['はい', 'いいえ', 'はい', 'いいえ'].map((t) => ({ t, w: 1 })) },
-  };
+  // 盤の数字の並び(真上から時計回り)
+  const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+  const POCKET = 360 / WHEEL.length;
+  const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+  const R_TRACK = 91.5;            // 玉が走る外周の半径(盤の絵と同じ単位)
+  const R_REST = 64;               // 玉がマスに収まったときの半径
 
   const mod = (a, n) => ((a % n) + n) % n;
   const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-  const int = (v, d = 0) => (Number.isInteger(v) ? v : d);
-  /** Firebase は配列を「番号がキーのオブジェクト」で返すことがあるので、どちらでも配列にする。 */
+  const isInt = (v) => Number.isInteger(v);
   const toArray = (v) => (Array.isArray(v) ? v : isObj(v) ? Object.keys(v).sort((a, b) => Number(a) - Number(b)).map((k) => v[k]) : []);
+  const validNumber = (n) => isInt(n) && n >= 0 && n <= 36;
+  /** 'red' | 'black' | 'green'(0 だけ)。 */
+  const colorOf = (n) => (n === 0 ? 'green' : RED.has(n) ? 'red' : 'black');
 
-  function cutLabel(s, max) {
-    const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-    const chars = Array.from(t);
-    return chars.length > max ? chars.slice(0, max).join('') : t;
-  }
-  function weight(w) {
-    const n = Math.floor(Number(w));
-    return Number.isFinite(n) ? Math.min(MAX_WEIGHT, Math.max(1, n)) : 1;
-  }
-
-  /** 項目の一覧を、保存してよい形にそろえる(空は捨てる)。 */
-  function sanitizeItems(items) {
-    const out = [];
-    for (const it of toArray(items)) {
-      const raw = isObj(it) ? it : typeof it === 'string' ? { t: it, w: 1 } : null;
-      if (!raw) continue;
-      const t = cutLabel(raw.t, MAX_LABEL);
-      if (!t) continue;
-      out.push({ t, w: weight(raw.w) });
-      if (out.length >= MAX_ITEMS) break;
+  // ---------- 賭ける場所 ----------
+  // 0〜36: その数字 / 37 赤 / 38 黒 / 39 奇数 / 40 偶数 / 41 前半(1〜18) / 42 後半(19〜36)
+  // 43〜45: 1〜12・13〜24・25〜36 / 46〜48: たて1列(3で割った余りが 1・2・0 の数字)
+  const SPOT = { RED: 37, BLACK: 38, ODD: 39, EVEN: 40, LOW: 41, HIGH: 42, DOZEN: 43, COLUMN: 46 };
+  const SPOT_COUNT = 49;
+  const validSpot = (s) => isInt(s) && s >= 0 && s < SPOT_COUNT;
+  /** 出た数字 n で、場所 spot は当たりか。0 が出たら、数字の 0 以外は全部はずれ。 */
+  function spotWins(spot, n) {
+    if (spot <= 36) return spot === n;
+    if (n === 0) return false;
+    switch (spot) {
+      case SPOT.RED: return RED.has(n);
+      case SPOT.BLACK: return !RED.has(n);
+      case SPOT.ODD: return n % 2 === 1;
+      case SPOT.EVEN: return n % 2 === 0;
+      case SPOT.LOW: return n <= 18;
+      case SPOT.HIGH: return n >= 19;
+      default: break;
     }
-    return out;
+    if (spot >= SPOT.DOZEN && spot < SPOT.DOZEN + 3) return Math.ceil(n / 12) - 1 === spot - SPOT.DOZEN;
+    if (spot >= SPOT.COLUMN && spot < SPOT.COLUMN + 3) return (n - 1) % 3 === spot - SPOT.COLUMN;
+    return false;
+  }
+  /** 当たったとき、賭けたチップが何倍になって戻るか(賭けた分を含む)。数字 36倍・3択 3倍・2択 2倍。 */
+  const spotPays = (spot) => (spot <= 36 ? 36 : spot >= SPOT.DOZEN ? 3 : 2);
+  function spotLabel(spot) {
+    if (spot <= 36) return String(spot);
+    if (spot >= SPOT.COLUMN) return `たて${spot - SPOT.COLUMN + 1}列目`;
+    if (spot >= SPOT.DOZEN) return ['1〜12', '13〜24', '25〜36'][spot - SPOT.DOZEN];
+    return { [SPOT.RED]: '赤', [SPOT.BLACK]: '黒', [SPOT.ODD]: '奇数', [SPOT.EVEN]: '偶数', [SPOT.LOW]: '1〜18', [SPOT.HIGH]: '19〜36' }[spot];
+  }
+  /** 出た数字の説明: 「赤・奇数・1〜18」。0 は「みどり」。 */
+  function describe(n) {
+    if (n === 0) return 'みどり';
+    return `${RED.has(n) ? '赤' : '黒'}・${n % 2 ? '奇数' : '偶数'}・${n <= 18 ? '1〜18' : '19〜36'}`;
+  }
+  const spotKey = (spot) => `s${spot}`; // 数字だけのキーは保存先で配列に化けるので頭に s を付ける
+  function parseKey(k) {
+    const m = /^s(\d{1,2})$/.exec(String(k));
+    const s = m ? Number(m[1]) : -1;
+    return validSpot(s) ? s : -1;
   }
 
+  // ---------- リスナーから配信者への合図(数 1 つに詰める) ----------
+  // いまの通信の決まりでは、リスナーが配信者へ送れるのは「数 1 つ」だけ。そこで「何回戦・何をする・いくら」を 1 つの数に詰める。
+  //   数 = (回戦 × 100 + 種類) × 10,000,000 + チップ数   種類: 0〜48 賭ける場所 / 90 賭けを全部取り消す / 91 おかわり
+  const OP = { CLEAR: 90, REBUY: 91 };
+  const ROUND_MOD = 100000;
+  const AMOUNT_MOD = 10000000;
+  const MAX_AMOUNT = AMOUNT_MOD - 1;
+  function encodeOp(round, code, amount = 0) { return (mod(round, ROUND_MOD) * 100 + code) * AMOUNT_MOD + amount; }
+  function decodeOp(at) {
+    if (!Number.isSafeInteger(at) || at < 0) return null;
+    const amount = at % AMOUNT_MOD;
+    const rest = Math.floor(at / AMOUNT_MOD);
+    const code = rest % 100;
+    const round = Math.floor(rest / 100);
+    if (round >= ROUND_MOD || !(validSpot(code) || code === OP.CLEAR || code === OP.REBUY)) return null;
+    return { round, code, amount };
+  }
+
+  // ---------- state ----------
   function createState() {
-    return { phase: 'open', seq: 0, kind: 'items', items: sanitizeItems(PRESETS.atari.items), removeHit: false, removeWinner: true, turn: null, spin: null, dismissed: 0, won: {}, history: [] };
-  }
-
-  function normalizeSegs(raw) {
-    const out = [];
-    for (const s of toArray(raw)) {
-      if (!isObj(s)) continue;
-      const seg = { t: cutLabel(s.t, 40) || '？', w: weight(s.w) };
-      if (typeof s.u === 'string' && s.u) seg.u = s.u;
-      out.push(seg);
-      if (out.length >= MAX_SEGS) break;
-    }
-    return out;
+    return { phase: 'bet', round: 1, chips: {}, rebuys: {}, bets: {}, spin: null, history: [], house: 0 };
   }
   function normalizeSpin(raw) {
     if (!isObj(raw)) return null;
-    const segs = normalizeSegs(raw.segs);
-    const id = int(raw.id, 0);
-    const { index, from, to, ms } = raw;
-    if (segs.length < 2 || id < 1) return null;
-    if (!Number.isInteger(index) || index < 0 || index >= segs.length) return null;
-    if (![from, to, ms].every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
-    if (ms < 300 || ms > 20000 || Math.abs(to) > 1e7 || Math.abs(from) > 1e7) return null;
-    const spin = { id, kind: raw.kind === 'names' ? 'names' : 'items', segs, index, from, to, ms, byName: cutLabel(raw.byName, 12) };
-    if (typeof raw.by === 'string' && raw.by) spin.by = raw.by;
-    return spin;
-  }
-  function normalizeHistory(raw) {
-    const out = [];
-    for (const h of toArray(raw)) {
-      if (!isObj(h)) continue;
-      const e = { id: int(h.id, 0), k: h.k === 'names' ? 'names' : 'items', t: cutLabel(h.t, 40) || '？', c: mod(int(h.c, 0), COLORS.length), by: cutLabel(h.by, 12) };
-      if (typeof h.u === 'string' && h.u) e.u = h.u;
-      out.push(e);
-      if (out.length >= MAX_HISTORY) break;
-    }
-    return out;
+    const { id, n, ms, w0, wd, r0, bt } = raw;
+    if (!isInt(id) || id < 1 || !validNumber(n)) return null;
+    if (![ms, w0, wd, r0, bt].every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
+    if (ms < 200 || ms > 30000 || Math.abs(wd) > 36000 || Math.abs(w0) > 36000 || Math.abs(r0) > 36000 || bt < 0 || bt > 60) return null;
+    return { id, n, ms, w0, wd, r0, bt };
   }
   /** 同期で届いた state を、必ず同じ形にそろえる(欠け・壊れ・いたずらに耐える)。 */
   function normalizeState(raw) {
     const r = isObj(raw) ? raw : {};
-    const won = {};
-    if (isObj(r.won)) for (const [k, v] of Object.entries(r.won)) if (v === true) won[k] = true;
+    const amounts = (src, max) => {
+      const out = {};
+      if (isObj(src)) for (const [k, v] of Object.entries(src)) if (isInt(v) && v >= 0 && v <= max) out[k] = v;
+      return out;
+    };
+    const bets = {};
+    if (isObj(r.bets)) {
+      for (const [uid, b] of Object.entries(r.bets)) {
+        if (!isObj(b)) continue;
+        const mine = {};
+        for (const [k, v] of Object.entries(b)) { const s = parseKey(k); if (s >= 0 && isInt(v) && v > 0 && v <= MAX_CHIPS) mine[s] = v; }
+        if (Object.keys(mine).length) bets[uid] = mine;
+      }
+    }
     return {
-      phase: r.phase === 'closed' ? 'closed' : 'open',
-      seq: Math.max(0, int(r.seq, 0)),
-      kind: r.kind === 'names' ? 'names' : 'items',
-      items: sanitizeItems(r.items),
-      removeHit: r.removeHit === true,
-      removeWinner: r.removeWinner !== false,
-      turn: typeof r.turn === 'string' && r.turn ? r.turn : null,
+      phase: r.phase === 'closed' ? 'closed' : r.phase === 'done' ? 'done' : 'bet',
+      round: isInt(r.round) && r.round >= 1 ? r.round : 1,
+      chips: amounts(r.chips, MAX_CHIPS),
+      rebuys: amounts(r.rebuys, 9999),
+      bets,
       spin: normalizeSpin(r.spin),
-      dismissed: Math.max(0, int(r.dismissed, 0)),
-      won,
-      history: normalizeHistory(r.history),
+      history: toArray(r.history).filter(validNumber).slice(0, MAX_HISTORY),
+      house: isInt(r.house) ? r.house : 0,
     };
   }
+  /** 保存する形(賭けのキーに s を付ける)。normalizeState の逆。 */
+  function serializeState(st) {
+    const bets = {};
+    for (const [uid, b] of Object.entries(st.bets)) { bets[uid] = {}; for (const [s, v] of Object.entries(b)) bets[uid][spotKey(s)] = v; }
+    return { ...st, bets };
+  }
 
-  // ---------- 盤に並べるもの ----------
-  const itemSegs = (items) => sanitizeItems(items).map(({ t, w }) => ({ t, w }));
-
-  /** 参加している人(参加した順)。ブロックした人と、名前を登録していない人は入らない。 */
-  function entrants(room) {
-    const players = (room && isObj(room.players)) ? room.players : {};
-    const queue = (room && isObj(room.queue)) ? room.queue : {};
-    const won = (room && room.state && isObj(room.state.won)) ? room.state.won : {};
-    return Object.keys(queue)
-      .filter((uid) => isObj(players[uid]) && !players[uid].banned)
-      .map((uid) => {
-        const p = players[uid];
-        return { uid, name: cutLabel(p.name, 12) || 'リスナー', char: p.char, hidden: p.hidden === true, online: p.online !== false, won: won[uid] === true, joinedAt: Number((queue[uid] || {}).joinedAt) || 0 };
-      })
-      .sort((a, b) => (a.joinedAt - b.joinedAt) || (a.uid < b.uid ? -1 : 1));
-  }
-  /** リスナー抽選の盤: 参加している人の名前。「次から外す」がオンなら当選済みの人は入らない。 */
-  function nameSegs(room) {
-    const st = room && room.state ? room.state : {};
-    return entrants(room)
-      .filter((e) => !(st.removeWinner !== false && e.won))
-      .slice(0, MAX_SEGS)
-      .map((e) => ({ t: e.hidden ? '？？？' : e.name, w: 1, u: e.uid }));
-  }
-  /** いま回したら使われる盤。 */
-  const liveSegs = (room) => (room && room.state && room.state.kind === 'names' ? nameSegs(room) : itemSegs(room && room.state ? room.state.items : []));
-
-  // ---------- 角度 ----------
-  /** 各項目の境目の角度。[0, …, 360](項目数 + 1 個)。 */
-  function segBounds(segs) {
-    const total = segs.reduce((s, x) => s + weight(x.w), 0);
-    const out = [0];
-    let acc = 0;
-    segs.forEach((x, i) => { acc += weight(x.w); out.push(i === segs.length - 1 ? 360 : (acc / total) * 360); });
-    return out;
-  }
-  /** r(0 以上 1 未満)から、当たりやすさに比例して項目を選ぶ。 */
-  function pickIndex(segs, r) {
-    const total = segs.reduce((s, x) => s + weight(x.w), 0);
-    let acc = 0;
-    for (let i = 0; i < segs.length; i++) { acc += weight(segs[i].w); if (r * total < acc) return i; }
-    return segs.length - 1;
-  }
-  /** 盤を rotation 度回したとき、針が指している項目の番号。 */
-  function indexAt(segs, rotation) {
-    if (!segs.length) return -1;
-    const b = segBounds(segs);
-    const theta = mod(-rotation, 360);
-    for (let i = 0; i < segs.length; i++) if (theta < b[i + 1]) return i;
-    return segs.length - 1;
-  }
-  /** 隣どうし(最後と最初も)が同じ色にならないように色の番号を決める。 */
-  function colorIndex(i, n) {
-    const len = COLORS.length;
-    const c = i % len;
-    return n > 1 && i === n - 1 && c === 0 ? Math.floor(len / 2) : c;
+  // ---------- チップと賭け ----------
+  const chipsOf = (st, uid) => (Object.hasOwn(st.chips, uid) ? st.chips[uid] : START_CHIPS);
+  const betsOf = (st, uid) => (Object.hasOwn(st.bets, uid) ? st.bets[uid] : {});
+  const sum = (obj) => Object.values(obj).reduce((s, v) => s + v, 0);
+  const stakeOf = (st, uid) => sum(betsOf(st, uid));
+  /** もう賭けられない(チップが最小単位に足りず、テーブルにも置いていない)。おかわりできる。 */
+  const isBroke = (st, uid) => chipsOf(st, uid) < MIN_BET && (st.phase !== 'bet' || stakeOf(st, uid) === 0);
+  /** 場所ごとの合計と人数、全体の合計。 */
+  function totals(st) {
+    const bySpot = {};
+    let total = 0;
+    let players = 0;
+    for (const b of Object.values(st.bets)) {
+      players++;
+      for (const [s, v] of Object.entries(b)) {
+        const t = bySpot[s] || (bySpot[s] = { sum: 0, count: 0 });
+        t.sum += v; t.count++; total += v;
+      }
+    }
+    return { bySpot, total, players };
   }
 
   /**
-   * 1 回の回転を決める。どこに止まるか(index)を先に決め、そこへ止まる角度(to)を逆算する。
-   * 3 回に 1 回くらいは境目の近くに止めて「隣かも…」とハラハラさせる(それでも境目からは離す)。
+   * リスナーの合図 1 つを state に当てはめる。受け付けたら「書きかえる場所 → 値」の表を返す(state からの相対パス)。
+   * 受け付けられない(回戦がちがう・締め切り後・チップが足りない など)なら null。
    */
-  function planSpin(segs, from, rng = Math.random) {
-    if (!Array.isArray(segs) || segs.length < 2) return null;
-    const index = pickIndex(segs, rng());
-    const near = rng() < 0.33;
-    const side = rng() < 0.5;
-    const jitter = rng();
-    const frac = near ? (side ? 0.08 + jitter * 0.09 : 0.83 + jitter * 0.09) : 0.2 + jitter * 0.6;
-    const b = segBounds(segs);
-    const theta = b[index] + (b[index + 1] - b[index]) * frac;
-    const turns = 5 + Math.floor(rng() * 3);
-    const to = from + turns * 360 + mod(-theta - from, 360);
-    const ms = 6500 + Math.floor(rng() * 1500);
-    return { index, from, to, ms };
+  function applyOp(st, uid, op) {
+    if (!op || op.round !== mod(st.round, ROUND_MOD)) return null;
+    const chips = chipsOf(st, uid);
+    if (op.code === OP.REBUY) {
+      if (!isBroke(st, uid)) return null;
+      return { [`chips/${uid}`]: START_CHIPS, [`rebuys/${uid}`]: (st.rebuys[uid] || 0) + 1 };
+    }
+    if (st.phase !== 'bet') return null;
+    const mine = betsOf(st, uid);
+    if (op.code === OP.CLEAR) {
+      const stake = sum(mine);
+      return stake ? { [`bets/${uid}`]: null, [`chips/${uid}`]: chips + stake } : null;
+    }
+    if (!validSpot(op.code)) return null;
+    const a = op.amount;
+    if (!isInt(a) || a < MIN_BET || a % MIN_BET !== 0 || a > chips) return null;
+    return { [`bets/${uid}/${spotKey(op.code)}`]: (mine[op.code] || 0) + a, [`chips/${uid}`]: chips - a };
   }
-  /** 回り始めてから elapsed ミリ秒の角度。じわっと動き出し、最後はゆっくり止まる。 */
-  function angleAt(spin, elapsed) {
-    const t = Math.min(1, Math.max(0, elapsed / spin.ms));
-    if (t >= 1) return spin.to;
-    const p = 1 - Math.pow(1 - Math.pow(t, 1.3), 3);
-    return spin.from + (spin.to - spin.from) * p;
+  /** applyOp の表を state に当てはめた結果(テスト用)。 */
+  function applyPatch(st, patch) {
+    const next = { ...st, chips: { ...st.chips }, rebuys: { ...st.rebuys }, bets: { ...st.bets } };
+    for (const [path, v] of Object.entries(patch)) {
+      const [top, uid, key] = path.split('/');
+      if (top === 'bets') {
+        if (key === undefined) { if (v === null) delete next.bets[uid]; continue; }
+        next.bets[uid] = { ...(next.bets[uid] || {}), [parseKey(key)]: v };
+      } else if (top === 'chips' || top === 'rebuys') next[top][uid] = v;
+    }
+    return next;
+  }
+
+  /** 出た数字 n での精算。uid → { stake 賭けた合計, payout 戻る合計, net 増減, hits 当たった場所 }。 */
+  function settle(bets, n) {
+    const out = {};
+    for (const [uid, b] of Object.entries(bets)) {
+      let stake = 0;
+      let payout = 0;
+      const hits = [];
+      for (const [s, v] of Object.entries(b)) {
+        const spot = Number(s);
+        stake += v;
+        if (spotWins(spot, n)) { payout += v * spotPays(spot); hits.push(spot); }
+      }
+      out[uid] = { stake, payout, net: payout - stake, hits };
+    }
+    return out;
+  }
+
+  // ---------- 盤と玉の動き ----------
+  /** 数字 n のマスの中心の角度(盤の上で、真上から時計回り)。 */
+  const pocketAngle = (n) => WHEEL.indexOf(n) * POCKET;
+  /** 盤の上の角度 rel にあるマスの数字。 */
+  const numberAt = (rel) => WHEEL[mod(Math.round(mod(rel, 360) / POCKET), WHEEL.length)];
+
+  /**
+   * 1 回の回転を決める。出る数字(n)を先に決め、玉がそのマスに収まるように動きを逆算する。
+   *   ms 全体の時間 / w0 盤の最初の角度 / wd 盤が回る量(反時計回りなので負) / r0 玉の最初の位置(盤から見た角度) / bt 玉が盤の上を回る周数
+   */
+  function planSpin(prev, rng = Math.random) {
+    const n = Math.min(36, Math.floor(rng() * 37));
+    const w0 = prev ? mod(prev.w0 + prev.wd, 360) : 0;
+    return { n, ms: 9000 + Math.floor(rng() * 1500), w0, wd: -(540 + Math.floor(rng() * 360)), r0: Math.floor(rng() * 360), bt: 9 + Math.floor(rng() * 4) };
+  }
+  /**
+   * 回り始めてから elapsed ミリ秒の姿。
+   *   wheel 盤の角度 / rel 盤から見た玉の角度 / ball 画面での玉の角度 / r 玉の半径 / settled 玉がマスに収まったか
+   * 玉は外周を時計回りに走り、だんだん遅くなって内側へ落ち、はねてからマスに収まる。そのあとは盤と一緒に回る。
+   */
+  function pose(spin, elapsed) {
+    const T = spin.ms;
+    const Tb = T - Math.min(SETTLE_MS, T * 0.18);
+    const t = Math.min(T, Math.max(0, elapsed));
+    const wheel = spin.w0 + spin.wd * (1 - Math.pow(1 - t / T, 2));
+    const relEnd = spin.r0 + spin.bt * 360 + mod(pocketAngle(spin.n) - spin.r0, 360);
+    let rel = relEnd;
+    let r = R_REST;
+    if (t < Tb) {
+      const x = t / Tb;
+      rel = spin.r0 + (relEnd - spin.r0) * (1 - Math.pow(1 - x, 2.4));
+      const DROP = 0.6; // ここまでは外周を走る
+      if (x <= DROP) r = R_TRACK;
+      else {
+        const u = (x - DROP) / (1 - DROP);
+        const base = R_TRACK - (R_TRACK - R_REST) * (u * u * (3 - 2 * u));
+        const bump = 3 * Math.abs(Math.sin(u * Math.PI * 4)) * Math.pow(1 - u, 1.5);
+        r = Math.min(R_TRACK, base + bump);
+      }
+    }
+    return { wheel, rel, ball: wheel + rel, r, settled: t >= Tb };
   }
 
   // ---------- 進行(state を書けるのは配信者の画面だけ) ----------
-  const showingResult = (st) => !!(st && st.spin) && st.dismissed !== st.spin.id;
-  const restAngle = (st) => (st && st.spin ? mod(st.spin.to, 360) : 0);
-  const winnerOf = (st) => (st && st.spin ? st.spin.segs[st.spin.index] : null);
-
   /**
-   * 回す。結果・記録・「消していく」「次から外す」までを 1 回の書き込みで決める
-   * (途中で配信者の画面が落ちても、食い違わない)。回せないときは null。
+   * 賭けを締め切って回す。出る数字・精算後のチップ・出目の記録までを 1 回の書き込みで決める
+   * (途中で配信者の画面が落ちても、食い違わない)。賭けの受付中でなければ null。
    */
-  function startSpin(st, segs, opts = {}) {
-    const plan = planSpin(segs, restAngle(st), opts.rng || Math.random);
-    if (!plan) return null;
-    const id = st.seq + 1;
-    const hit = segs[plan.index];
-    const byName = cutLabel(opts.byName, 12);
-    const spin = { id, kind: st.kind, segs: segs.map((s) => (s.u ? { t: s.t, w: s.w, u: s.u } : { t: s.t, w: s.w })), index: plan.index, from: plan.from, to: plan.to, ms: plan.ms, byName };
-    if (opts.by) spin.by = opts.by;
-    const entry = { id, k: st.kind, t: hit.t, c: colorIndex(plan.index, segs.length), by: byName };
-    if (hit.u) entry.u = hit.u;
-    const next = { ...st, seq: id, spin, turn: null, history: [entry, ...st.history].slice(0, MAX_HISTORY) };
-    if (st.kind === 'names' && hit.u) next.won = { ...st.won, [hit.u]: true };
-    if (st.kind === 'items' && st.removeHit) next.items = sanitizeItems(st.items).filter((_, i) => i !== plan.index);
-    return next;
+  function spin(st, rng = Math.random) {
+    if (st.phase !== 'bet') return null;
+    const plan = planSpin(st.spin, rng);
+    const res = settle(st.bets, plan.n);
+    const chips = { ...st.chips };
+    let house = st.house;
+    for (const [uid, r] of Object.entries(res)) { chips[uid] = Math.min(MAX_CHIPS, chipsOf(st, uid) + r.payout); house += r.stake - r.payout; }
+    return { ...st, phase: 'done', spin: { id: st.round, ...plan }, chips, house, history: [plan.n, ...st.history].slice(0, MAX_HISTORY) };
   }
-  const dismiss = (st) => ({ ...st, dismissed: st.spin ? st.spin.id : st.dismissed });
-  const setKind = (st, kind) => dismiss({ ...st, kind: kind === 'names' ? 'names' : 'items' });
-  const setItems = (st, items) => ({ ...st, items: sanitizeItems(items) });
-  const setOption = (st, key, value) => (key === 'removeHit' || key === 'removeWinner' ? { ...st, [key]: value === true } : st);
-  const setTurn = (st, uid) => ({ ...st, turn: typeof uid === 'string' && uid ? uid : null });
-  const resetWon = (st) => ({ ...st, won: {} });
-  const close = (st) => ({ ...st, phase: 'closed', turn: null });
+  /** 次のゲームへ(テーブルの賭けを片づけて、受付を始める)。 */
+  const nextRound = (st) => (st.phase === 'done' ? { ...st, phase: 'bet', round: st.round + 1, bets: {} } : st);
+  /** 全員のチップを最初の数に戻す(置いてある賭けも片づける)。 */
+  const resetChips = (st) => ({ ...st, chips: {}, rebuys: {}, bets: {}, house: 0 });
+  const close = (st) => ({ ...st, phase: 'closed' });
+  /** 出た結果(done のときだけ)。uid → settle の結果。 */
+  const results = (st) => (st.phase === 'done' && st.spin ? settle(st.bets, st.spin.n) : {});
+
+  /** 参加している人(名前を登録していて、ブロックされていない人)。参加した順。 */
+  function members(room) {
+    const players = room && isObj(room.players) ? room.players : {};
+    return Object.keys(players)
+      .filter((uid) => isObj(players[uid]) && typeof players[uid].name === 'string' && players[uid].name && !players[uid].banned)
+      .map((uid) => {
+        const p = players[uid];
+        return { uid, name: String(p.name).slice(0, 12), char: p.char, hidden: p.hidden === true, online: p.online !== false, joinedAt: Number(p.joinedAt) || 0 };
+      })
+      .sort((a, b) => (a.joinedAt - b.joinedAt) || (a.uid < b.uid ? -1 : 1));
+  }
+  /** 順位表。受付中はテーブルに置いた分も持ちチップに数える(置いただけで順位が下がらないように)。 */
+  function ranking(room) {
+    const st = room.state;
+    return members(room)
+      .map((m) => ({ ...m, chips: chipsOf(st, m.uid) + (st.phase === 'bet' ? stakeOf(st, m.uid) : 0), rebuys: st.rebuys[m.uid] || 0 }))
+      .sort((a, b) => (b.chips - a.chips) || (a.rebuys - b.rebuys) || (a.joinedAt - b.joinedAt));
+  }
 
   return {
-    MAX_ITEMS, MAX_LABEL, MAX_WEIGHT, MAX_HISTORY, MAX_SEGS, COLORS, PRESETS,
-    mod, cutLabel, sanitizeItems, createState, normalizeState,
-    itemSegs, entrants, nameSegs, liveSegs,
-    segBounds, pickIndex, indexAt, colorIndex, planSpin, angleAt,
-    showingResult, restAngle, winnerOf, startSpin, dismiss, setKind, setItems, setOption, setTurn, resetWon, close,
+    START_CHIPS, MIN_BET, CHIP_VALUES, MAX_AMOUNT, MAX_HISTORY, SETTLE_MS, WHEEL, POCKET, RED, R_TRACK, R_REST, SPOT, SPOT_COUNT, OP,
+    mod, colorOf, validSpot, spotWins, spotPays, spotLabel, describe, spotKey, parseKey, encodeOp, decodeOp,
+    createState, normalizeState, serializeState, chipsOf, betsOf, stakeOf, isBroke, totals, applyOp, applyPatch, settle,
+    pocketAngle, numberAt, planSpin, pose, spin, nextRound, resetChips, close, results, members, ranking,
   };
 })();
 if (typeof module !== 'undefined') module.exports = RouletteLogic;

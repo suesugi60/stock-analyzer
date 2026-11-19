@@ -1,251 +1,331 @@
-// ルーレットのロジック(純粋関数)のテスト。
+// カジノ式ルーレットのロジック(純粋関数)のテスト。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadLogic, seeded } from './helpers.mjs';
 
 const L = loadLogic();
-const items = (...labels) => labels.map((t) => ({ t, w: 1 }));
-
-test('sanitizeItems: 空の項目を捨て、文字数と当たりやすさを範囲に収める', () => {
-  const out = L.sanitizeItems([
-    { t: '  あたり  ', w: 2 }, { t: '', w: 1 }, { t: '   ', w: 3 }, { t: 'x'.repeat(50), w: 99 }, { t: 'はずれ', w: -3 }, { t: 'a\n b', w: 2.7 }, null, 'もじ',
-  ]);
-  assert.deepEqual(out, [
-    { t: 'あたり', w: 2 }, { t: 'x'.repeat(L.MAX_LABEL), w: L.MAX_WEIGHT }, { t: 'はずれ', w: 1 }, { t: 'a b', w: 2 }, { t: 'もじ', w: 1 },
-  ]);
-  assert.deepEqual(L.sanitizeItems(null), []);
-  assert.equal(L.sanitizeItems(Array.from({ length: 100 }, (_, i) => ({ t: `i${i}`, w: 1 }))).length, L.MAX_ITEMS);
-});
-
-test('sanitizeItems: 絵文字を途中で切らない', () => {
-  const out = L.sanitizeItems([{ t: '🎉'.repeat(30), w: 1 }]);
-  assert.equal(Array.from(out[0].t).length, L.MAX_LABEL);
-  assert.equal(out[0].t, '🎉'.repeat(L.MAX_LABEL));
-});
-
-test('segBounds: 当たりやすさに比例した角度で、最後は 360 度', () => {
-  const b = L.segBounds([{ t: 'a', w: 1 }, { t: 'b', w: 2 }, { t: 'c', w: 1 }]);
-  assert.deepEqual(b, [0, 90, 270, 360]);
-  assert.deepEqual(L.segBounds([]), [0]);
-});
-
-test('pickIndex: 当たりやすさどおりの確率で選ぶ', () => {
-  const segs = [{ t: 'a', w: 1 }, { t: 'b', w: 3 }];
-  const rng = seeded(11);
-  let b = 0;
-  const N = 20000;
-  for (let i = 0; i < N; i++) if (L.pickIndex(segs, rng()) === 1) b++;
-  assert.ok(Math.abs(b / N - 0.75) < 0.015, `b の割合 ${b / N}`);
-  assert.equal(L.pickIndex(segs, 0), 0);
-  assert.equal(L.pickIndex(segs, 0.9999999), 1);
-});
-
-test('planSpin: 止まったとき、針は必ず選ばれた項目を指す', () => {
-  const rng = seeded(3);
-  for (let n = 2; n <= 40; n += 3) {
-    const segs = Array.from({ length: n }, (_, i) => ({ t: `s${i}`, w: 1 + (i % 4) }));
-    let from = 0;
-    for (let k = 0; k < 60; k++) {
-      const plan = L.planSpin(segs, from, rng);
-      assert.equal(L.indexAt(segs, plan.to), plan.index, `n=${n} k=${k}`);
-      assert.equal(plan.from, from);
-      assert.ok(plan.to - plan.from >= 5 * 360, '5 周以上回る');
-      assert.ok(plan.ms >= 6000 && plan.ms <= 9000);
-      from = L.mod(plan.to, 360);
-    }
-  }
-});
-
-test('planSpin: 項目が 2 つ未満なら回せない', () => {
-  assert.equal(L.planSpin([], 0, Math.random), null);
-  assert.equal(L.planSpin(items('ひとつ'), 0, Math.random), null);
-});
-
-test('planSpin: 針は項目の境目すれすれには止まらない(どちらか分からなくならない)', () => {
-  const rng = seeded(8);
-  const segs = items('a', 'b', 'c', 'd', 'e');
-  const b = L.segBounds(segs);
-  for (let k = 0; k < 500; k++) {
-    const plan = L.planSpin(segs, 0, rng);
-    const theta = L.mod(-plan.to, 360);
-    const frac = (theta - b[plan.index]) / (b[plan.index + 1] - b[plan.index]);
-    assert.ok(frac > 0.05 && frac < 0.95, `frac=${frac}`);
-  }
-});
-
-test('angleAt: 始まりは from、終わりは to、途中で逆回転しない', () => {
-  const spin = { from: 30, to: 30 + 6 * 360 + 77, ms: 7000 };
-  assert.equal(L.angleAt(spin, 0), 30);
-  assert.equal(L.angleAt(spin, 7000), spin.to);
-  assert.equal(L.angleAt(spin, 99999), spin.to);
-  assert.equal(L.angleAt(spin, -5), 30);
-  let prev = -Infinity;
-  for (let t = 0; t <= 7000; t += 50) {
-    const a = L.angleAt(spin, t);
-    assert.ok(a >= prev, `t=${t}`);
-    prev = a;
-  }
-  // 最後はゆっくり: 残り 10% の時間で進むのは 1 周の 1/10 未満
-  assert.ok(spin.to - L.angleAt(spin, 6300) < 36);
-});
-
-test('indexAt: 回した角度から、針(右)が指す項目を求める', () => {
-  const segs = items('a', 'b', 'c', 'd'); // 90 度ずつ
-  assert.equal(L.indexAt(segs, 0), 0);
-  assert.equal(L.indexAt(segs, -45), 0);
-  assert.equal(L.indexAt(segs, -100), 1);
-  assert.equal(L.indexAt(segs, 10), 3); // 時計回りに 10 度回すと、手前(最後)の項目が針に来る
-  assert.equal(L.indexAt(segs, 360 * 3 - 190), 2);
-  assert.equal(L.indexAt([], 10), -1);
-});
-
-test('colorIndex: 隣どうし(最後と最初も)同じ色にならない', () => {
-  for (let n = 2; n <= 60; n++) {
-    for (let i = 0; i < n; i++) {
-      const a = L.colorIndex(i, n);
-      const b = L.colorIndex((i + 1) % n, n);
-      assert.notEqual(a, b, `n=${n} i=${i}`);
-      assert.ok(a >= 0 && a < L.COLORS.length);
-    }
-  }
-});
-
-test('createState / normalizeState: 最初は見本の項目が入っていて、壊れた入力でも安全な形になる', () => {
-  const st = L.createState();
-  assert.equal(st.phase, 'open');
-  assert.equal(st.kind, 'items');
-  assert.ok(st.items.length >= 2);
-  assert.deepEqual(L.normalizeState(JSON.parse(JSON.stringify(st))), st);
-
-  const bad = L.normalizeState({ phase: 'x', kind: 'evil', items: 'nope', seq: 'NaN', turn: 5, won: [1], history: { a: 1 }, spin: { id: 1, segs: 'x' }, dismissed: {} });
-  assert.equal(bad.phase, 'open');
-  assert.equal(bad.kind, 'items');
-  assert.deepEqual(bad.items, []);
-  assert.equal(bad.seq, 0);
-  assert.equal(bad.turn, null);
-  assert.equal(bad.spin, null);
-  assert.deepEqual(bad.history, []);
-  assert.equal(L.normalizeState(null).phase, 'open');
-  assert.equal(L.normalizeState(undefined).spin, null);
-});
-
-test('normalizeState: おかしな spin(範囲外の番号・無限の角度・長すぎる時間)は捨てる', () => {
-  const segs = items('a', 'b');
-  const ok = { id: 3, kind: 'items', segs, index: 1, from: 0, to: 2000, ms: 7000, byName: '' };
-  assert.equal(L.normalizeState({ spin: ok }).spin.index, 1);
-  assert.equal(L.normalizeState({ spin: { ...ok, index: 2 } }).spin, null);
-  assert.equal(L.normalizeState({ spin: { ...ok, to: 'Infinity' } }).spin, null);
-  assert.equal(L.normalizeState({ spin: { ...ok, ms: 1e9 } }).spin, null);
-  assert.equal(L.normalizeState({ spin: { ...ok, segs: items('a') } }).spin, null);
-  // 文字は長すぎれば切る(画面を壊さない)
-  const long = L.normalizeState({ spin: { ...ok, segs: [{ t: 'z'.repeat(500), w: 1 }, { t: 'b', w: 1 }] } }).spin;
-  assert.ok(long.segs[0].t.length <= 40);
-});
-
-test('startSpin: 記録の先頭に結果が足され、指名は解除され、番号が進む', () => {
-  let st = L.setTurn(L.setItems(L.createState(), items('a', 'b', 'c')), 'u1');
-  const next = L.startSpin(st, L.itemSegs(st.items), { by: 'u1', byName: 'たろう', rng: seeded(5) });
-  assert.equal(next.seq, 1);
-  assert.equal(next.spin.id, 1);
-  assert.equal(next.spin.kind, 'items');
-  assert.equal(next.spin.byName, 'たろう');
-  assert.equal(next.turn, null);
-  assert.equal(next.history.length, 1);
-  assert.equal(next.history[0].t, next.spin.segs[next.spin.index].t);
-  assert.equal(next.history[0].by, 'たろう');
-  assert.equal(L.showingResult(next), true);
-  assert.equal(L.indexAt(next.spin.segs, next.spin.to), next.spin.index);
-  // 2 回目は前回の止まった角度から回り始める
-  const third = L.startSpin(next, L.itemSegs(next.items), { rng: seeded(6) });
-  assert.equal(third.spin.from, L.mod(next.spin.to, 360));
-  assert.equal(third.history.length, 2);
-  assert.equal(third.history[0].id, 2);
-  // 元の state は書き換えない
-  assert.equal(st.seq, 0);
-  assert.equal(st.history.length, 0);
-});
-
-test('startSpin: 項目が足りなければ何もしない(null)', () => {
-  const st = L.setItems(L.createState(), items('ひとつ'));
-  assert.equal(L.startSpin(st, L.itemSegs(st.items), {}), null);
-});
-
-test('startSpin: 記録は新しい順に MAX_HISTORY 件まで', () => {
-  let st = L.setItems(L.createState(), items('a', 'b'));
-  const rng = seeded(1);
-  for (let i = 0; i < L.MAX_HISTORY + 5; i++) st = L.startSpin(st, L.itemSegs(st.items), { rng });
-  assert.equal(st.history.length, L.MAX_HISTORY);
-  assert.equal(st.history[0].id, L.MAX_HISTORY + 5);
-});
-
-test('startSpin: 「当たった項目は消していく」なら、当たった項目だけが消える', () => {
-  let st = L.setOption(L.setItems(L.createState(), items('a', 'b', 'c', 'd')), 'removeHit', true);
-  const next = L.startSpin(st, L.itemSegs(st.items), { rng: seeded(9) });
-  const hit = next.spin.segs[next.spin.index].t;
-  assert.equal(next.items.length, 3);
-  assert.ok(!next.items.some((x) => x.t === hit));
-  assert.equal(next.spin.segs.length, 4, '回っている盤は消す前の 4 項目のまま');
-  // オフなら減らない
-  st = L.setOption(st, 'removeHit', false);
-  assert.equal(L.startSpin(st, L.itemSegs(st.items), { rng: seeded(9) }).items.length, 4);
-});
-
-const roomWith = (state, names, extra = {}) => {
-  const players = {};
-  const queue = {};
-  names.forEach((n, i) => { players[`u${i}`] = { name: n, char: 'kappa', joinedAt: 100 + i, ...(extra[`u${i}`] || {}) }; queue[`u${i}`] = { joinedAt: 100 + i }; });
-  return { state, players, queue };
+const S = L.SPOT;
+/** いつも同じ数字が出る乱数(planSpin の最初の 1 回が数字を決める)。 */
+const rngFor = (n) => { let first = true; const rest = seeded(n + 1); return () => { if (first) { first = false; return (n + 0.5) / 37; } return rest(); }; };
+const bet = (st, uid, spot, amount) => {
+  const patch = L.applyOp(st, uid, L.decodeOp(L.encodeOp(st.round, spot, amount)));
+  assert.ok(patch, `賭けが受け付けられる(${uid} ${spot} ${amount})`);
+  return L.applyPatch(st, patch);
 };
 
-test('nameSegs: 参加した順に並び、ブロックした人は入らず、非表示の人は ？？？ になる', () => {
-  const st = L.setKind(L.createState(), 'names');
-  const room = roomWith(st, ['あ', 'い', 'う', 'え'], { u1: { banned: true }, u2: { hidden: true } });
-  room.queue.ghost = { joinedAt: 1 }; // players に無い人は入らない
-  const segs = L.nameSegs(room);
-  assert.deepEqual(segs.map((s) => s.t), ['あ', '？？？', 'え']);
-  assert.deepEqual(segs.map((s) => s.u), ['u0', 'u2', 'u3']);
-  assert.deepEqual(L.liveSegs(room), segs);
-  assert.deepEqual(L.entrants(room).map((e) => e.uid), ['u0', 'u2', 'u3']);
+test('盤: 0〜36 が 1 回ずつ並び、赤 18・黒 18・みどり(0)1', () => {
+  assert.equal(L.WHEEL.length, 37);
+  assert.deepEqual([...L.WHEEL].sort((a, b) => a - b), Array.from({ length: 37 }, (_, i) => i));
+  const colors = L.WHEEL.map(L.colorOf);
+  assert.equal(colors.filter((c) => c === 'red').length, 18);
+  assert.equal(colors.filter((c) => c === 'black').length, 18);
+  assert.equal(L.colorOf(0), 'green');
+  assert.equal(L.colorOf(1), 'red');
+  assert.equal(L.colorOf(2), 'black');
+  assert.equal(L.colorOf(36), 'red');
+  // 0 の両どなりは 26 と 32(本物の盤と同じ並び)
+  assert.equal(L.WHEEL[0], 0);
+  assert.equal(L.WHEEL[1], 32);
+  assert.equal(L.WHEEL[36], 26);
 });
 
-test('抽選: 当たった人は記録され、「次から外す」がオンなら次の抽選の対象から外れる', () => {
-  let st = L.setKind(L.createState(), 'names');
-  let room = roomWith(st, ['あ', 'い', 'う']);
-  st = L.startSpin(st, L.nameSegs(room), { rng: seeded(4) });
-  const winner = st.spin.segs[st.spin.index];
-  assert.equal(st.won[winner.u], true);
-  assert.equal(st.history[0].u, winner.u);
-  assert.equal(st.history[0].k, 'names');
-  room = { ...room, state: st };
-  assert.equal(L.nameSegs(room).length, 2);
-  assert.ok(!L.nameSegs(room).some((s) => s.u === winner.u));
-  // オフにすると全員が対象に戻る
-  room = { ...room, state: L.setOption(st, 'removeWinner', false) };
-  assert.equal(L.nameSegs(room).length, 3);
-  // 当選のリセット
-  room = { ...room, state: L.resetWon(st) };
-  assert.equal(L.nameSegs(room).length, 3);
+test('当たり判定: 数字・赤黒・奇数偶数・前半後半・1〜12 など・たて1列', () => {
+  assert.equal(L.spotWins(17, 17), true);
+  assert.equal(L.spotWins(17, 18), false);
+  assert.equal(L.spotWins(S.RED, 1), true);
+  assert.equal(L.spotWins(S.RED, 2), false);
+  assert.equal(L.spotWins(S.BLACK, 2), true);
+  assert.equal(L.spotWins(S.ODD, 35), true);
+  assert.equal(L.spotWins(S.EVEN, 36), true);
+  assert.equal(L.spotWins(S.LOW, 18), true);
+  assert.equal(L.spotWins(S.LOW, 19), false);
+  assert.equal(L.spotWins(S.HIGH, 19), true);
+  assert.equal(L.spotWins(S.DOZEN, 12), true);
+  assert.equal(L.spotWins(S.DOZEN + 1, 13), true);
+  assert.equal(L.spotWins(S.DOZEN + 2, 36), true);
+  assert.equal(L.spotWins(S.DOZEN + 2, 24), false);
+  assert.equal(L.spotWins(S.COLUMN, 34), true);     // 1,4,7,…,34
+  assert.equal(L.spotWins(S.COLUMN + 1, 35), true); // 2,5,8,…,35
+  assert.equal(L.spotWins(S.COLUMN + 2, 36), true); // 3,6,9,…,36
+  assert.equal(L.spotWins(S.COLUMN + 2, 34), false);
 });
 
-test('setKind / dismiss: 切り替えると出ていた結果は閉じる。dismiss で結果を閉じる', () => {
-  let st = L.setItems(L.createState(), items('a', 'b'));
-  st = L.startSpin(st, L.itemSegs(st.items), { rng: seeded(2) });
-  assert.equal(L.showingResult(st), true);
-  assert.equal(L.showingResult(L.dismiss(st)), false);
-  const names = L.setKind(st, 'names');
-  assert.equal(names.kind, 'names');
-  assert.equal(L.showingResult(names), false);
-  assert.equal(L.setKind(st, 'bogus').kind, 'items');
-  assert.equal(L.restAngle(st), L.mod(st.spin.to, 360));
-  assert.equal(L.restAngle(L.createState()), 0);
+test('当たり判定: 0 が出たら、数字の 0 に賭けた人だけが当たり', () => {
+  for (let spot = 0; spot < L.SPOT_COUNT; spot++) assert.equal(L.spotWins(spot, 0), spot === 0, `spot ${spot}`);
 });
 
-test('preset: 見本はどれも 2 項目以上で、飲みの見本には印が付く', () => {
-  for (const key of Object.keys(L.PRESETS)) {
-    const p = L.PRESETS[key];
-    assert.ok(L.sanitizeItems(p.items).length >= 2, key);
-    assert.equal(L.sanitizeItems(p.items).length, p.items.length, `${key}: 見本の文字が長すぎる`);
-    assert.ok(p.label);
+test('当たり判定: どの数字が出ても、当たる場所の数は決まっている(2択 3 つ・3択 2 つ・数字 1 つ)', () => {
+  for (let n = 1; n <= 36; n++) {
+    const hits = [];
+    for (let spot = 0; spot < L.SPOT_COUNT; spot++) if (L.spotWins(spot, n)) hits.push(spot);
+    assert.equal(hits.length, 6, `n=${n}: ${hits}`);
+    assert.equal(hits.filter((s) => L.spotPays(s) === 2).length, 3);
+    assert.equal(hits.filter((s) => L.spotPays(s) === 3).length, 2);
+    assert.equal(hits.filter((s) => L.spotPays(s) === 36).length, 1);
   }
-  assert.equal(L.PRESETS.nomi.drink, true);
+});
+
+test('倍率: 数字 36倍・3択 3倍・2択 2倍(本物と同じで、0 があるぶんだけ配信者が少し有利)', () => {
+  assert.equal(L.spotPays(0), 36);
+  assert.equal(L.spotPays(36), 36);
+  assert.equal(L.spotPays(S.RED), 2);
+  assert.equal(L.spotPays(S.HIGH), 2);
+  assert.equal(L.spotPays(S.DOZEN), 3);
+  assert.equal(L.spotPays(S.COLUMN + 2), 3);
+  // どこに賭けても、37 回に 1 回ぶんだけ戻りが少ない(期待値 36/37)
+  for (let spot = 0; spot < L.SPOT_COUNT; spot++) {
+    let back = 0;
+    for (let n = 0; n <= 36; n++) if (L.spotWins(spot, n)) back += L.spotPays(spot);
+    assert.equal(back, 36, `spot ${spot}`);
+  }
+});
+
+test('describe / spotLabel: 画面に出す言葉', () => {
+  assert.equal(L.describe(0), 'みどり');
+  assert.equal(L.describe(17), '黒・奇数・1〜18');
+  assert.equal(L.describe(36), '赤・偶数・19〜36');
+  assert.equal(L.spotLabel(5), '5');
+  assert.equal(L.spotLabel(S.RED), '赤');
+  assert.equal(L.spotLabel(S.DOZEN + 1), '13〜24');
+  assert.equal(L.spotLabel(S.COLUMN + 2), 'たて3列目');
+});
+
+test('合図の詰め方: 回戦・種類・チップ数を 1 つの数にして、元に戻せる', () => {
+  for (const [round, code, amount] of [[1, 0, 10], [7, 36, 500], [123, S.RED, 9999990], [99999, L.OP.CLEAR, 0], [100003, L.OP.REBUY, 0], [42, 48, 10]]) {
+    const at = L.encodeOp(round, code, amount);
+    assert.ok(Number.isSafeInteger(at), `安全に送れる整数: ${at}`);
+    assert.deepEqual(L.decodeOp(at), { round: round % 100000, code, amount });
+  }
+});
+
+test('合図の詰め方: おかしな数は捨てる', () => {
+  assert.equal(L.decodeOp(-1), null);
+  assert.equal(L.decodeOp(1.5), null);
+  assert.equal(L.decodeOp(NaN), null);
+  assert.equal(L.decodeOp('123'), null);
+  assert.equal(L.decodeOp(Number.MAX_SAFE_INTEGER), null);
+  assert.equal(L.decodeOp(L.encodeOp(1, 49, 10)), null, '無い場所');
+  assert.equal(L.decodeOp(L.encodeOp(1, 89, 10)), null);
+  // ふつうの時刻(いまの時刻の数)が来ても、賭けとしては通らない(回戦が合わない)
+  const st = L.createState();
+  assert.equal(L.applyOp(st, 'u1', L.decodeOp(1763500000000)), null);
+});
+
+test('賭ける: 最初は 1000 チップ。賭けた分だけ減り、同じ場所に重ねると足される', () => {
+  let st = L.createState();
+  assert.equal(L.chipsOf(st, 'u1'), 1000);
+  st = bet(st, 'u1', S.RED, 100);
+  st = bet(st, 'u1', S.RED, 50);
+  st = bet(st, 'u1', 17, 10);
+  assert.equal(L.chipsOf(st, 'u1'), 840);
+  assert.deepEqual(L.betsOf(st, 'u1'), { [S.RED]: 150, 17: 10 });
+  assert.equal(L.stakeOf(st, 'u1'), 160);
+  assert.equal(L.chipsOf(st, 'u2'), 1000, 'ほかの人には影響しない');
+  const t = L.totals(bet(st, 'u2', S.RED, 500));
+  assert.deepEqual(t.bySpot[S.RED], { sum: 650, count: 2 });
+  assert.equal(t.total, 660);
+  assert.equal(t.players, 2);
+});
+
+test('賭ける: 持っている以上・10 未満・10 の倍数でない・ちがう回戦・締め切り後は受け付けない', () => {
+  const st = L.createState();
+  const op = (round, code, amount) => L.decodeOp(L.encodeOp(round, code, amount));
+  assert.equal(L.applyOp(st, 'u1', op(1, S.RED, 1010)), null);
+  assert.equal(L.applyOp(st, 'u1', op(1, S.RED, 5)), null);
+  assert.equal(L.applyOp(st, 'u1', op(1, S.RED, 15)), null);
+  assert.equal(L.applyOp(st, 'u1', op(1, S.RED, 0)), null);
+  assert.equal(L.applyOp(st, 'u1', op(2, S.RED, 10)), null);
+  assert.ok(L.applyOp(st, 'u1', op(1, S.RED, 1000)), '全部賭けるのはできる');
+  const done = L.spin(st, rngFor(5));
+  assert.equal(L.applyOp(done, 'u1', op(1, S.RED, 10)), null, '締め切り後');
+  assert.equal(L.applyOp(st, 'u1', null), null);
+});
+
+test('取り消す: 置いた賭けが全部戻る。置いていなければ何もしない', () => {
+  let st = bet(bet(L.createState(), 'u1', 7, 50), 'u1', S.ODD, 100);
+  const clear = L.decodeOp(L.encodeOp(1, L.OP.CLEAR));
+  st = L.applyPatch(st, L.applyOp(st, 'u1', clear));
+  assert.equal(L.chipsOf(st, 'u1'), 1000);
+  assert.deepEqual(L.betsOf(st, 'u1'), {});
+  assert.equal(L.applyOp(st, 'u1', clear), null);
+});
+
+test('精算: 当たった場所は倍率ぶん戻り、はずれた分は消える', () => {
+  const bets = { a: { 17: 10, [S.BLACK]: 100, [S.RED]: 50 }, b: { [S.DOZEN]: 30 }, c: { 0: 10 } };
+  const r = L.settle(bets, 17); // 17 は黒・奇数・1〜18・13〜24・たて2列目
+  assert.deepEqual(r.a, { stake: 160, payout: 10 * 36 + 100 * 2, net: 400, hits: [17, S.BLACK] });
+  assert.deepEqual(r.b, { stake: 30, payout: 0, net: -30, hits: [] });
+  assert.deepEqual(r.c, { stake: 10, payout: 0, net: -10, hits: [] });
+  assert.equal(L.settle(bets, 0).c.net, 350);
+  assert.equal(L.settle(bets, 0).a.net, -160);
+});
+
+test('回す: 出た数字・精算後のチップ・出目の記録・配信者の収支が 1 回で決まる', () => {
+  let st = L.createState();
+  st = bet(st, 'a', 17, 10);
+  st = bet(st, 'a', S.RED, 100);
+  st = bet(st, 'b', S.BLACK, 200);
+  const done = L.spin(st, rngFor(17));
+  assert.equal(done.phase, 'done');
+  assert.equal(done.spin.n, 17);
+  assert.equal(done.spin.id, 1);
+  assert.equal(L.chipsOf(done, 'a'), 1000 - 110 + 360);
+  assert.equal(L.chipsOf(done, 'b'), 1000 - 200 + 400);
+  assert.equal(L.chipsOf(done, 'c'), 1000, '賭けていない人は変わらない');
+  assert.deepEqual(done.history, [17]);
+  assert.equal(done.house, (110 - 360) + (200 - 400), '配信者の収支 = 集めた分 − 払った分');
+  assert.deepEqual(L.results(done).a, { stake: 110, payout: 360, net: 250, hits: [17] });
+  assert.deepEqual(done.bets, st.bets, '結果を見せるあいだ、賭けは置いたまま');
+  assert.equal(L.spin(done, rngFor(1)), null, '回っている・結果が出ているあいだは回せない');
+  assert.equal(st.phase, 'bet', '元の state は書き換えない');
+});
+
+test('回す: チップの合計は「配信者の収支」と合わせていつも同じ(増えも減りもしない)', () => {
+  const rng = seeded(21);
+  let st = L.createState();
+  const uids = ['a', 'b', 'c', 'd'];
+  for (let round = 0; round < 60; round++) {
+    for (const uid of uids) {
+      for (let k = 0; k < 3; k++) {
+        const spot = Math.floor(rng() * L.SPOT_COUNT);
+        const amount = (1 + Math.floor(rng() * 5)) * 10;
+        const patch = L.applyOp(st, uid, { round: st.round % 100000, code: spot, amount });
+        if (patch) st = L.applyPatch(st, patch);
+      }
+    }
+    st = L.spin(st, rng);
+    const total = uids.reduce((s, u) => s + L.chipsOf(st, u), 0) + st.house;
+    assert.equal(total, uids.length * L.START_CHIPS, `round ${round}`);
+    st = L.nextRound(st);
+    assert.deepEqual(st.bets, {});
+  }
+  assert.equal(st.round, 61);
+  assert.equal(st.history.length, L.MAX_HISTORY);
+});
+
+test('次のゲーム: 賭けを片づけて回戦が進む。受付中に押しても何も起きない', () => {
+  let st = bet(L.createState(), 'a', S.RED, 100);
+  assert.equal(L.nextRound(st), st);
+  st = L.nextRound(L.spin(st, rngFor(2)));
+  assert.equal(st.phase, 'bet');
+  assert.equal(st.round, 2);
+  assert.deepEqual(st.bets, {});
+  assert.equal(st.spin.n, 2, '前回の玉の位置は残す(盤の絵に使う)');
+  // 前の回戦の合図は、もう通らない
+  assert.equal(L.applyOp(st, 'a', L.decodeOp(L.encodeOp(1, S.RED, 10))), null);
+});
+
+test('おかわり: チップが尽きたときだけ 1000 に戻せて、回数が数えられる', () => {
+  let st = bet(L.createState(), 'a', S.RED, 1000);
+  const rebuy = (s) => L.applyOp(s, 'a', L.decodeOp(L.encodeOp(s.round, L.OP.REBUY)));
+  assert.equal(L.isBroke(st, 'a'), false, 'テーブルに置いているあいだは、まだ尽きていない');
+  assert.equal(rebuy(st), null);
+  st = L.spin(st, rngFor(2)); // 2 は黒 → 全部なくなる
+  assert.equal(L.chipsOf(st, 'a'), 0);
+  assert.equal(L.isBroke(st, 'a'), true);
+  st = L.applyPatch(st, rebuy(st)); // 結果が出ているあいだでも、おかわりできる
+  assert.equal(L.chipsOf(st, 'a'), 1000);
+  assert.equal(st.rebuys.a, 1);
+  assert.equal(rebuy(st), null, 'チップがあるときはできない');
+  assert.equal(rebuy(L.createState()), null);
+});
+
+test('盤と玉: 止まったとき、玉は必ず出た数字のマスにいる', () => {
+  const rng = seeded(4);
+  let prev = null;
+  for (let k = 0; k < 400; k++) {
+    const plan = L.planSpin(prev, rng);
+    assert.ok(plan.n >= 0 && plan.n <= 36);
+    const end = L.pose(plan, plan.ms);
+    assert.equal(L.numberAt(end.rel), plan.n, `k=${k}`);
+    assert.equal(end.r, L.R_REST);
+    assert.equal(end.settled, true);
+    assert.ok(Math.abs(L.mod(end.rel, 360) - L.pocketAngle(plan.n)) < 1e-6, 'マスのまん中');
+    if (prev) assert.equal(plan.w0, L.mod(prev.w0 + prev.wd, 360), '盤は前回止まった角度から回り始める');
+    prev = plan;
+  }
+});
+
+test('盤と玉: 玉は外周から走り始め、逆回転せず、最後は盤と一緒に回る', () => {
+  const plan = L.planSpin(null, seeded(9));
+  const start = L.pose(plan, 0);
+  assert.equal(start.r, L.R_TRACK);
+  assert.equal(start.rel, plan.r0);
+  assert.equal(start.wheel, plan.w0);
+  let prevRel = -Infinity;
+  let prevWheel = Infinity;
+  for (let t = 0; t <= plan.ms; t += 40) {
+    const p = L.pose(plan, t);
+    assert.ok(p.rel >= prevRel - 1e-9, `玉は盤の上を時計回りにだけ進む t=${t}`);
+    assert.ok(p.wheel <= prevWheel + 1e-9, `盤は反時計回りにだけ回る t=${t}`);
+    assert.ok(p.r <= L.R_TRACK + 1e-9 && p.r >= L.R_REST - 1e-9, `玉は外周とマスの間にいる t=${t}`);
+    prevRel = p.rel;
+    prevWheel = p.wheel;
+  }
+  // 玉が収まったあとは、盤から見た位置が変わらない(盤と一緒に回る)
+  const a = L.pose(plan, plan.ms - 800);
+  const b = L.pose(plan, plan.ms - 100);
+  assert.equal(a.settled, true);
+  assert.equal(a.rel, b.rel);
+  assert.notEqual(a.wheel, b.wheel);
+  assert.equal(L.pose(plan, -50).rel, plan.r0);
+  assert.equal(L.pose(plan, plan.ms + 9999).rel, L.pose(plan, plan.ms).rel);
+});
+
+test('出目のかたより: 0〜36 がほぼ同じ回数だけ出る', () => {
+  const rng = seeded(77);
+  const count = new Array(37).fill(0);
+  const N = 37000;
+  for (let i = 0; i < N; i++) count[L.planSpin(null, rng).n]++;
+  for (let n = 0; n <= 36; n++) assert.ok(Math.abs(count[n] - 1000) < 150, `n=${n}: ${count[n]}`);
+});
+
+test('normalizeState: 保存した形から元に戻せて、壊れた入力でも安全な形になる', () => {
+  let st = bet(bet(L.createState(), 'a', 17, 10), 'b', S.RED, 100);
+  st = L.spin(st, rngFor(17));
+  const saved = JSON.parse(JSON.stringify(L.serializeState(st)));
+  assert.deepEqual(Object.keys(saved.bets.a), ['s17'], '数字だけのキーにしない(保存先で配列に化けるため)');
+  assert.deepEqual(L.normalizeState(saved), st);
+
+  const bad = L.normalizeState({ phase: 'x', round: -3, chips: { a: -5, b: 'many', c: 1.5, d: 20 }, bets: { a: { s99: 10, s5: -1, s6: 20, x: 3 }, b: 'no' }, spin: { id: 1, n: 37 }, history: [1, 99, 'a', 36], house: 'x' });
+  assert.equal(bad.phase, 'bet');
+  assert.equal(bad.round, 1);
+  assert.deepEqual(bad.chips, { d: 20 });
+  assert.deepEqual(bad.bets, { a: { 6: 20 } });
+  assert.equal(bad.spin, null);
+  assert.deepEqual(bad.history, [1, 36]);
+  assert.equal(bad.house, 0);
+  assert.equal(L.normalizeState(null).phase, 'bet');
+  assert.deepEqual(L.normalizeState(undefined).bets, {});
+  // おかしな回転(長すぎる時間・無限の角度)は捨てる
+  const ok = { id: 1, n: 5, ms: 9000, w0: 0, wd: -700, r0: 10, bt: 10 };
+  assert.deepEqual(L.normalizeState({ spin: ok }).spin, ok);
+  assert.equal(L.normalizeState({ spin: { ...ok, ms: 1e9 } }).spin, null);
+  assert.equal(L.normalizeState({ spin: { ...ok, wd: 'Infinity' } }).spin, null);
+});
+
+test('members / ranking: ブロックした人と名前の無い人は入らず、チップの多い順に並ぶ', () => {
+  let st = L.createState();
+  const players = {
+    a: { name: 'あ', char: 'kappa', joinedAt: 1 }, b: { name: 'い', joinedAt: 2, hidden: true }, c: { name: 'う', joinedAt: 3, banned: true },
+    d: { joinedAt: 4 }, e: { name: 'え', joinedAt: 5 },
+  };
+  st = bet(st, 'a', S.RED, 300);   // 受付中は、置いた分も数える → 1000
+  st = bet(st, 'e', S.BLACK, 100);
+  assert.deepEqual(L.members({ players }).map((m) => m.uid), ['a', 'b', 'e']);
+  assert.deepEqual(L.ranking({ players, state: st }).map((m) => [m.uid, m.chips]), [['a', 1000], ['b', 1000], ['e', 1000]]);
+  st = L.spin(st, rngFor(2)); // 黒 → a は 700、e は 1100
+  const rank = L.ranking({ players, state: st });
+  assert.deepEqual(rank.map((m) => [m.uid, m.chips]), [['e', 1100], ['b', 1000], ['a', 700]]);
+  assert.equal(rank[1].hidden, true);
+  assert.deepEqual(L.members(null), []);
+});
+
+test('チップの配り直し・部屋を閉じる', () => {
+  let st = L.spin(bet(L.createState(), 'a', S.RED, 100), rngFor(2));
+  st = L.resetChips(st);
+  assert.equal(L.chipsOf(st, 'a'), 1000);
+  assert.equal(st.house, 0);
+  assert.deepEqual(st.bets, {});
+  assert.equal(L.close(st).phase, 'closed');
 });
