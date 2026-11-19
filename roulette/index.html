@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffb9d5">
+<title>みんなでルーレット</title>
+<link rel="stylesheet" href="style.css?v=0848083dd5">
+</head>
+<body>
+<div class="bg-deco" aria-hidden="true"></div>
+<main id="app">
+<section id="screen-loading" class="screen"><p class="notice panel">接続中…</p></section>
+
+<section id="screen-setup-needed" class="screen" hidden>
+  <h1 class="title">みんなでルーレット</h1>
+  <div class="notice panel">
+    <b>つながりませんでした。</b><br>
+    電波の良いところで、ページを読み込み直してみてください。<br>
+    <small id="setup-error"></small><br>
+    同じ端末の別タブだけで試すなら <a href="?mock=1">お試しモード</a>(お試し専用。他の端末とはつながりません)。
+  </div>
+</section>
+
+<section id="screen-host-entry" class="screen" hidden>
+  <h1 class="title">みんなでルーレット</h1>
+  <div id="resume-banner" class="banner panel" hidden>
+    <span>前回の部屋があります</span>
+    <button id="resume-room" class="btn btn-primary">前回の部屋を続ける</button>
+  </div>
+  <div class="panel steps">
+    <p><b>配信でリスナーと遊べるルーレットです。</b></p>
+    <ol>
+      <li>下のボタンで部屋を作る</li>
+      <li>出てきた QR コード(またはURL)を配信に映して、リスナーに入ってもらう</li>
+      <li>「回す」を押すと、みんなの画面で同じルーレットが回る</li>
+    </ol>
+    <p class="hint-text">お題を入れて回す「お題ルーレット」と、参加した人から1人を選ぶ「リスナー抽選」があります。リスナーに回してもらうこともできます。</p>
+  </div>
+  <button id="create-room" class="btn btn-primary">ルーレットを始める(部屋を作る)</button>
+  <h2>リスナーの人はこちら</h2>
+  <form id="enter-code" class="player-row">
+    <input id="enter-code-input" class="player-name code-input" placeholder="部屋コード(4文字)" maxlength="4" autocomplete="off" autocapitalize="characters" aria-label="部屋コード">
+    <button class="btn" type="submit">入る</button>
+  </form>
+  <p class="hint-text">配信者の画面に出ている4文字の部屋コードを入れてね。</p>
+</section>
+
+<section id="screen-host" class="screen wide" hidden>
+  <header class="hostbar panel">
+    <div class="room-info">
+      <div class="codebox"><span class="rlabel">部屋コード</span><b data-ref="code"></b></div>
+      <canvas data-ref="qr" width="96" height="96" hidden></canvas>
+      <div class="urlbox"><span class="rlabel">リスナー用のURL(QRコードでも入れます)</span><span class="url" data-ref="url"></span></div>
+    </div>
+    <div class="hostbar-buttons">
+      <button id="copy-url" class="btn btn-ghost">URLをコピー</button>
+      <button id="mute" class="btn mute" aria-label="音の切り替え">🔊</button>
+      <button id="close-room" class="btn btn-ghost">部屋を閉じる</button>
+    </div>
+  </header>
+  <div class="kind-switch" id="kind-switch" data-host-only>
+    <button type="button" class="choice" data-kind="items"><span class="big">🎀 お題ルーレット</span><span class="hint">入れた項目から1つ</span></button>
+    <button type="button" class="choice" data-kind="names"><span class="big">🙋 リスナー抽選</span><span class="hint">参加した人から1人</span></button>
+  </div>
+  <div class="host-main">
+    <div class="main-col">
+      <div class="wheel-area panel">
+        <div class="status" data-ref="status"></div>
+        <div class="wheel-box" data-ref="wheel"></div>
+        <div class="result" data-ref="result" hidden></div>
+      </div>
+      <div class="controls" id="host-controls">
+        <button id="spin" class="btn btn-primary spin-btn">💗 回す</button>
+        <button id="winner-spin" class="btn" hidden>当たった人にお題を回してもらう</button>
+        <button id="dismiss" class="btn" hidden>結果を閉じる</button>
+        <button id="cancel-turn" class="btn" hidden>指名を取り消す</button>
+      </div>
+      <p class="hint-text center" id="spin-hint" data-host-only></p>
+    </div>
+    <div class="side">
+      <section class="panel box" id="editor-box" data-host-only>
+        <h3>ルーレットの中身 <small>(お題ルーレット)</small></h3>
+        <div id="items"></div>
+        <button id="add-item" class="btn btn-ghost" type="button">＋ 項目を足す</button>
+        <p class="hint-text">右の数字は当たりやすさ。大きいほど広くなって当たりやすい。</p>
+        <label class="opt"><input type="checkbox" id="opt-remove-hit"> 当たった項目は消していく</label>
+        <div class="presets" id="presets"><span class="rlabel">見本から入れる(いまの中身と入れ替え)</span></div>
+        <p class="notice panel" id="drink-note" hidden>飲めない人はソフトドリンクでOK。無理な飲酒は絶対にしないこと。</p>
+      </section>
+      <section class="panel box">
+        <h3>参加者 <small data-ref="count"></small></h3>
+        <label class="opt" data-host-only><input type="checkbox" id="opt-remove-winner"> 抽選で当たった人は、次の抽選から外す</label>
+        <div id="members" data-ref="members"></div>
+        <button id="reset-won" class="btn btn-ghost" type="button" data-host-only hidden>当選済みを元に戻す</button>
+      </section>
+      <section class="panel box"><h3>結果の記録</h3><div data-ref="history"></div></section>
+    </div>
+  </div>
+</section>
+
+<section id="screen-join" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel">部屋 <b id="join-code"></b> に参加します。抽選に当たったり、ルーレットを回す役に選ばれるかも!</div>
+  <h2>名前とアイコン</h2>
+  <div class="player-row">
+    <span class="avatar lg" id="join-avatar"></span>
+    <input id="join-name" class="player-name" placeholder="名前(12文字まで)" maxlength="12">
+  </div>
+  <div class="icons" id="icons" role="group" aria-label="アイコンをえらぶ"></div>
+  <button id="join-enter" class="btn btn-primary">参加する</button>
+  <button id="join-watch" class="btn" style="margin-top:10px;width:100%">見るだけ</button>
+</section>
+
+<section id="screen-listener" class="screen" hidden>
+  <div class="panel mystatus">
+    <span class="avatar lg" id="my-avatar" hidden></span>
+    <div class="mytext"><div id="my-status" class="mybig"></div><div id="my-sub" class="hint-text"></div></div>
+    <button id="mute-l" class="btn mute" aria-label="音の切り替え">🔊</button>
+  </div>
+  <button id="listener-spin" class="btn btn-primary spin-btn" hidden>💗 回す!</button>
+  <div class="wheel-area panel">
+    <div class="status" data-ref="status"></div>
+    <div class="wheel-box" data-ref="wheel"></div>
+    <div class="result" data-ref="result" hidden></div>
+  </div>
+  <div class="controls">
+    <button id="rejoin" class="btn btn-primary" hidden>参加する</button>
+    <button id="leave" class="btn" hidden>参加をやめる</button>
+  </div>
+  <section class="panel box"><h3>参加者 <small data-ref="count"></small></h3><div data-ref="members"></div></section>
+  <section class="panel box"><h3>結果の記録</h3><div data-ref="history"></div></section>
+  <p class="hint-text">🔊 音が出ないときは、画面を一度タップして、スマホの消音スイッチ(マナーモード)をオフにしてね</p>
+</section>
+
+<section id="screen-full" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>満員です。</b>配信画面で見てね。</div>
+</section>
+<section id="screen-banned" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>この部屋には参加できません。</b></div>
+</section>
+<section id="screen-connect-failed" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>接続できませんでした。</b>電波の良いところで再読み込みしてみてください。<br><small id="connect-error"></small></div>
+</section>
+<section id="screen-host-busy" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>別のタブで部屋 <span id="busy-code"></span> を開いています。</b><br>配信者の画面は1つのタブだけです。そちらのタブを使うか、閉じてからこのページを再読み込みしてください。</div>
+</section>
+<section id="screen-closed" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>終了しました。</b>遊んでくれてありがとう!</div>
+</section>
+<section id="screen-notfound" class="screen" hidden>
+  <h1 class="title small">みんなでルーレット</h1>
+  <div class="notice panel"><b>部屋が見つかりません。</b>部屋コードを確かめてね。</div>
+</section>
+</main>
+
+<div id="audio-badge" class="audio-badge" hidden>🔇 タップで音をオン</div>
+<div id="toast" class="toast" hidden></div>
+<div id="confetti" class="confetti" hidden></div>
+
+<script src="firebase-config.js"></script>
+<script src="logic.js?v=a3d809f130"></script>
+<script src="sync.js?v=69c45ab4be"></script>
+<script src="wheel.js?v=a1a4aadb86"></script>
+<script src="app.js?v=5395b7a475"></script>
+</body>
+</html>
