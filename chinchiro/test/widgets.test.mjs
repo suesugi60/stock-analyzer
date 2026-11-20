@@ -83,3 +83,36 @@ test('resultSummary: 誰がどうやって勝ったかを文で返す(見出し�
   r = W.resultSummary({ winner: 'child', mult: 1, parentHand: H('none', 0, '目なし', 1, false), childHand: H('me', 1, '1の目', 1, false) }, { host: '親', child: '？？？' }, pts);
   assert.equal(r.headline, '？？？ の勝ち!'); assert.equal(r.why, '1の目(×1) ＞ 目なし');
 });
+
+test('versusList: 対戦した相手ごとに、配信者から見た勝ち負けを返す(対戦の多い順)', () => {
+  const players = {
+    a: { name: 'うさ', char: 'kappa', wins: 1, losses: 2 },   // 配信者の 2勝1敗
+    b: { name: 'まつ', char: 'momotaro', wins: 0, losses: 1 }, // 配信者の 1勝0敗
+    c: { name: 'みるだけ', wins: 0, losses: 0 },                // 対戦なし → 出さない
+    d: { name: 'あらし', wins: 3, losses: 3, banned: true },    // ブロック → 出さない
+    e: { name: 'ひみつ', wins: 2, losses: 3, hidden: true },    // 非表示 → 名前は ？？？
+  };
+  const list = W.versusList(players);
+  assert.deepEqual(list.map((x) => x.uid), ['e', 'a', 'b']);
+  assert.deepEqual(list[1], { uid: 'a', name: 'うさ', char: 'kappa', hidden: false, wins: 2, losses: 1, games: 3 });
+  assert.equal(list[0].name, '？？？');
+  assert.equal(list[0].wins, 3);
+  assert.equal(list[0].losses, 2);
+  assert.deepEqual(list[2], { uid: 'b', name: 'まつ', char: 'momotaro', hidden: false, wins: 1, losses: 0, games: 1 });
+});
+
+test('versusList: 同じ対戦数なら名前順。壊れた値は 0 として扱い、落ちない', () => {
+  const list = W.versusList({ x: { name: 'べー', wins: 1 }, y: { name: 'あー', losses: 1 }, z: { wins: 'x', losses: -3 }, w: null, v: 'abc' });
+  assert.deepEqual(list.map((x) => x.uid), ['y', 'x']);
+  assert.deepEqual([list[0].wins, list[0].losses], [1, 0]);
+  assert.deepEqual([list[1].wins, list[1].losses], [0, 1]);
+  assert.deepEqual(W.versusList(null), []);
+  assert.deepEqual(W.versusList(undefined), []);
+});
+
+test('versusText: 「2勝1敗」。まだ対戦が無ければ空文字', () => {
+  assert.equal(W.versusText({ wins: 1, losses: 2 }), '2勝1敗');
+  assert.equal(W.versusText({ wins: 0, losses: 0 }), '');
+  assert.equal(W.versusText(null), '');
+  assert.equal(W.versusText({ losses: 3 }), '3勝0敗');
+});

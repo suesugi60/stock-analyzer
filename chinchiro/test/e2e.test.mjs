@@ -1692,3 +1692,44 @@ test('消音: ボタンを押すと「消音中」とはっきり出て、もう
   assert.deepEqual(errors, []);
   await context.close();
 });
+
+// ---------- 戦歴(相手ごとの勝ち負け) ----------
+test('戦歴: 誰と何勝何敗かが、対戦中の場と相手ごとの一覧に出る(配信者から見た勝ち負け)', async () => {
+  const { host, context, errors, code, kids } = await setupMatch([['うさ', 'kappa'], ['まつ', null]]);
+  const usa = kids[0].page; const matsu = kids[1].page;
+  const arena = host.locator('#screen-host [data-ref="arena"] .h2h');
+  const row = (name) => host.locator('#versus .rank-row2').filter({ hasText: name });
+  assert.ok((await host.locator('#versus').innerText()).includes('まだ対戦がありません'));
+  // 1戦目: うさ と。はじめての対戦 → 配信者の勝ち
+  await fixDice(host, FIX_PARENT_4ZORO_CHILD_6ME);
+  await host.click('#start-match');
+  await arena.filter({ hasText: 'はじめての対戦' }).waitFor({ state: 'visible', ...T });
+  await usa.locator('#screen-listener [data-ref="arena"] .h2h').filter({ hasText: 'はじめての対戦' }).waitFor({ state: 'visible', ...T });
+  await playUntilResult(host, usa, code);
+  await row('うさ').filter({ hasText: '1勝0敗' }).waitFor({ state: 'visible', ...T });
+  await arena.filter({ hasText: '配信者 の 1勝0敗' }).waitFor({ state: 'visible', ...T });
+  // 2戦目: 同じ人ともう一回 → 今度は配信者の負け
+  await host.locator('#rematch').waitFor({ state: 'visible', ...T });
+  await fixDice(host, FIX_PARENT_2ME_CHILD_4ZORO);
+  await host.click('#rematch');
+  await host.locator('#host-roll').waitFor({ state: 'visible', ...T });
+  await arena.filter({ hasText: '配信者 の 1勝0敗' }).waitFor({ state: 'visible', ...T }); // 対戦中は、これまでの成績
+  await playUntilResult(host, usa, code);
+  await row('うさ').filter({ hasText: '1勝1敗' }).waitFor({ state: 'visible', ...T });
+  await usa.locator('#screen-listener [data-ref="arena"] .h2h').filter({ hasText: '配信者 の 1勝1敗' }).waitFor({ state: 'visible', ...T });
+  // 3戦目: 次の挑戦者 まつ と。相手が変わると成績も変わる
+  await host.locator('#next-match').waitFor({ state: 'visible', ...T });
+  await host.click('#next-match');
+  await fixDice(host, FIX_PARENT_4ZORO_CHILD_6ME);
+  await host.locator('#start-match').waitFor({ state: 'visible', ...T });
+  await host.click('#start-match');
+  await arena.filter({ hasText: 'はじめての対戦' }).waitFor({ state: 'visible', ...T });
+  await playUntilResult(host, matsu, code);
+  await row('まつ').filter({ hasText: '1勝0敗' }).waitFor({ state: 'visible', ...T });
+  // 一覧は対戦の多い順(うさ 2戦 → まつ 1戦)
+  const names = await host.locator('#versus .rank-row2 .qname').allInnerTexts();
+  assert.deepEqual(names.map((n) => n.trim()), ['うさ', 'まつ']);
+  assert.ok((await row('うさ').innerText()).includes('1勝1敗'));
+  assert.deepEqual(errors, []);
+  await context.close();
+});

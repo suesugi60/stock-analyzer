@@ -348,6 +348,12 @@ h2::before { content: '▶ '; color: var(--red); }
 .arena.compact .fighter .avatar { width: 64px; height: 64px; }
 .arena.compact .fighter .fname { font-size: .95rem; }
 .arena.compact .center .vs { font-size: 1.6rem; }
+.arena .center .h2h { display: block; margin-top: 6px; font-size: .8rem; font-weight: 700; color: var(--navy); }
+.arena .center .h2h b { color: var(--red); font-size: .95rem; white-space: nowrap; }
+.box h3 small { font-size: .72rem; font-weight: 700; color: var(--muted); margin-left: 4px; }
+.versus { max-height: 300px; overflow-y: auto; }
+.versus .vrec { font-weight: 900; white-space: nowrap; }
+.versus .rank-row2.now { background: #fff3c4; border-radius: 8px; padding-left: 6px; padding-right: 6px; }
 .arena .center .drink { display: block; color: var(--red); font-weight: 900; font-size: .9rem; margin-top: 4px; }
 .room-info .url.big { font-size: 1.05rem; color: var(--navy); max-width: 460px; font-weight: 900; }
 
