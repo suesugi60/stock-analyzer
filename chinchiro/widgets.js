@@ -127,6 +127,36 @@ const ChinchiroWidgets = (() => {
     return { headline: `${winName} の勝ち!`, why, pay: pay.join(' ・ ') };
   }
 
-  return { esc, dieHtml, diceHtml, throwsHtml, legendHtml, rulesHtml, logHtml, hands, resultSummary };
+  /** 0 以上の整数だけ通す(壊れた値は 0)。 */
+  const count = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+
+  /**
+   * 相手ごとの戦歴。対戦は必ず「配信者 対 リスナー1人」なので、リスナーの勝ち負けを裏返すと配信者から見た勝ち負けになる。
+   * 対戦した人だけを、対戦の多い順 → 名前順で返す。非表示の人は名前を ？？？ に、ブロックした人は出さない。
+   * @returns {{ uid: string, name: string, char: string, hidden: boolean, wins: number, losses: number, games: number }[]}
+   */
+  function versusList(players) {
+    if (!players || typeof players !== 'object') return [];
+    const list = [];
+    for (const [uid, p] of Object.entries(players)) {
+      if (!p || typeof p !== 'object' || p.banned) continue;
+      const wins = count(p.losses);
+      const losses = count(p.wins);
+      if (wins + losses === 0) continue;
+      const name = p.hidden ? '？？？' : (typeof p.name === 'string' && p.name ? p.name : 'リスナー');
+      list.push({ uid, name, char: p.char, hidden: !!p.hidden, wins, losses, games: wins + losses });
+    }
+    return list.sort((a, b) => b.games - a.games || a.name.localeCompare(b.name, 'ja') || (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
+  }
+
+  /** リスナー1人との戦歴を「2勝1敗」(配信者から見て)にする。まだ対戦が無ければ空文字。 */
+  function versusText(player) {
+    if (!player || typeof player !== 'object') return '';
+    const wins = count(player.losses);
+    const losses = count(player.wins);
+    return wins + losses === 0 ? '' : `${wins}勝${losses}敗`;
+  }
+
+  return { esc, dieHtml, diceHtml, throwsHtml, legendHtml, rulesHtml, logHtml, hands, resultSummary, versusList, versusText };
 })();
 if (typeof module !== 'undefined') module.exports = ChinchiroWidgets;

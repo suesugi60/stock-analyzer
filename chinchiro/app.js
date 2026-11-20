@@ -386,9 +386,12 @@
         drink = sum.pay;
       } else if (st.phase === 'closed') status = '部屋は閉じました';
       const res = st.phase === 'result' ? st.result : null;
+      // この相手とのこれまでの戦歴(配信者から見た勝ち負け)
+      const rec = child ? W.versusText(child) : '';
+      const h2h = !child ? '' : rec ? `<span class="h2h">これまで ${esc(settings.hostName || '配信者')} の <b>${esc(rec)}</b></span>` : '<span class="h2h">はじめての対戦</span>';
       const arenaHtml =
         fighterHtml('host', settings.hostChar, '#ff4d4d', settings.hostName || '配信者', '親', ph, phs, st.phase === 'parent', res && res.winner === 'parent' ? 'winner' : '', W.throwsHtml(m && m.parent.throws)) +
-        `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}</div>` +
+        `<div class="center">${center}<span class="status">${esc(status)}</span>${drink ? `<span class="drink">${esc(drink)}</span>` : ''}${h2h}</div>` +
         (child
           ? fighterHtml('child', child.char, colorFor(m.childUid), childName, `挑戦者 ${m.round > 1 ? `(${m.round}回戦)` : ''}`, ch, chs, st.phase === 'child', res && res.winner === 'child' ? 'winner' : '', W.throwsHtml(m && m.child.throws))
           : fighterHtml('child empty', 'binbo', '#ccc', '挑戦者', '順番待ちから', '', '', false));
@@ -421,6 +424,15 @@
         if (!readonly) row.insertAdjacentHTML('beforeend', `<span class="qacts"><button class="btn skip" data-act="skip">飛ばす</button><button class="btn hide" data-act="hide">${p.hidden ? '表示' : '非表示'}</button><button class="btn ban" data-act="ban">ブロック</button></span>`);
         r.queue.appendChild(row);
       });
+    }
+    // 戦歴(相手ごと。配信者から見た勝ち負け。いま対戦している相手は色を付ける)
+    if (r.versus) {
+      const nowUid = st.match && (st.phase === 'parent' || st.phase === 'child' || st.phase === 'result') ? st.match.childUid : null;
+      const list = W.versusList(players);
+      const html = list.length
+        ? list.map((v) => `<div class="rank-row2${v.uid === nowUid ? ' now' : ''}"><span class="avatar sm" style="--c:${colorFor(v.uid)}">${charArt(v.char)}</span><span class="qname">${esc(v.name)}</span><span class="vrec">${v.wins}勝${v.losses}敗</span></div>`).join('')
+        : '<div class="empty-note">まだ対戦がありません</div>';
+      if (r.versus.dataset.last !== html) { r.versus.innerHTML = html; r.versus.dataset.last = html; }
     }
     // ランキング(点数モード)
     if (r['ranking-box']) r['ranking-box'].hidden = settings.mode === 'drink';
