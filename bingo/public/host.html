@@ -83,7 +83,6 @@
             <button id="sound-toggle" type="button" class="btn small ghost switch" aria-pressed="true">抽選の音: オン</button>
             <button id="sound-test" type="button" class="btn small ghost">音を試す</button>
           </div>
-          <p id="sound-hint" class="note warn sound-hint" hidden>🔇 まだ音を出せません。画面のどこかを一度押すと、鳴るようになります。</p>
           <p class="note">音は最初からオンで、この端末から鳴ります。「音を試す」で鳴らないときは、端末の音量と消音(マナーモード)、ブラウザのタブのミュートを確かめてください。</p>
           <p class="note">自分で引いた番号は、下の盤面を押して発表します(このときは演出なしで出ます)。</p>
           <div id="board" class="board"></div>
@@ -149,6 +148,7 @@
     <p class="show-hint">タップで飛ばす</p>
   </div>
   <p id="toast" class="toast" role="status" hidden></p>
+  <p id="sound-hint" class="sound-hint" role="status" hidden>🔇 まだ音を出せません。画面のどこかを一度押すと、鳴るようになります。</p>
   <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-message" hidden>
     <div class="dialog-box">
       <p id="dialog-message"></p>

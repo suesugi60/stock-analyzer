@@ -1487,9 +1487,14 @@ test('音: まだ音を出せない間(開き直した直後で、画面を一�
   await host.page.locator('#panel').waitFor();
   await host.page.locator('#sound-hint').waitFor({ state: 'visible' });
   assert.ok((await host.page.locator('#sound-hint').innerText()).includes('押す'));
-  // 画面のどこかを押すと、音を出せるようになって案内が消える
-  await host.page.locator('#totals').click();
+  // 案内は画面の上に重ねて出す。出ている間も消えたあとも、ほかの部品の位置は変わらない(押した瞬間に消えても、押したボタンがずれない)
+  const where = () => host.page.locator('#board .num[data-n="40"]').evaluate((el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left + window.scrollX), Math.round(r.top + window.scrollY)]; });
+  const before = await where();
+  // 最初のひと押しが、そのまま効く(番号が出る)。押すと音を出せるようになって、案内が消える
+  await host.page.click('#board .num[data-n="40"]');
+  await host.page.locator('#board .num[data-n="40"].called').waitFor();
   await host.page.locator('#sound-hint').waitFor({ state: 'hidden' });
+  assert.deepEqual(await where(), before);
   assert.deepEqual(host.errors, []);
 });
 

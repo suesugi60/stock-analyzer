@@ -48,6 +48,8 @@ let soundOn = true;
 forgetSetting(SOUND_KEY);
 let manualCall = false;          // この端末で盤面から押した番号は、演出なしで出す
 const drawSound = createDrawSound();
+const HINT_DELAY_MS = 800;       // 押した直後は、音の出口が起きるまで一瞬かかる。その間に「まだ音を出せません」がちらつかないよう、少し待ってから出す
+let hintTimer = null;
 let rowLockUntil = 0;            // 申請の行が消えた直後は、許可・却下の押下を受け付けない
 let rowLockTimer = null;
 let retryTimer = null;           // 締め出し中の入り直し
@@ -201,6 +203,7 @@ function render() {
   dom.setup.hidden = !showSetup;
   dom.login.hidden = showPanel || showSetup || waiting || (needSetup === null && dom.loginError.hidden);
   dom.loginBtn.disabled = false;
+  renderSound();
   if (!showPanel) return;
 
   // 受付
@@ -213,8 +216,6 @@ function render() {
 
   dom.fxToggle.setAttribute('aria-pressed', String(fxOn));
   dom.fxToggle.textContent = `抽選の演出: ${fxOn ? 'オン' : 'オフ'}`;
-  renderSound();
-
   renderRequests();
   renderNumbers();
   renderWinnersBox();
@@ -436,11 +437,18 @@ dom.fxToggle.addEventListener('click', () => {
 });
 
 // 音のスイッチと、「まだ音を出せません」の案内。音を出せるかどうかが変わるたびに呼ばれる。
+function soundBlocked() { return !dom.panel.hidden && soundOn && !drawSound.ready(); }
 function renderSound() {
   dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
   dom.soundToggle.textContent = `抽選の音: ${soundOn ? 'オン' : 'オフ'}`;
   dom.soundToggle.classList.toggle('off', !soundOn); // オフ中は目立たせる(切ったのを忘れないように)
-  dom.soundHint.hidden = !soundOn || drawSound.ready();
+  if (!soundBlocked()) {
+    clearTimeout(hintTimer);
+    hintTimer = null;
+    dom.soundHint.hidden = true;
+  } else if (dom.soundHint.hidden && hintTimer === null) {
+    hintTimer = setTimeout(() => { hintTimer = null; dom.soundHint.hidden = !soundBlocked(); }, HINT_DELAY_MS);
+  }
 }
 drawSound.onChange(renderSound);
 
