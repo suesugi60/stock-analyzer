@@ -7,7 +7,7 @@ import { createDrawSound } from './draw-sound.mjs';
 
 const PASSWORD_KEY = 'bingo.v1.hostpw';
 const FX_KEY = 'bingo.v1.host.fx';       // 抽選の演出('0' ならオフ)
-const SOUND_KEY = 'bingo.v1.host.sound'; // 抽選の音('1' ならオン)
+const SOUND_KEY = 'bingo.v1.host.sound'; // 前の版が音のオン・オフを保存していた場所(いまは使わない。残っていたら消す)
 
 const $ = (id) => document.getElementById(id);
 const dom = {
@@ -18,7 +18,7 @@ const dom = {
   toggle: $('accepting-toggle'), totals: $('totals'), delay: $('delay-select'),
   requests: $('requests'), requestsEmpty: $('requests-empty'), approveAll: $('approve-all'),
   current: $('host-current'), drawnCount: $('host-drawn-count'), drawBtn: $('draw-btn'), undoBtn: $('undo-btn'),
-  fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'),
+  fxToggle: $('fx-toggle'), soundToggle: $('sound-toggle'), soundHint: $('sound-hint'),
   board: $('board'), winnerStats: $('winner-stats'), winners: $('host-winners'), winnersNote: $('host-winners-note'),
   waitingList: $('host-waiting-list'), waitingEmpty: $('host-waiting-empty'), waitingNote: $('host-waiting-note'),
   waitingCount: $('host-waiting-count'),
@@ -31,6 +31,7 @@ function readSetting(key) { try { return localStorage.getItem(key); } catch { re
 function saveSetting(key, value) { try { localStorage.setItem(key, value); } catch { /* 保存できなくても動く */ } }
 function savePassword(value) { try { localStorage.setItem(PASSWORD_KEY, value); } catch { /* 保存できなくても動く */ } }
 function forgetPassword() { try { localStorage.removeItem(PASSWORD_KEY); } catch { /* 同上 */ } }
+function forgetSetting(key) { try { localStorage.removeItem(key); } catch { /* 同上 */ } }
 
 let password = readPassword();
 let needSetup = null;            // 合言葉をこれから決める必要があるか(null は未確認)
@@ -41,9 +42,14 @@ const editedCounts = new Map();  // 申請ID → 主催者が変えた枚数
 const requestRows = new Map();   // 申請ID → 行の要素
 let busyDraw = false;            // 二度押しで2つ引かないため
 let fxOn = readSetting(FX_KEY) !== '0';       // 抽選の演出(最初はオン)
-let soundOn = readSetting(SOUND_KEY) === '1'; // 抽選の音(最初はオフ)
+// 抽選の音は、開くたびに必ずオンで始める。オフにできるのは開いている間だけで、保存しない。
+// (保存すると、ブラウザや端末を変えたとき・前にオフにしたのを忘れたときに「音が出ない」になる)
+let soundOn = true;
+forgetSetting(SOUND_KEY);
 let manualCall = false;          // この端末で盤面から押した番号は、演出なしで出す
 const drawSound = createDrawSound();
+const HINT_DELAY_MS = 800;       // 押した直後は、音の出口が起きるまで一瞬かかる。その間に「まだ音を出せません」がちらつかないよう、少し待ってから出す
+let hintTimer = null;
 let rowLockUntil = 0;            // 申請の行が消えた直後は、許可・却下の押下を受け付けない
 let rowLockTimer = null;
 let retryTimer = null;           // 締め出し中の入り直し
@@ -197,6 +203,7 @@ function render() {
   dom.setup.hidden = !showSetup;
   dom.login.hidden = showPanel || showSetup || waiting || (needSetup === null && dom.loginError.hidden);
   dom.loginBtn.disabled = false;
+  renderSound();
   if (!showPanel) return;
 
   // 受付
@@ -209,9 +216,6 @@ function render() {
 
   dom.fxToggle.setAttribute('aria-pressed', String(fxOn));
   dom.fxToggle.textContent = `抽選の演出: ${fxOn ? 'オン' : 'オフ'}`;
-  dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
-  dom.soundToggle.textContent = `抽選の音: ${soundOn ? 'オン' : 'オフ'}`;
-
   renderRequests();
   renderNumbers();
   renderWinnersBox();
@@ -432,9 +436,24 @@ dom.fxToggle.addEventListener('click', () => {
   render();
 });
 
+// 音のスイッチと、「まだ音を出せません」の案内。音を出せるかどうかが変わるたびに呼ばれる。
+function soundBlocked() { return !dom.panel.hidden && soundOn && !drawSound.ready(); }
+function renderSound() {
+  dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
+  dom.soundToggle.textContent = `抽選の音: ${soundOn ? 'オン' : 'オフ'}`;
+  dom.soundToggle.classList.toggle('off', !soundOn); // オフ中は目立たせる(切ったのを忘れないように)
+  if (!soundBlocked()) {
+    clearTimeout(hintTimer);
+    hintTimer = null;
+    dom.soundHint.hidden = true;
+  } else if (dom.soundHint.hidden && hintTimer === null) {
+    hintTimer = setTimeout(() => { hintTimer = null; dom.soundHint.hidden = !soundBlocked(); }, HINT_DELAY_MS);
+  }
+}
+drawSound.onChange(renderSound);
+
 dom.soundToggle.addEventListener('click', () => {
   soundOn = !soundOn;
-  saveSetting(SOUND_KEY, soundOn ? '1' : '0');
   // 押した操作のうちに音を出せる状態にし、鳴ることをその場で確かめられるようにする
   if (soundOn) { drawSound.unlock(); drawSound.confirm(); } else drawSound.stop();
   render();
@@ -445,8 +464,14 @@ $('sound-test').addEventListener('click', () => {
   drawSound.confirm();
 });
 
-// 音をオンにしたまま開き直した端末は、まだ音を出せない。画面を一度さわったときに出せる状態にする。
-document.addEventListener('pointerdown', () => { if (soundOn) drawSound.unlock(); }, { passive: true });
+// ブラウザは、画面を押すなどの操作のあとでないと音を出せない。どこを押しても・どのキーを打っても、音を出せる状態にする。
+// (電話や別のアプリのあとで音の出口が止まっていても、次に押したときに起こす)
+for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+  document.addEventListener(type, () => { if (soundOn) drawSound.unlock(); }, { passive: true, capture: true });
+}
+// 別の画面から戻ってきたときも、止まっていれば起こす
+document.addEventListener('visibilitychange', () => { if (soundOn && document.visibilityState === 'visible') drawSound.wake(); });
+window.addEventListener('pageshow', () => { if (soundOn) drawSound.wake(); });
 
 dom.drawBtn.addEventListener('click', () => {
   if (soundOn) drawSound.unlock();

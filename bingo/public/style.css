@@ -537,6 +537,15 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 /* 主催者画面のスイッチ */
 .fx-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .btn.switch[aria-pressed="true"] { background: #c9f2e3; }
+.btn.switch.off { background: var(--warn); color: #fff; border-color: var(--warn); }
+/* 「まだ音を出せません」の案内。画面の上に重ねて出すので、出たり消えたりしてもほかの部品は動かない(押した瞬間に消えても、押したボタンがずれない)。押す操作のじゃまもしない。 */
+.sound-hint {
+  position: fixed; left: 50%; top: calc(10px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 60;
+  width: max-content; max-width: calc(100vw - 24px); margin: 0; padding: 8px 14px;
+  background: var(--warn); color: #fff; font-size: 13px; font-weight: 800; line-height: 1.4; text-align: center;
+  border-radius: 999px; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); pointer-events: none;
+}
+.sound-hint[hidden] { display: none; }
 
 /* 広い画面(配信に映すPCなど)では、抽選機を大きく見せる。基本の指定より後ろに置く。 */
 @media (min-width: 700px) {

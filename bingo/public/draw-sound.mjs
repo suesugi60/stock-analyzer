@@ -1,29 +1,86 @@
 // 抽選の音(主催者画面だけで使う)。音声ファイルは使わず、その場で合成する。
-// ブラウザは、画面を押すなどの操作のあとでないと音を出せない。
-// スイッチを入れたとき・画面をさわったときに unlock() を呼んでおく。
+//
+// 「音が出ない」を作らないための決まり:
+// - ブラウザは、画面を押すなどの操作のあとでないと音を出せない。操作のたびに unlock() を呼ぶ。
+// - 音の出口(AudioContext)は、電話・別のアプリ・画面を閉じたあとなどにブラウザが止めることがある。
+//   鳴らす直前に必ず状態を確かめ、止まっていれば起こし、閉じられていれば作り直す。
+// - それでも出せないときは黙って失敗しない。ready() が false になり、onChange() で画面に知らせる。
+
+const WAIT_MS = 1500; // 出口が起きるのを待つ時間。これを過ぎた音は捨てる(あとでまとめて鳴らさない)
 
 export function createDrawSound() {
   let ctx = null;
-  let out = null; // 全体の出口(音が割れないように抑える)
-  let bus = null; // 1回の演出ぶんの出口。stop() でまとめて止める。
+  let out = null;  // 全体の出口(音が割れないように抑える)
+  let bus = null;  // 1回の演出ぶんの出口。stop() でまとめて止める。
+  let primed = false; // いまの出口で、操作のうちに一度鳴らしたか
+  let loop = null; // 古い iPhone 用の、無音を流し続ける <audio>
+  let generation = 0; // stop() のたびに進める。待たせていた音を、止めたあとに鳴らさないため
+  const listeners = [];
 
-  function ensure() {
-    if (!ctx) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return null;
-      // iPhone では、この種の音は消音(マナーモード)だと鳴らない。「再生」の扱いにすると鳴る。
-      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* 対応していない端末 */ }
-      try { ctx = new AudioContextClass(); } catch { return null; }
-      out = ctx.createDynamicsCompressor();
-      out.threshold.value = -8;
-      out.knee.value = 6;
-      out.ratio.value = 12;
-      out.attack.value = 0.002;
-      out.release.value = 0.15;
-      out.connect(ctx.destination);
-    }
-    if (ctx.state !== 'running') ctx.resume().catch(() => { /* 操作の前は鳴らせない */ });
+  function notify() {
+    for (const fn of listeners) { try { fn(); } catch { /* 画面側の都合 */ } }
+  }
+
+  function create() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    // iPhone では、この種の音は消音(マナーモード)だと鳴らない。「再生」の扱いにすると鳴る。
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* 対応していない端末 */ }
+    let made = null;
+    try { made = new AudioContextClass(); } catch { return null; }
+    ctx = made;
+    out = ctx.createDynamicsCompressor();
+    out.threshold.value = -8;
+    out.knee.value = 6;
+    out.ratio.value = 12;
+    out.attack.value = 0.002;
+    out.release.value = 0.15;
+    out.connect(ctx.destination);
+    bus = null;
+    primed = false;
+    try { ctx.addEventListener('statechange', notify); } catch { ctx.onstatechange = notify; }
     return ctx;
+  }
+
+  // 音の出口を用意して返す。閉じられていたら作り直し、止まっていたら起こす。用意できなければ null。
+  function ensure() {
+    if (ctx && ctx.state === 'closed') { ctx = null; out = null; bus = null; }
+    if (!ctx && !create()) return null;
+    if (ctx.state !== 'running') {
+      try {
+        const p = ctx.resume();
+        if (p && typeof p.then === 'function') p.then(notify, () => { /* 操作の前は起こせない */ });
+      } catch { /* 起こせない */ }
+    }
+    return ctx;
+  }
+
+  // まだ一度も画面を押していないページは、ブラウザが音を出させない。
+  function neverTouched() {
+    try { return !!navigator.userActivation && !navigator.userActivation.hasBeenActive; } catch { return false; }
+  }
+
+  // audioSession の無い古い iPhone / iPad は、無音の音声を流し続けると、消音モードでも鳴るようになる。
+  function needsLoop() {
+    try {
+      if (navigator.audioSession) return false;
+      return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    } catch { return false; }
+  }
+
+  function startLoop() {
+    if (!needsLoop() || typeof window.Audio !== 'function') return;
+    try {
+      if (!loop) {
+        loop = new window.Audio('/silent.wav');
+        loop.loop = true;
+        loop.setAttribute('playsinline', '');
+      }
+      if (loop.paused) {
+        const p = loop.play();
+        if (p && typeof p.catch === 'function') p.catch(() => { /* 次の操作でやり直す */ });
+      }
+    } catch { /* 流せなくても、ほかの音は鳴らす */ }
   }
 
   function output() {
@@ -63,25 +120,68 @@ export function createDrawSound() {
     blip(osc, { at, decay, level });
   }
 
-  function safely(fn) {
-    if (!ensure()) return;
-    try { fn(); } catch { /* 音が出せなくても、画面は動かし続ける */ }
+  // fn を鳴らす。出口が止まっていたら起きるのを待ってから鳴らす。起きなければ捨てて、画面に知らせる。
+  function play(fn) {
+    if (!ctx && neverTouched()) { notify(); return; } // 押したときに unlock() が出口を作る
+    const c = ensure();
+    if (!c) { notify(); return; }
+    const mine = generation;
+    const run = () => {
+      if (c !== ctx || mine !== generation) return;
+      try { fn(); } catch { /* 音が出せなくても、画面は動かし続ける */ }
+    };
+    if (c.state === 'running') { run(); return; }
+    let settled = false;
+    const settle = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { c.removeEventListener('statechange', check); } catch { /* 古いブラウザ */ }
+      if (ok) run();
+      notify();
+    };
+    const check = () => { if (c.state === 'running') settle(true); else if (c.state === 'closed') settle(false); };
+    const timer = setTimeout(() => settle(c.state === 'running'), WAIT_MS);
+    try { c.addEventListener('statechange', check); } catch { /* 古いブラウザは、時間切れのときに確かめる */ }
+    check();
   }
 
   return {
-    // 操作のうちに呼ぶ。以後、操作なしでも音を出せるようになる。
+    // 操作(押す・キーを打つ)のうちに呼ぶ。以後、操作なしでも音を出せるようになる。何度呼んでもよい。
     unlock() {
-      safely(() => {
-        const source = ctx.createBufferSource();
-        source.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); // 無音を一瞬だけ
-        source.connect(ctx.destination);
+      const c = ensure();
+      if (!c) { notify(); return; }
+      startLoop();
+      if (primed && c.state === 'running') return;
+      try {
+        const source = c.createBufferSource();
+        source.buffer = c.createBuffer(1, 1, c.sampleRate); // 無音を一瞬だけ
+        source.connect(c.destination);
         source.start();
-      });
+        primed = true;
+      } catch { /* 次の操作でやり直す */ }
+      notify();
+    },
+
+    // 画面に戻ってきたときなどに呼ぶ。出口があって止まっていれば起こす(新しくは作らない)。
+    wake() {
+      if (ctx) ensure();
+      notify();
+    },
+
+    // いますぐ音を出せるか
+    ready() {
+      return !!ctx && ctx.state === 'running';
+    },
+
+    // ready() が変わったかもしれないときに呼ばれる
+    onChange(fn) {
+      if (typeof fn === 'function') listeners.push(fn);
     },
 
     // スイッチを入れたとき・「音を試す」を押したときの、確認の音
     confirm() {
-      safely(() => {
+      play(() => {
         const at = ctx.currentTime;
         tone(1318.5, { at, decay: 0.22, level: 0.5 });
         tone(1760, { at: at + 0.12, decay: 0.35, level: 0.5 });
@@ -90,7 +190,7 @@ export function createDrawSound() {
 
     // 玉がガラガラ鳴る音。だんだん大きく、細かくなる。
     roll(ms) {
-      safely(() => {
+      play(() => {
         const total = ms / 1000;
         let t = 0;
         while (t < total) {
@@ -107,7 +207,7 @@ export function createDrawSound() {
 
     // 玉がコロンと出る音
     drop() {
-      safely(() => {
+      play(() => {
         const at = ctx.currentTime;
         const osc = ctx.createOscillator();
         osc.type = 'sine';
@@ -119,7 +219,7 @@ export function createDrawSound() {
 
     // 番号が出たときの音(明るい和音とシンバル)
     reveal() {
-      safely(() => {
+      play(() => {
         const at = ctx.currentTime;
         for (const [freq, delay] of [[1046.5, 0], [1318.5, 0.05], [1568, 0.1], [2093, 0.15]]) {
           tone(freq, { at: at + delay, decay: 0.8, level: 0.4 });
@@ -131,8 +231,9 @@ export function createDrawSound() {
       });
     },
 
-    // 飛ばしたとき・打ち切ったときに、鳴っている音を止める
+    // 飛ばしたとき・打ち切ったときに、鳴っている音を止める(待たせている音も鳴らさない)
     stop() {
+      generation += 1;
       if (!ctx || !bus) return;
       const old = bus;
       bus = null;
