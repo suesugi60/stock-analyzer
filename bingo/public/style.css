@@ -537,6 +537,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 3px s
 /* 主催者画面のスイッチ */
 .fx-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .btn.switch[aria-pressed="true"] { background: #c9f2e3; }
+.btn.switch.off { background: var(--warn); color: #fff; border-color: var(--warn); }
+.note.warn.sound-hint { margin: 0 0 10px; }
 
 /* 広い画面(配信に映すPCなど)では、抽選機を大きく見せる。基本の指定より後ろに置く。 */
 @media (min-width: 700px) {
