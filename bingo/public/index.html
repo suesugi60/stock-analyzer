@@ -21,6 +21,7 @@
         <div class="now-label">いまの番号</div>
         <div id="drawn-count" class="now-count">まだ番号は出ていません</div>
       </div>
+      <button id="sound-toggle" type="button" class="btn small ghost switch sound-switch" aria-pressed="true">🔊 音オン</button>
     </div>
   </header>
 
@@ -72,6 +73,11 @@
       <div id="history" class="history"></div>
     </section>
 
+    <section class="panel">
+      <h2 class="panel-title">抽選の音</h2>
+      <p class="note">番号が出るとき、このスマホからも音が鳴ります。上の「🔊 音」で切り替えられます。鳴らないときは、スマホの音量を上げてください。iPhone は、消音(マナーモード)のあいだは鳴りません。</p>
+    </section>
+
     <section class="panel handover">
       <h2 class="panel-title">別のブラウザで開くとき</h2>
       <p class="note">このカードは、いま開いているブラウザに保存されています。別のブラウザやスマホで続けるときは、下のリンクを開いてください。リンクを人に渡すと、その人も同じカードを見られます。</p>
@@ -88,6 +94,7 @@
   </div>
   <div id="celebrate" class="celebrate" hidden aria-hidden="true"><span class="celebrate-text">BINGO!</span></div>
   <p id="toast" class="toast" role="status" hidden></p>
+  <p id="sound-hint" class="sound-hint" role="status" hidden>🔇 画面のどこかを一度押すと、抽選の音が鳴るようになります。</p>
   <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-message" hidden>
     <div class="dialog-box">
       <p id="dialog-message"></p>

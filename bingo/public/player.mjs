@@ -2,7 +2,8 @@
 import { connect } from './net.mjs';
 import { analyzeCard, normalizeName, isValidCount, isValidToken, LIMITS, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderCard, renderWinners, renderWaiting, toast, confirmDialog } from './view.mjs';
-import { playDraw, cancelDraw } from './draw-show.mjs';
+import { playDraw, cancelDraw, canAnimate } from './draw-show.mjs';
+import { createDrawSound } from './draw-sound.mjs';
 
 const TOKEN_KEY = 'bingo.v1.token';
 const EMPTY_YOU = { name: null, blocked: false, pending: null, rejected: false, cards: [] };
@@ -17,7 +18,14 @@ const dom = {
   waitingBox: $('waiting-box'), waitingList: $('waiting-list'), waitingNote: $('waiting-note'),
   historyBox: $('history-box'), history: $('history'),
   copyLink: $('copy-link'), linkText: $('link-text'), celebrate: $('celebrate'),
+  soundToggle: $('sound-toggle'), soundHint: $('sound-hint'),
 };
+
+// 抽選の音。開くたびに必ずオンで始める(保存しない)。ほかのアプリの音は止めず、端末の消音(マナーモード)には従う。
+const drawSound = createDrawSound({ polite: true });
+const HINT_DELAY_MS = 800; // 押した直後は、音の出口が起きるまで一瞬かかる。その間に案内がちらつかないよう、少し待ってから出す
+let soundOn = true;
+let hintTimer = null;
 
 const state = {
   ready: false,      // 最初の状態を受け取ったか
@@ -128,7 +136,10 @@ function reveal(seq) {
   const token = ++showToken;
   showingSeq = seq;
   render();
-  playDraw({ n: state.draws[seq - 1] }).then(() => {
+  // 抽選機を見せない端末(動きを減らす設定)でも、画面を開いていれば、番号が出たときの音だけは鳴らす
+  const animated = canAnimate();
+  if (!animated && soundOn && document.visibilityState === 'visible') drawSound.reveal();
+  playDraw({ n: state.draws[seq - 1], sound: soundOn ? drawSound : null }).then(() => {
     if (token !== showToken) return; // 取り消しや取り直しで打ち切られた
     showingSeq = null;
     if (seq <= state.draws.length && seq > state.shown) { state.shown = seq; advanceWaiting(); }
@@ -446,8 +457,42 @@ function start() {
   });
 }
 
+// ---- 抽選の音 ----
+
+function soundBlocked() { return soundOn && !drawSound.ready(); }
+// 音のスイッチと、「まだ音を出せません」の案内。音を出せるかどうかが変わるたびに呼ばれる。
+function renderSound() {
+  dom.soundToggle.setAttribute('aria-pressed', String(soundOn));
+  dom.soundToggle.textContent = soundOn ? '🔊 音オン' : '🔇 音オフ';
+  dom.soundToggle.classList.toggle('off', !soundOn);
+  if (!soundBlocked()) {
+    clearTimeout(hintTimer);
+    hintTimer = null;
+    dom.soundHint.hidden = true;
+  } else if (dom.soundHint.hidden && hintTimer === null) {
+    hintTimer = setTimeout(() => { hintTimer = null; dom.soundHint.hidden = !soundBlocked(); }, HINT_DELAY_MS);
+  }
+}
+drawSound.onChange(renderSound);
+
+dom.soundToggle.addEventListener('click', () => {
+  soundOn = !soundOn;
+  // 押した操作のうちに音を出せる状態にし、鳴ることをその場で確かめられるようにする
+  if (soundOn) { drawSound.unlock(); drawSound.confirm(); } else drawSound.stop();
+  renderSound();
+});
+
+// ブラウザは、画面を押すなどの操作のあとでないと音を出せない。どこを押しても、音を出せる状態にする。
+for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+  document.addEventListener(type, () => { if (soundOn) drawSound.unlock(); }, { passive: true, capture: true });
+}
+// 別の画面(配信など)から戻ってきたときも、止まっていれば起こす
+document.addEventListener('visibilitychange', () => { if (soundOn && document.visibilityState === 'visible') drawSound.wake(); });
+window.addEventListener('pageshow', () => { if (soundOn) drawSound.wake(); });
+
 // すでに開いているページに引き継ぎリンクを貼り付けたときは、読み込み直して合い札を取り込む。
 window.addEventListener('hashchange', () => { if (location.hash.startsWith('#k=')) location.reload(); });
 
 render();
+renderSound();
 start();
