@@ -3,8 +3,9 @@ import { connect } from './net.mjs';
 import { DELAYS, LIMITS, MAX_NUMBER, WINNERS_SHOWN } from './logic.mjs';
 import { el, clear, renderBall, renderWinners, renderWaiting, toast, confirmDialog, letterOf } from './view.mjs';
 import { playDraw, cancelDraw, canAnimate } from './draw-show.mjs';
-import { createDrawSound } from './draw-sound.mjs';
+import { createDrawSound, soundVerdict } from './draw-sound.mjs';
 
+const APP_VERSION = '2026-11-26'; // 「音を試す」の結果に出す版(音まわりを変えたら日付を進める)
 const PASSWORD_KEY = 'bingo.v1.hostpw';
 const FX_KEY = 'bingo.v1.host.fx';       // 抽選の演出('0' ならオフ)
 const SOUND_KEY = 'bingo.v1.host.sound'; // 前の版が音のオン・オフを保存していた場所(いまは使わない。残っていたら消す)
@@ -459,9 +460,29 @@ dom.soundToggle.addEventListener('click', () => {
   render();
 });
 
-$('sound-test').addEventListener('click', () => {
+// 「音を試す」: 確認の音を鳴らし、実際に出口へ音が出たかを測って、結果を見せる。
+// 「アプリは音を出しているのに聞こえない(端末の設定)」のか「ブラウザが音を止めている」のかを、その場で切り分ける。
+function showSoundResult(d) {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const v = soundVerdict(d, { ios });
+  $('sound-result').dataset.kind = v.kind;
+  $('sound-result-title').textContent = v.title;
+  $('sound-result-body').textContent = v.body;
+  const detail = [
+    `版 ${APP_VERSION}`, `出口 ${d.state}`, `信号 ${d.peak.toFixed(2)}`, `${d.sampleRate}Hz`, `再生扱い ${d.session}`, `無音ループ ${d.loop}`,
+    `音のスイッチ ${soundOn ? 'オン' : 'オフ'}`, d.error ? `エラー ${d.error}` : '', navigator.userAgent.slice(0, 140),
+  ].filter(Boolean).join(' ・ ');
+  $('sound-result-detail').textContent = detail;
+  $('sound-result').hidden = false;
+  $('sound-result-close').focus();
+}
+$('sound-result-close').addEventListener('click', () => { $('sound-result').hidden = true; });
+
+$('sound-test').addEventListener('click', async () => {
   drawSound.unlock();
   drawSound.confirm();
+  $('sound-test').disabled = true;
+  try { showSoundResult(await drawSound.measure()); } finally { $('sound-test').disabled = false; }
 });
 
 // ブラウザは、画面を押すなどの操作のあとでないと音を出せない。どこを押しても・どのキーを打っても、音を出せる状態にする。

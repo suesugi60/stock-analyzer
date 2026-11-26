@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test test/logic.test.mjs test/room.test.mjs",
+    "test": "node --test test/logic.test.mjs test/sound.test.mjs test/room.test.mjs",
     "test:e2e": "node --test test/e2e.test.mjs"
   },
   "devDependencies": {

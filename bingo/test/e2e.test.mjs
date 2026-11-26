@@ -1452,8 +1452,7 @@ test('音: オフにできるのは開いている間だけ。オフ中は目立
 test('音: 音の出口が止められても、次の音で自動で起こして鳴らす', async () => {
   await fresh(server);
   const host = await openHostWithAudio();
-  await host.page.click('#sound-test');
-  await sleep(700);
+  await sleep(500);
   // 電話・別アプリなどで、ブラウザが音の出口を止めた状態
   assert.equal(await host.page.evaluate(async () => { await window.__audio.ctx.suspend(); return window.__audio.ctx.state; }), 'suspended');
   await resetPeak(host.page);
@@ -1467,8 +1466,7 @@ test('音: 音の出口が止められても、次の音で自動で起こして
 test('音: 音の出口が閉じられても、作り直して鳴らす', async () => {
   await fresh(server);
   const host = await openHostWithAudio();
-  await host.page.click('#sound-test');
-  await sleep(700);
+  await sleep(500);
   assert.equal(await host.page.evaluate(async () => { await window.__audio.ctx.close(); return window.__audio.ctx.state; }), 'closed');
   await resetPeak(host.page);
   await host.page.click('#board .num[data-n="22"]');
@@ -1498,28 +1496,84 @@ test('音: まだ音を出せない間(開き直した直後で、画面を一�
   assert.deepEqual(host.errors, []);
 });
 
-test('音: audioSession の無い古い iPhone では、消音モードでも鳴るように無音の音声を流し続ける', async () => {
+const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const RECORD_PLAY = () => {
+  window.__played = [];
+  const original = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function play() { window.__played.push({ src: this.src, loop: this.loop }); return original.call(this); };
+};
+
+test('音: iPhone では、消音(マナーモード)でも鳴るように、無音の音声を流し続ける(audioSession があっても無くても)', async () => {
   await fresh(server);
-  const ctx = await browser.newContext({
-    viewport: PHONE,
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1',
-  });
-  contexts.push(ctx);
-  await ctx.addInitScript(() => {
-    window.__played = [];
-    const original = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function play() { window.__played.push({ src: this.src, loop: this.loop }); return original.call(this); };
-  });
-  const host = await openPage('/host', { context: ctx });
-  await host.page.fill('#password', HOST_PASSWORD);
-  await host.page.click('#login-btn');
-  await host.page.locator('#panel').waitFor();
-  await sleep(300);
-  const played = await host.page.evaluate(() => window.__played);
-  assert.ok(played.some((x) => x.loop && x.src.endsWith('/silent.wav')), JSON.stringify(played));
-  assert.deepEqual(host.errors, []);
+  for (const withSession of [false, true]) {
+    const ctx = await browser.newContext({ viewport: PHONE, userAgent: IPHONE_UA });
+    contexts.push(ctx);
+    await ctx.addInitScript(RECORD_PLAY);
+    if (withSession) await ctx.addInitScript(() => { Object.defineProperty(navigator, 'audioSession', { value: { type: 'auto' }, configurable: true }); });
+    const host = await openPage('/host', { context: ctx });
+    await host.page.fill('#password', HOST_PASSWORD);
+    await host.page.click('#login-btn');
+    await host.page.locator('#panel').waitFor();
+    await sleep(300);
+    const played = await host.page.evaluate(() => window.__played);
+    assert.ok(played.some((x) => x.loop && x.src.endsWith('/silent.wav')), `audioSession ${withSession ? 'あり' : 'なし'}: ${JSON.stringify(played)}`);
+    if (withSession) assert.equal(await host.page.evaluate(() => navigator.audioSession.type), 'playback');
+    assert.deepEqual(host.errors, []);
+  }
   // パソコンなどでは流さない
-  const pc = await openHostWithAudio({ init: () => { window.__played = []; const o = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function play() { window.__played.push(this.src); return o.call(this); }; } });
+  const pc = await openHostWithAudio({ init: RECORD_PLAY });
   await sleep(300);
   assert.deepEqual(await pc.page.evaluate(() => window.__played), []);
+});
+
+// ---- 「音を試す」: どこで音が止まっているかを、アプリ自身が示す ----
+
+test('音を試す: 音が出ていれば「アプリは音を出しています」と出て、聞こえないときに確かめることを示す', async () => {
+  await fresh(server);
+  const host = await openHostWithAudio();
+  await sleep(300);
+  await resetPeak(host.page);
+  await host.page.click('#sound-test');
+  const result = host.page.locator('#sound-result');
+  await result.waitFor({ state: 'visible' });
+  assert.ok((await peakOf(host.page)) > 0.2, `確認の音(${await peakOf(host.page)})`);
+  assert.equal(await result.getAttribute('data-kind'), 'ok');
+  assert.ok((await host.page.locator('#sound-result-title').innerText()).includes('アプリは音を出しています'));
+  const body = await host.page.locator('#sound-result-body').innerText();
+  for (const word of ['音量', '消音', '出力先']) assert.ok(body.includes(word), word);
+  const detail = await host.page.locator('#sound-result-detail').innerText();
+  for (const word of ['版 20', '出口 running', '信号 0.', 'Hz', '音のスイッチ オン']) assert.ok(detail.includes(word), `${word}: ${detail}`);
+  assert.ok(Number(detail.match(/信号 ([0-9.]+)/)[1]) >= 0.2, detail);
+  // 画面からはみ出さない
+  const overflow = await host.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.equal(overflow, 0);
+  await host.page.click('#sound-result-close');
+  await result.waitFor({ state: 'hidden' });
+  // 閉じたあとは、ふつうに操作できる
+  await host.page.click('#board .num[data-n="5"]');
+  await host.page.locator('#board .num[data-n="5"].called').waitFor();
+  assert.deepEqual(host.errors, []);
+});
+
+test('音を試す: ブラウザが音を止めたままのときは、そう伝える(黙って失敗しない)', async () => {
+  await fresh(server);
+  // 何度起こそうとしても、音の出口が動かない端末を真似る
+  const host = await openHostWithAudio({
+    init: () => {
+      const Real = window.AudioContext;
+      window.AudioContext = class extends Real {
+        constructor(...args) { super(...args); Real.prototype.suspend.call(this); }
+        resume() { return new Promise(() => {}); }
+      };
+    },
+  });
+  await host.page.locator('#sound-hint').waitFor({ state: 'visible' });
+  await host.page.click('#sound-test');
+  const result = host.page.locator('#sound-result');
+  await result.waitFor({ state: 'visible' });
+  assert.equal(await result.getAttribute('data-kind'), 'blocked');
+  assert.ok((await host.page.locator('#sound-result-title').innerText()).includes('ブラウザが音を止めています'));
+  assert.ok((await host.page.locator('#sound-result-detail').innerText()).includes('出口 suspended'));
+  assert.equal(await peakOf(host.page), 0);
+  assert.deepEqual(host.errors, []);
 });

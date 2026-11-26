@@ -7,13 +7,56 @@
 // - それでも出せないときは黙って失敗しない。ready() が false になり、onChange() で画面に知らせる。
 
 const WAIT_MS = 1500; // 出口が起きるのを待つ時間。これを過ぎた音は捨てる(あとでまとめて鳴らさない)
+const HEARD = 0.02;   // 「音を試す」で、これ以上の大きさの信号が出口に出ていれば「アプリは音を出している」とみなす
+
+function isIOS() {
+  try {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  } catch { return false; }
+}
+
+/**
+ * 「音を試す」の測定結果(measure() の戻り値)から、利用者に見せる判定を作る。
+ * アプリが音を出しているのに聞こえないのか、ブラウザが音を止めているのか、アプリが音を作れていないのかを切り分ける。
+ * @returns {{ kind: 'ok'|'blocked'|'silent'|'unsupported', title: string, body: string }}
+ */
+export function soundVerdict(d, { ios = false } = {}) {
+  if (!d || !d.supported) {
+    return { kind: 'unsupported', title: '⚠️ このブラウザは音を出せません', body: 'Safari か Chrome で開き直してください。' };
+  }
+  if (d.state !== 'running') {
+    return {
+      kind: 'blocked',
+      title: '⚠️ ブラウザが音を止めています',
+      body: 'ページを開き直して、もう一度「音を試す」を押してください。\nそれでも同じなら、通話・録音・配信など、ほかのアプリがこの端末の音を使っていないか確かめてください。\n直らないときは、この画面を写真に撮って送ってください。',
+    };
+  }
+  if (!(d.peak >= HEARD)) {
+    return { kind: 'silent', title: '⚠️ アプリが音を作れていません', body: 'アプリ側の問題です。この画面を写真に撮って送ってください。' };
+  }
+  const steps = ios
+    ? ['本体の音量を上げる(横の音量ボタン)', '消音(マナーモード)を切る', 'イヤホン・Bluetooth など、音の出力先を確かめる', 'LINE などのアプリの中で開いているときは、Safari で開き直す']
+    : [
+      '本体の音量を上げる',
+      '消音(マナーモード・ミュート)を切る',
+      'イヤホン・Bluetooth・配信ソフトなど、音の出力先を確かめる',
+      'パソコンは、ブラウザのタブを右クリックして「サイトのミュートを解除」があれば押す。Windows は「音量ミキサー」でブラウザが消音になっていないかも見る',
+    ];
+  return {
+    kind: 'ok',
+    title: '✅ アプリは音を出しています',
+    body: `いま確認の音が鳴りました。聞こえなかったときは、原因はこの端末の設定です。上から順に確かめてください。\n${steps.map((t, i) => `${'①②③④'[i]} ${t}`).join('\n')}`,
+  };
+}
 
 export function createDrawSound() {
   let ctx = null;
   let out = null;  // 全体の出口(音が割れないように抑える)
   let bus = null;  // 1回の演出ぶんの出口。stop() でまとめて止める。
   let primed = false; // いまの出口で、操作のうちに一度鳴らしたか
-  let loop = null; // 古い iPhone 用の、無音を流し続ける <audio>
+  let loop = null; // iPhone / iPad 用の、無音を流し続ける <audio>
+  let meter = null; // 出口に出ている音の大きさを測る(「音を試す」の結果表示用)
+  let lastError = ''; // 出口を作れなかったときの理由
   let generation = 0; // stop() のたびに進める。待たせていた音を、止めたあとに鳴らさないため
   const listeners = [];
 
@@ -27,7 +70,7 @@ export function createDrawSound() {
     // iPhone では、この種の音は消音(マナーモード)だと鳴らない。「再生」の扱いにすると鳴る。
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* 対応していない端末 */ }
     let made = null;
-    try { made = new AudioContextClass(); } catch { return null; }
+    try { made = new AudioContextClass(); } catch (e) { lastError = String((e && e.message) || e); return null; }
     ctx = made;
     out = ctx.createDynamicsCompressor();
     out.threshold.value = -8;
@@ -36,6 +79,7 @@ export function createDrawSound() {
     out.attack.value = 0.002;
     out.release.value = 0.15;
     out.connect(ctx.destination);
+    try { meter = ctx.createAnalyser(); meter.fftSize = 2048; out.connect(meter); } catch { meter = null; }
     bus = null;
     primed = false;
     try { ctx.addEventListener('statechange', notify); } catch { ctx.onstatechange = notify; }
@@ -44,7 +88,7 @@ export function createDrawSound() {
 
   // 音の出口を用意して返す。閉じられていたら作り直し、止まっていたら起こす。用意できなければ null。
   function ensure() {
-    if (ctx && ctx.state === 'closed') { ctx = null; out = null; bus = null; }
+    if (ctx && ctx.state === 'closed') { ctx = null; out = null; bus = null; meter = null; }
     if (!ctx && !create()) return null;
     if (ctx.state !== 'running') {
       try {
@@ -60,16 +104,10 @@ export function createDrawSound() {
     try { return !!navigator.userActivation && !navigator.userActivation.hasBeenActive; } catch { return false; }
   }
 
-  // audioSession の無い古い iPhone / iPad は、無音の音声を流し続けると、消音モードでも鳴るようになる。
-  function needsLoop() {
-    try {
-      if (navigator.audioSession) return false;
-      return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    } catch { return false; }
-  }
-
+  // iPhone / iPad は、無音の音声(<audio>)を流し続けている間、消音(マナーモード)でもこの種の音が鳴る。
+  // audioSession を「再生」にするだけで足りるはずの版でも、念のため両方やる(アプリ内ブラウザなど、効かない場面があるため)。
   function startLoop() {
-    if (!needsLoop() || typeof window.Audio !== 'function') return;
+    if (!isIOS() || typeof window.Audio !== 'function') return;
     try {
       if (!loop) {
         loop = new window.Audio('/silent.wav');
@@ -172,6 +210,52 @@ export function createDrawSound() {
     // いますぐ音を出せるか
     ready() {
       return !!ctx && ctx.state === 'running';
+    },
+
+    // 「音を試す」用。出口が起きるのを待ち(最長 WAIT_MS)、起きてから ms の間、出口に出ている音の大きさを測って返す。
+    measure(ms = 900) {
+      const read = (buf, bytes) => {
+        if (!meter || !ctx || ctx.state !== 'running') return 0;
+        let peak = 0;
+        try {
+          if (typeof meter.getFloatTimeDomainData === 'function') {
+            meter.getFloatTimeDomainData(buf);
+            for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+          } else {
+            meter.getByteTimeDomainData(bytes);
+            for (let i = 0; i < bytes.length; i++) peak = Math.max(peak, Math.abs(bytes[i] - 128) / 128);
+          }
+        } catch { /* 測れない端末 */ }
+        return peak;
+      };
+      return new Promise((resolve) => {
+        const buf = new Float32Array(2048);
+        const bytes = new Uint8Array(2048);
+        const startedAt = Date.now();
+        let runningSince = null;
+        let peak = 0;
+        const timer = setInterval(() => {
+          const now = Date.now();
+          if (ctx && ctx.state === 'running') {
+            if (runningSince === null) runningSince = now;
+            peak = Math.max(peak, read(buf, bytes));
+          }
+          const done = runningSince !== null ? now - runningSince >= ms : now - startedAt >= WAIT_MS + 300;
+          if (!done) return;
+          clearInterval(timer);
+          let session = '';
+          try { session = navigator.audioSession ? String(navigator.audioSession.type) : 'なし'; } catch { session = '不明'; }
+          resolve({
+            supported: !!(window.AudioContext || window.webkitAudioContext),
+            state: ctx ? ctx.state : 'none',
+            peak,
+            sampleRate: ctx ? ctx.sampleRate : 0,
+            session,
+            loop: !loop ? 'なし' : loop.paused ? '停止' : '再生中',
+            error: lastError,
+          });
+        }, 20);
+      });
     },
 
     // ready() が変わったかもしれないときに呼ばれる
