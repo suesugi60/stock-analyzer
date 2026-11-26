@@ -1,4 +1,4 @@
-// 抽選の音(主催者画面だけで使う)。音声ファイルは使わず、その場で合成する。
+// 抽選の音(主催者画面とリスナー画面で使う)。音声ファイルは使わず、その場で合成する。
 //
 // 「音が出ない」を作らないための決まり:
 // - ブラウザは、画面を押すなどの操作のあとでないと音を出せない。操作のたびに unlock() を呼ぶ。
@@ -49,7 +49,11 @@ export function soundVerdict(d, { ios = false } = {}) {
   };
 }
 
-export function createDrawSound() {
+/**
+ * polite: リスナー画面用。ほかのアプリの音(見ている配信など)を止めず、端末の消音(マナーモード)に従う。
+ * 主催者画面は polite にしない(消音でも鳴らす。そのかわり、ほかのアプリの音は止まることがある)。
+ */
+export function createDrawSound({ polite = false } = {}) {
   let ctx = null;
   let out = null;  // 全体の出口(音が割れないように抑える)
   let bus = null;  // 1回の演出ぶんの出口。stop() でまとめて止める。
@@ -67,8 +71,9 @@ export function createDrawSound() {
   function create() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
-    // iPhone では、この種の音は消音(マナーモード)だと鳴らない。「再生」の扱いにすると鳴る。
-    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* 対応していない端末 */ }
+    // iPhone では、この種の音は消音(マナーモード)だと鳴らない。「再生」の扱いにすると鳴るが、ほかのアプリの音は止まる。
+    // リスナー画面は「ほかの音と混ざる」扱いにして、配信の音を止めない(消音には従う)。
+    try { if (navigator.audioSession) navigator.audioSession.type = polite ? 'ambient' : 'playback'; } catch { /* 対応していない端末 */ }
     let made = null;
     try { made = new AudioContextClass(); } catch (e) { lastError = String((e && e.message) || e); return null; }
     ctx = made;
@@ -107,7 +112,7 @@ export function createDrawSound() {
   // iPhone / iPad は、無音の音声(<audio>)を流し続けている間、消音(マナーモード)でもこの種の音が鳴る。
   // audioSession を「再生」にするだけで足りるはずの版でも、念のため両方やる(アプリ内ブラウザなど、効かない場面があるため)。
   function startLoop() {
-    if (!isIOS() || typeof window.Audio !== 'function') return;
+    if (polite || !isIOS() || typeof window.Audio !== 'function') return; // リスナー画面では流さない(流すと、ほかのアプリの音が止まる)
     try {
       if (!loop) {
         loop = new window.Audio('/silent.wav');
